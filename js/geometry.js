@@ -57,7 +57,7 @@ export const PIECE_META = {
   R17: {
     code: "R-17",
     name: "3-Way Point",
-    desc: "R-07 through + 2×R-04 branches",
+    desc: "R-07 + R-02 offset + 2×R-04",
   },
   R105: {
     code: "R-10.5",
@@ -393,19 +393,23 @@ function stopStraightTemplate(flip) {
 /**
  * R-17 3分岐ポイントレール — same as stacking:
  *   1× R-07 double straight (2 units) for the through path
+ *   1× R-02 half straight overlapping the R-07 to offset where the branches start
  *   2× R-04 large curves (45°, radius LARGE_R ≈ 1.4 unit) for L/R branches
  *
- *   input ── R-07 through ── center out
- *                throat ─┬─ R-04 left  45°
- *                        └─ R-04 right 45°
+ * Throat is shifted +R-02 (0.5 unit) from the R-07 midpoint toward the exit,
+ * so center stub after the split = R-02 length and the stem is longer.
+ *
+ *   input ── long stem (1.5u) ── throat ─┬─ R-04 left
+ *                                        ├─ center (0.5u = R-02)
+ *                                        └─ R-04 right
  */
 function threeWayTemplate(flip) {
-  // Through = full R-07 length
+  // Through = full R-07 length (2 units)
   const through = UNIT * 2;
-  const xIn = -through / 2;
-  const xOut = through / 2;
-  // Split near mid so stem and center run are both substantial (like the composite)
-  const xThroat = 0;
+  const xIn = -through / 2; // -UNIT
+  const xOut = through / 2; // +UNIT
+  // Hidden R-02 offset: branch start is R-02 past the R-07 midpoint (toward exit)
+  const xThroat = HALF; // +0.5 unit — center run throat→exit is exactly R-02
 
   const stem = [
     { x: xIn, y: 0 },
