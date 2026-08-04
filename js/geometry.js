@@ -57,7 +57,7 @@ export const PIECE_META = {
   R17: {
     code: "R-17",
     name: "3-Way Point",
-    desc: "1 unit + R-02 on exit, 1→3",
+    desc: "R-07 through + 2×R-04 branches",
   },
   R105: {
     code: "R-10.5",
@@ -391,25 +391,21 @@ function stopStraightTemplate(flip) {
 }
 
 /**
- * R-17 3分岐ポイントレール.
- * Base through ≈ 1 unit, plus an extra R-02 (0.5 unit) on the EXIT side
- * (center / fan end — not the stem input). Total through = 1.5 units.
+ * R-17 3分岐ポイントレール — same as stacking:
+ *   1× R-07 double straight (2 units) for the through path
+ *   2× R-04 large curves (45°, radius LARGE_R ≈ 1.4 unit) for L/R branches
  *
- *   input ── stem ── throat ─┬─ left
- *                            ├─ center ── +R-02 length
- *                            └─ right
+ *   input ── R-07 through ── center out
+ *                throat ─┬─ R-04 left  45°
+ *                        └─ R-04 right 45°
  */
 function threeWayTemplate(flip) {
-  // 1 unit body + 0.5 unit (R-02) on the exit end only
-  const extra = HALF; // R-02
-  const xIn = -UNIT / 2;
-  const xOut = UNIT / 2 + extra;
-  const xThroat = -UNIT * 0.08;
-
-  const cEnd = { x: xOut, y: 0 };
-  // Fan mouths sit at the forward (exit) end with the extra length
-  const lEnd = { x: xOut - UNIT * 0.06, y: -UNIT * 0.4 };
-  const rEnd = { x: xOut - UNIT * 0.06, y: UNIT * 0.4 };
+  // Through = full R-07 length
+  const through = UNIT * 2;
+  const xIn = -through / 2;
+  const xOut = through / 2;
+  // Split near mid so stem and center run are both substantial (like the composite)
+  const xThroat = 0;
 
   const stem = [
     { x: xIn, y: 0 },
@@ -417,47 +413,65 @@ function threeWayTemplate(flip) {
   ];
   const centerRun = [
     { x: xThroat, y: 0 },
-    cEnd,
+    { x: xOut, y: 0 },
   ];
+  const cEnd = { x: xOut, y: 0 };
 
-  const leftLeg = sampleBowedPath({ x: xThroat, y: 0 }, lEnd, UNIT * 0.035, 12);
-  const rightLeg = sampleBowedPath(
-    { x: xThroat, y: 0 },
-    rEnd,
-    -UNIT * 0.035,
-    12
+  // R-04 branch geometry: 45° arc, radius LARGE_R
+  // Screen y+ is down: left/up = -y, right/down = +y
+  const r = LARGE_R;
+  // Left/up (-y): center (xThroat, -r), a π/2 → π/2 − 45°
+  const leftArc = sampleArc(
+    xThroat,
+    -r,
+    r,
+    Math.PI / 2,
+    Math.PI / 2 - DEG45,
+    16
   );
+  leftArc[0] = { x: xThroat, y: 0 };
+  // Right/down (+y): center (xThroat, +r), a −π/2 → −π/2 + 45°
+  const rightArc = sampleArc(
+    xThroat,
+    r,
+    r,
+    -Math.PI / 2,
+    -Math.PI / 2 + DEG45,
+    16
+  );
+  rightArc[0] = { x: xThroat, y: 0 };
 
-  const leftAng = Math.atan2(lEnd.y, lEnd.x - xThroat);
-  const rightAng = Math.atan2(rEnd.y, rEnd.x - xThroat);
+  const lEnd = leftArc[leftArc.length - 1];
+  const rEnd = rightArc[rightArc.length - 1];
+  const leftAngReal = Math.atan2(
+    lEnd.y - leftArc[leftArc.length - 2].y,
+    lEnd.x - leftArc[leftArc.length - 2].x
+  );
+  const rightAngReal = Math.atan2(
+    rEnd.y - rightArc[rightArc.length - 2].y,
+    rEnd.x - rightArc[rightArc.length - 2].x
+  );
 
   const gA = flip ? "F" : "M";
   const gOut = flip ? "M" : "F";
 
-  const leftPath = [...stem, ...leftLeg.slice(1)];
-  const rightPath = [...stem, ...rightLeg.slice(1)];
+  const leftPath = [...stem, ...leftArc.slice(1)];
+  const rightPath = [...stem, ...rightArc.slice(1)];
   const centerPath = [...stem, ...centerRun.slice(1)];
 
+  // Body = rail beds of R-07 through + two R-04 branches (same as composite)
   const webbingPolys = [
     offsetPolylinePoly(stem, HALF_W),
     offsetPolylinePoly(centerRun, HALF_W),
-    offsetPolylinePoly(leftLeg, HALF_W),
-    offsetPolylinePoly(rightLeg, HALF_W),
-    // Solid fan plate between legs
-    [
-      { x: xThroat, y: 0 },
-      { x: lEnd.x, y: lEnd.y },
-      { x: cEnd.x, y: -HALF_W },
-      { x: cEnd.x, y: HALF_W },
-      { x: rEnd.x, y: rEnd.y },
-    ],
+    offsetPolylinePoly(leftArc, HALF_W),
+    offsetPolylinePoly(rightArc, HALF_W),
   ].filter(Boolean);
 
   const walls = [
     ...outerWallsAlongPolyline(stem, HALF_W, false, false),
     ...outerWallsAlongPolyline(centerRun, HALF_W, false, false),
-    ...outerWallsAlongPolyline(leftLeg, HALF_W, false, false),
-    ...outerWallsAlongPolyline(rightLeg, HALF_W, false, false),
+    ...outerWallsAlongPolyline(leftArc, HALF_W, false, false),
+    ...outerWallsAlongPolyline(rightArc, HALF_W, false, false),
   ];
 
   return {
@@ -467,9 +481,9 @@ function threeWayTemplate(flip) {
     switchCount: 3,
     connectors: [
       { id: "a", x: xIn, y: 0, ang: Math.PI, gender: gA },
-      { id: "b", x: lEnd.x, y: lEnd.y, ang: leftAng, gender: gOut },
+      { id: "b", x: lEnd.x, y: lEnd.y, ang: leftAngReal, gender: gOut },
       { id: "c", x: cEnd.x, y: cEnd.y, ang: 0, gender: gOut },
-      { id: "d", x: rEnd.x, y: rEnd.y, ang: rightAng, gender: gOut },
+      { id: "d", x: rEnd.x, y: rEnd.y, ang: rightAngReal, gender: gOut },
     ],
     paths: [
       { id: "left", points: leftPath, fromC: "a", toC: "b", switchIndex: 0 },
@@ -485,7 +499,7 @@ function threeWayTemplate(flip) {
     walls,
     webbingPolys,
     bed: null,
-    lever: { x: xThroat + 8, y: 0 },
+    lever: { x: xThroat + 10, y: -HALF_W - 8 },
     color: null,
   };
 }
