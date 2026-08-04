@@ -398,6 +398,77 @@ export function findSnap(board, ghost, magnetDist = SNAP_DIST) {
 }
 
 /**
+ * Magnetic snap for a multi-selection moved as a rigid group.
+ * Translates the whole group (same dx, dy) so a free end on the selection
+ * mates with a free end outside it. Internal joints (selected↔selected)
+ * are ignored — they stay locked by the rigid move.
+ *
+ * Returns { dx, dy, dist, from, to } or null.
+ */
+export function findGroupSnap(board, selectedIds, magnetDist = SNAP_DIST) {
+  const idSet =
+    selectedIds instanceof Set ? selectedIds : new Set(selectedIds || []);
+  if (idSet.size === 0) return null;
+
+  const groupPorts = [];
+  const outsidePorts = [];
+
+  for (const piece of board.pieces) {
+    const geo = worldGeometry(piece);
+    const inGroup = idSet.has(piece.id);
+    for (const c of geo.connectors) {
+      if (inGroup) {
+        // Internal joints (selected↔selected) stay locked by rigid move — skip.
+        // Only free ports on the selection can magnet to the outside.
+        if (c.linked) continue;
+        groupPorts.push(c);
+      } else {
+        // Mate only with free ends outside the selection
+        if (c.linked) continue;
+        outsidePorts.push(c);
+      }
+    }
+  }
+
+  if (!groupPorts.length || !outsidePorts.length) return null;
+
+  let best = null;
+  let bestScore = Infinity;
+
+  for (const g of groupPorts) {
+    for (const o of outsidePorts) {
+      if (g.gender === o.gender) continue;
+
+      const faceErr = angleDiff(g.wang, o.wang + Math.PI);
+      if (faceErr > SNAP_ANGLE) continue;
+
+      const dx = o.wx - g.wx;
+      const dy = o.wy - g.wy;
+      const dist = Math.hypot(dx, dy);
+      if (dist > magnetDist) continue;
+      // Already aligned — no extra nudge needed
+      if (dist < 0.6) continue;
+
+      // Prefer closest free ends; mild face penalty
+      const score = dist * 0.75 + faceErr * 10;
+      if (score < bestScore) {
+        bestScore = score;
+        best = {
+          dx,
+          dy,
+          dist,
+          snapped: true,
+          from: { pieceId: g.pieceId, id: g.id },
+          to: { pieceId: o.pieceId, id: o.id },
+        };
+      }
+    }
+  }
+
+  return best;
+}
+
+/**
  * Free connectors near a world point (for snap glow hints).
  */
 export function nearbyFreeConnectors(board, x, y, radius = SNAP_DIST) {

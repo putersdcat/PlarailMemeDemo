@@ -28,6 +28,7 @@ import {
   mirrorPiece,
   toggleSwitch,
   findSnap,
+  findGroupSnap,
   hitTestPiece,
   closestPathPoint,
   getPiece,
@@ -897,6 +898,7 @@ function onPointerMove(e) {
   }
 
   if (drag?.kind === "multi-move") {
+    // Rigid group translate from drag origins
     const dx = p.x - drag.startWx;
     const dy = p.y - drag.startWy;
     for (const id of Object.keys(drag.origins)) {
@@ -908,6 +910,23 @@ function onPointerMove(e) {
       }
     }
     rebuild(board);
+
+    // Snap free ends of the selection to free ends outside it
+    // (internal joints stay locked by the rigid move)
+    const gsnap = findGroupSnap(board, selectedIds, SNAP_DIST);
+    if (gsnap) {
+      for (const id of Object.keys(drag.origins)) {
+        const pc = getPiece(board, id);
+        if (pc) {
+          pc.x += gsnap.dx;
+          pc.y += gsnap.dy;
+        }
+      }
+      rebuild(board);
+      drag.snapped = true;
+    } else {
+      drag.snapped = false;
+    }
     return;
   }
 
@@ -1105,7 +1124,11 @@ function onPointerUp(e) {
 
   if (drag.kind === "multi-move") {
     persistLayout();
-    setHint(`Moved ${selectedIds.size} pieces.`);
+    setHint(
+      drag.snapped
+        ? `Moved ${selectedIds.size} pieces (snapped free end to open rail).`
+        : `Moved ${selectedIds.size} pieces.`
+    );
     drag = null;
     canvas.classList.remove("dragging");
     rebuild(board);
