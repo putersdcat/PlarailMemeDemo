@@ -20,77 +20,77 @@
         <div class="section-label">Track pieces</div>
         <div id="palette">
           <button class="piece-btn" data-type="R01" type="button">
-            <canvas width="56" height="40"></canvas>
+            <canvas width="72" height="52"></canvas>
             <div class="meta">
               <strong>R-01 Straight</strong>
               <span>1 unit</span>
             </div>
           </button>
           <button class="piece-btn" data-type="R02" type="button">
-            <canvas width="56" height="40"></canvas>
+            <canvas width="72" height="52"></canvas>
             <div class="meta">
               <strong>R-02 Half</strong>
               <span>0.5 unit</span>
             </div>
           </button>
           <button class="piece-btn" data-type="R03" type="button">
-            <canvas width="56" height="40"></canvas>
+            <canvas width="72" height="52"></canvas>
             <div class="meta">
               <strong>R-03 Curve 45°</strong>
               <span>Radius 1 unit</span>
             </div>
           </button>
           <button class="piece-btn" data-type="R04" type="button">
-            <canvas width="56" height="40"></canvas>
+            <canvas width="72" height="52"></canvas>
             <div class="meta">
               <strong>R-04 Large Curve</strong>
               <span>45°, radius ~1.4 unit</span>
             </div>
           </button>
           <button class="piece-btn" data-type="R07" type="button">
-            <canvas width="56" height="40"></canvas>
+            <canvas width="72" height="52"></canvas>
             <div class="meta">
               <strong>R-07 Double Straight</strong>
               <span>2 units</span>
             </div>
           </button>
           <button class="piece-btn" data-type="R08" type="button">
-            <canvas width="56" height="40"></canvas>
+            <canvas width="72" height="52"></canvas>
             <div class="meta">
               <strong>R-08 Stop Rail</strong>
               <span>1 unit + stop bump</span>
             </div>
           </button>
           <button class="piece-btn" data-type="R90" type="button">
-            <canvas width="56" height="40"></canvas>
+            <canvas width="72" height="52"></canvas>
             <div class="meta">
               <strong>R-90* Curve 90°</strong>
               <span>2×R-03 (sim only)</span>
             </div>
           </button>
           <button class="piece-btn" data-type="R11" type="button">
-            <canvas width="56" height="40"></canvas>
+            <canvas width="72" height="52"></canvas>
             <div class="meta">
               <strong>R-11 Turnout</strong>
               <span>~1×1 unit</span>
             </div>
           </button>
           <button class="piece-btn" data-type="R12" type="button">
-            <canvas width="56" height="40"></canvas>
+            <canvas width="72" height="52"></canvas>
             <div class="meta">
               <strong>R-12 Y / Fig-8 Point</strong>
               <span>Dual curve branch</span>
             </div>
           </button>
           <button class="piece-btn" data-type="R14" type="button">
-            <canvas width="56" height="40"></canvas>
+            <canvas width="72" height="52"></canvas>
             <div class="meta">
               <strong>R-14 Cross Point</strong>
               <span>1×1 solid body</span>
             </div>
           </button>
           <button class="piece-btn" data-type="R17" type="button">
-            <canvas width="56" height="40"></canvas>
+            <canvas width="72" height="52"></canvas>
             <div class="meta">
               <strong>R-17 3-Way Point</strong>
               <span>~1 unit long, 1→3</span>
@@ -99,16 +99,7 @@
         </div>
 
         <div class="tools">
-          <div class="section-label" style="padding: 0 0 4px">Edit</div>
-          <div class="tool-row">
-            <button type="button" id="btn-rotate" title="R">Rotate 45°</button>
-            <button type="button" id="btn-flip" title="F">Flip gender</button>
-          </div>
-          <div class="tool-row">
-            <button type="button" id="btn-delete">Delete</button>
-            <button type="button" id="btn-clear" class="ui danger">Clear</button>
-          </div>
-          <div class="section-label" style="padding: 8px 0 4px">File</div>
+          <div class="section-label" style="padding: 0 0 4px">File</div>
           <div class="tool-row">
             <button type="button" class="ui primary" id="btn-save">Save JSON</button>
             <button type="button" class="ui" id="btn-load">Load JSON</button>
@@ -119,17 +110,13 @@
             accept="application/json,.json"
             hidden
           />
-          <div class="section-label" style="padding: 8px 0 4px">Presets</div>
           <button type="button" class="ui primary" id="btn-meme">
             Load meme-style layout
           </button>
-          <button type="button" class="ui" id="btn-oval">Closed circle</button>
-          <button type="button" class="ui" id="btn-basin">
-            Open catch-basin
-          </button>
-          <button type="button" class="ui" id="btn-open">Open straight run</button>
-          <button type="button" class="ui" id="btn-walls">Toggle wall debug</button>
-          <button type="button" class="ui" id="btn-help">Help / design</button>
+          <div class="tool-row">
+            <button type="button" class="ui" id="btn-walls">Wall debug</button>
+            <button type="button" class="ui" id="btn-help">Help</button>
+          </div>
         </div>
       </aside>
 
@@ -142,6 +129,45 @@
       </div>
 
       <footer id="toolbar">
+        <div class="toolbar-edit" role="group" aria-label="Edit">
+          <button
+            type="button"
+            class="icon-btn"
+            id="btn-rotate"
+            title="Rotate 45° (R)"
+            aria-label="Rotate 45 degrees"
+          >
+            ↻
+          </button>
+          <button
+            type="button"
+            class="icon-btn icon-btn-emoji"
+            id="btn-flip"
+            title="Flip gender (F)"
+            aria-label="Flip gender"
+          >
+            🦄
+          </button>
+          <button
+            type="button"
+            class="icon-btn"
+            id="btn-delete"
+            title="Delete selected"
+            aria-label="Delete selected"
+          >
+            🗑
+          </button>
+          <button
+            type="button"
+            class="icon-btn icon-btn-danger"
+            id="btn-clear"
+            title="Clear board"
+            aria-label="Clear board"
+          >
+            ✕
+          </button>
+        </div>
+        <div class="sep"></div>
         <button type="button" class="ui primary" id="btn-start">Start</button>
         <button type="button" class="ui" id="btn-stop">Stop</button>
         <button type="button" class="ui" id="btn-reset-train">Reset train</button>
@@ -168,12 +194,15 @@
         <ul>
           <li>
             <strong>Left-drag</strong> from palette — magnetic snap joins open ends
-            (no auto-rotate / auto-flip). Rotate with R first if needed.
+            (no auto-rotate / auto-flip). Rotate with ↻ / R first if needed.
           </li>
           <li>
             <strong>Right-click rail</strong> — train ·
             <strong>piece</strong> — rotate ·
             <strong>empty + palette select</strong> — stamp.
+          </li>
+          <li>
+            Bottom bar: ↻ rotate · 🦄 flip gender · 🗑 delete · ✕ clear board.
           </li>
           <li><strong>Save / Load JSON</strong> for layouts.</li>
         </ul>

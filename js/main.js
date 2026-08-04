@@ -44,12 +44,7 @@ import {
   TrainMode,
 } from "./train.js";
 import { resizeCanvas, drawScene, drawPaletteIcon } from "./render.js";
-import {
-  loadMemeStyle,
-  loadOval,
-  loadOpenRun,
-  loadCatchBasin,
-} from "./presets.js";
+import { loadMemeStyle, loadOval } from "./presets.js";
 
 const canvas = document.getElementById("stage");
 const badgeEl = document.getElementById("mode-badge");
@@ -104,8 +99,8 @@ for (const type of paletteOrder) {
   if (!btn) continue;
   const c = btn.querySelector("canvas");
   if (c) {
-    c.width = 56;
-    c.height = 40;
+    c.width = 72;
+    c.height = 52;
     drawPaletteIcon(c, type);
   }
 
@@ -167,27 +162,6 @@ document.getElementById("btn-meme").addEventListener("click", () => {
   const info = loadMemeStyle(board, cx, cy);
   placeTrainAtHint(info.trainHint);
   setHint(info.note || "Meme-style layout loaded.");
-});
-document.getElementById("btn-oval").addEventListener("click", () => {
-  const cx = view.w / 2 + view.camX;
-  const cy = view.h / 2 + view.camY;
-  const info = loadOval(board, cx, cy);
-  placeTrainAtHint(info.trainHint);
-  setHint("Closed circle (8× R-03). Press Start to run.");
-});
-document.getElementById("btn-open").addEventListener("click", () => {
-  const cx = view.w / 2 + view.camX - UNIT * 1.5;
-  const cy = view.h / 2 + view.camY;
-  const info = loadOpenRun(board, cx, cy);
-  placeTrainAtHint(info.trainHint);
-  setHint("Open straight run — train will leave the rails and stop at the canvas edge.");
-});
-document.getElementById("btn-basin").addEventListener("click", () => {
-  const cx = view.w / 2 + view.camX;
-  const cy = view.h / 2 + view.camY;
-  const info = loadCatchBasin(board, cx, cy);
-  placeTrainAtHint(info.trainHint);
-  setHint(info.note);
 });
 document.getElementById("btn-help").addEventListener("click", () => {
   document.getElementById("help-modal").classList.add("open");
