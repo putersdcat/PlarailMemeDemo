@@ -210,13 +210,15 @@ export function rebuild(board) {
     }
   }
 
-  // Pair connectors
+  // Pair connectors (slightly forgiving so train graph stays continuous)
+  const LINK_DIST = SNAP_DIST * 1.15;
+  const LINK_FACE = SNAP_ANGLE * 1.85;
   const used = new Set();
   const pairs = [];
   for (let i = 0; i < connectors.length; i++) {
     if (used.has(i)) continue;
     let best = null;
-    let bestD = SNAP_DIST;
+    let bestD = LINK_DIST;
     for (let j = i + 1; j < connectors.length; j++) {
       if (used.has(j)) continue;
       const a = connectors[i];
@@ -227,7 +229,7 @@ export function rebuild(board) {
       if (d > bestD) continue;
       // Should face each other (~180°)
       const face = angleDiff(a.wang, b.wang + Math.PI);
-      if (face > SNAP_ANGLE * 1.5) continue;
+      if (face > LINK_FACE) continue;
       bestD = d;
       best = j;
     }
@@ -431,30 +433,41 @@ export function hitTestPiece(board, x, y) {
   return best ? { pieceId: best, lever: false } : null;
 }
 
-/** Closest active path sample to a point (for placing train). */
-export function closestPathPoint(board, x, y) {
+/**
+ * Closest active path sample to a point (for placing train / re-rail / hop).
+ * maxDist defaults to 48 so placement is forgiving.
+ */
+export function closestPathPoint(board, x, y, maxDist = 48) {
   let best = null;
-  let bestD = 36;
+  let bestD = maxDist;
   for (const path of board.pathIndex) {
     if (!path.active) continue;
     const pts = path.points;
+    if (!pts || pts.length < 2) continue;
     for (let i = 1; i < pts.length; i++) {
       const res = distToSeg(x, y, pts[i - 1], pts[i]);
       if (res.d < bestD) {
         bestD = res.d;
-        // approximate s along full path
         let along = 0;
         for (let k = 1; k < i; k++) {
-          along += Math.hypot(pts[k].x - pts[k - 1].x, pts[k].y - pts[k - 1].y);
+          along += Math.hypot(
+            pts[k].x - pts[k - 1].x,
+            pts[k].y - pts[k - 1].y
+          );
         }
-        along += res.t * Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+        along +=
+          res.t *
+          Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
         const s = path.length > 0 ? along / path.length : 0;
         best = {
           path,
           s: Math.max(0, Math.min(1, s)),
           x: res.x,
           y: res.y,
-          ang: Math.atan2(pts[i].y - pts[i - 1].y, pts[i].x - pts[i - 1].x),
+          ang: Math.atan2(
+            pts[i].y - pts[i - 1].y,
+            pts[i].x - pts[i - 1].x
+          ),
           dist: res.d,
         };
       }

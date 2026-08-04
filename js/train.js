@@ -1,11 +1,12 @@
 /**
- * Train state machine: OnRail / OffRail / Stopped + edge physics.
+ * Train: path following, derail → wall glide → re-rail, canvas edge stop.
  *
- * Wheelbase model (critical for meme edge-glide):
- *   Real Plarail engines guide on front bogie set back ~1/3 of body length
- *   from the nose. We treat the front axle as the path/collision probe so
- *   the train leaves curves and slides walls at a shallower angle than if
- *   the geometric center or nose were the contact point.
+ * Path solver:
+ *   1) Connectivity graph (gender-linked connectors)
+ *   2) Geometric hop at open joints (near endpoints, heading-matched)
+ * so visually joined track stays continuous even if a gender link is missing.
+ *
+ * Wheelbase: front axle guides path + wall contact (~1/3 body back from nose).
  */
 
 import {
@@ -24,40 +25,40 @@ export const TrainMode = {
 
 export const TRAIN_RADIUS = 10;
 export const TRAIN_LENGTH = 48;
-/** Distance from nose back to front axle ≈ 1/3 of body length. */
 export const FRONT_AXLE_FROM_NOSE = TRAIN_LENGTH / 3;
-/**
- * Front axle offset from body center along heading (+ = toward nose).
- * Nose is at +L/2; front axle at +L/2 - L/3 = +L/6.
- */
 export const FRONT_AXLE_OFFSET = TRAIN_LENGTH / 2 - FRONT_AXLE_FROM_NOSE;
-/** Rear axle for dual-circle collision (optional). */
 export const REAR_AXLE_OFFSET = -TRAIN_LENGTH * 0.28;
 export const WHEEL_RADIUS = 9;
 
-export const RE_RAIL_LATERAL = 18;
-export const RE_RAIL_ANGLE = (65 * Math.PI) / 180;
-export const EDGE_RESTITUTION = 0.1;
+/** Max lateral distance to snap onto a rail when placing / re-railing. */
+export const RE_RAIL_LATERAL = 22;
+export const RE_RAIL_ANGLE = (70 * Math.PI) / 180;
+/** Geometric hop between path ends when graph link is missing. */
+export const PATH_HOP_DIST = 30;
+export const PATH_HOP_ANGLE = (40 * Math.PI) / 180;
+export const EDGE_RESTITUTION = 0.15;
+/** Hit radius for selecting / dragging the train body. */
+export const TRAIN_HIT_R = 28;
 
 export function createTrain() {
   return {
     mode: TrainMode.IDLE,
-    /** Body center */
     x: 0,
     y: 0,
     ang: 0,
     speed: 140,
     pathRef: null,
-    /** Path parameter tracks the FRONT AXLE along the centerline */
+    /** Front axle parameter along current path [0,1] */
     s: 0,
+    /** +1 with path tangent, -1 against */
     dir: 1,
     vx: 0,
     vy: 0,
     reRailCooldown: 0,
+    selected: false,
   };
 }
 
-/** World position of front axle from body pose. */
 export function frontAxlePos(train) {
   return {
     x: train.x + Math.cos(train.ang) * FRONT_AXLE_OFFSET,
@@ -72,7 +73,6 @@ export function rearAxlePos(train) {
   };
 }
 
-/** Set body center so front axle sits at (ax, ay) with heading ang. */
 export function bodyFromFrontAxle(ax, ay, ang) {
   return {
     x: ax - Math.cos(ang) * FRONT_AXLE_OFFSET,
@@ -81,18 +81,34 @@ export function bodyFromFrontAxle(ax, ay, ang) {
   };
 }
 
-export function placeTrainOnPath(train, hit) {
-  if (!hit) return false;
+/** True if (x,y) is over the train body (for select/drag). */
+export function hitTestTrain(train, x, y, placed) {
+  if (!placed || !train) return false;
+  return Math.hypot(train.x - x, train.y - y) <= TRAIN_HIT_R;
+}
+
+/**
+ * Seat train on a path hit. opts.dir: +1 / -1 travel direction.
+ * opts.keepDir: keep train.dir if already set.
+ */
+export function placeTrainOnPath(train, hit, opts = {}) {
+  if (!hit?.path) return false;
   train.mode = TrainMode.IDLE;
   train.pathRef = {
     path: hit.path,
     pieceId: hit.path.pieceId,
     pathId: hit.path.id,
   };
-  train.s = hit.s;
-  train.dir = 1;
-  // hit is where user clicked — put front axle there, body trails behind
-  const ang = hit.ang;
+  train.s = Math.max(0, Math.min(1, hit.s));
+  if (opts.dir === 1 || opts.dir === -1) {
+    train.dir = opts.dir;
+  } else if (!opts.keepDir) {
+    train.dir = 1;
+  }
+  // Match heading to path + direction
+  const pathAng = hit.ang;
+  const ang =
+    train.dir > 0 ? pathAng : normalizeAngle(pathAng + Math.PI);
   const body = bodyFromFrontAxle(hit.x, hit.y, ang);
   train.x = body.x;
   train.y = body.y;
@@ -100,6 +116,42 @@ export function placeTrainOnPath(train, hit) {
   train.vx = 0;
   train.vy = 0;
   return true;
+}
+
+/** Reverse travel direction (flip). Keeps front axle on path if possible. */
+export function flipTrainDirection(train, board) {
+  train.dir = train.dir >= 0 ? -1 : 1;
+  train.ang = normalizeAngle(train.ang + Math.PI);
+  if (train.pathRef && board) {
+    const live = resolveLivePath(board, train.pathRef);
+    if (live) {
+      const p = pointOnPolyline(live.points, train.s);
+      const ang =
+        train.dir > 0 ? p.ang : normalizeAngle(p.ang + Math.PI);
+      const body = bodyFromFrontAxle(p.x, p.y, ang);
+      train.x = body.x;
+      train.y = body.y;
+      train.ang = ang;
+    }
+  } else {
+    // Free: just reverse heading; body center fixed, nose flips
+    const body = bodyFromFrontAxle(
+      train.x + Math.cos(train.ang - Math.PI) * FRONT_AXLE_OFFSET,
+      train.y + Math.sin(train.ang - Math.PI) * FRONT_AXLE_OFFSET,
+      train.ang
+    );
+    // Simpler: keep center, only ang flipped already
+  }
+  train.vx = 0;
+  train.vy = 0;
+  return train;
+}
+
+/** Snap train pose to nearest path under (x,y); preserves dir. */
+export function snapTrainToPoint(train, board, x, y, maxDist = 48) {
+  const hit = closestPathPoint(board, x, y, maxDist);
+  if (!hit) return false;
+  return placeTrainOnPath(train, hit, { keepDir: true });
 }
 
 export function startTrain(train) {
@@ -129,6 +181,8 @@ export function resetTrainHard(train) {
   train.vx = 0;
   train.vy = 0;
   train.s = 0;
+  train.dir = 1;
+  train.selected = false;
 }
 
 export function updateTrain(train, board, dt, bounds) {
@@ -143,49 +197,73 @@ export function updateTrain(train, board, dt, bounds) {
   }
 }
 
+function resolveLivePath(board, pref) {
+  if (!pref) return null;
+  return (
+    board.pathIndex.find(
+      (p) => p.pieceId === pref.pieceId && p.id === pref.pathId && p.active
+    ) || null
+  );
+}
+
 function stepOnRail(train, board, dt) {
   const pref = train.pathRef;
-  if (!pref || !pref.path) {
+  if (!pref) {
     leaveRails(train);
     return;
   }
 
-  let live = board.pathIndex.find(
-    (p) => p.pieceId === pref.pieceId && p.id === pref.pathId && p.active
-  );
+  let live = resolveLivePath(board, pref);
   if (!live) {
-    leaveRails(train);
-    return;
+    // Switch may have de-activated this route — try geometric re-seat
+    const fa = frontAxlePos(train);
+    const hit = closestPathPoint(board, fa.x, fa.y, RE_RAIL_LATERAL + 8);
+    if (hit) {
+      placeTrainOnPath(train, hit, { keepDir: true });
+      train.mode = TrainMode.ON_RAIL;
+      live = resolveLivePath(board, train.pathRef);
+    }
+    if (!live) {
+      leaveRails(train);
+      return;
+    }
   }
   train.pathRef.path = live;
 
-  let len = live.length || 1;
-  // Advance front axle along path
-  const ds = (train.speed * dt) / len;
-  train.s += ds * train.dir;
+  let len = live.length || 1e-6;
+  // Advance in absolute path-length space (px)
+  const dist = train.speed * dt;
+  train.s += (dist / len) * train.dir;
 
   let guard = 0;
-  while ((train.s > 1 || train.s < 0) && guard++ < 12) {
+  while ((train.s > 1 || train.s < 0) && guard++ < 16) {
     const atHigh = train.s > 1;
-    const overshoot = atHigh ? train.s - 1 : -train.s;
-    const leavingHigh = (train.dir > 0 && atHigh) || (train.dir < 0 && !atHigh);
+    const overshootPx = atHigh
+      ? (train.s - 1) * len
+      : -train.s * len;
+    // dir>0 leaves at s=1 (toC); dir<0 leaves at s=0 (fromC)
+    const leavingHigh = train.dir > 0;
     const exitConn = leavingHigh ? live.toC : live.fromC;
-
     const endS = leavingHigh ? 1 : 0;
     const pose = pointOnPolyline(live.points, endS);
-    if (train.dir > 0) {
-      train.ang = leavingHigh ? pose.ang : normalizeAngle(pose.ang + Math.PI);
-    } else {
-      train.ang = leavingHigh
-        ? normalizeAngle(pose.ang + Math.PI)
-        : pose.ang;
-    }
-    // Park front axle at endpoint while resolving graph hop
-    const body = bodyFromFrontAxle(pose.x, pose.y, train.ang);
+
+    // pose.ang = path tangent along increasing s at this end.
+    // Travel heading follows dir.
+    const travelAng =
+      train.dir > 0 ? pose.ang : normalizeAngle(pose.ang + Math.PI);
+    train.ang = travelAng;
+    const body = bodyFromFrontAxle(pose.x, pose.y, travelAng);
     train.x = body.x;
     train.y = body.y;
 
-    const next = findNextPath(board, live, exitConn, train);
+    const next = findNextPath(
+      board,
+      live,
+      exitConn,
+      pose,
+      travelAng,
+      train
+    );
     if (!next) {
       leaveRails(train);
       return;
@@ -197,26 +275,38 @@ function stepOnRail(train, board, dt) {
       pathId: next.path.id,
     };
     train.dir = next.dir;
-    train.s = next.s;
-    const nlen = next.path.length || 1;
-    const extra = (overshoot * len) / nlen;
-    train.s += extra * train.dir;
     live = next.path;
-    len = nlen;
+    len = live.length || 1e-6;
+    // Enter at end, then consume overshoot in px
+    train.s = next.s + (overshootPx / len) * train.dir;
   }
 
+  // Clamp tiny float noise
+  if (train.s < 0 && train.s > -1e-6) train.s = 0;
+  if (train.s > 1 && train.s < 1 + 1e-6) train.s = 1;
+
   if (train.s >= 0 && train.s <= 1) {
-    const cur = train.pathRef.path;
+    const cur = resolveLivePath(board, train.pathRef) || train.pathRef.path;
     const p = pointOnPolyline(cur.points, train.s);
-    train.ang = train.dir > 0 ? p.ang : normalizeAngle(p.ang + Math.PI);
-    // Front axle on path → body trails behind (shallower exit from curves)
+    train.ang =
+      train.dir > 0 ? p.ang : normalizeAngle(p.ang + Math.PI);
     const body = bodyFromFrontAxle(p.x, p.y, train.ang);
     train.x = body.x;
     train.y = body.y;
   }
 }
 
-function findNextPath(board, live, exitConnId, train) {
+/**
+ * Continuous path solver:
+ * graph link first, then geometric endpoint hop (heading-matched).
+ */
+function findNextPath(board, live, exitConnId, exitPose, travelAng, train) {
+  const fromGraph = findNextFromGraph(board, live, exitConnId, travelAng);
+  if (fromGraph) return fromGraph;
+  return findNextGeometric(board, live, exitPose.x, exitPose.y, travelAng);
+}
+
+function findNextFromGraph(board, live, exitConnId, travelAng) {
   const graph = board.graph;
   if (!graph) return null;
 
@@ -232,52 +322,100 @@ function findNextPath(board, live, exitConnId, train) {
       if (!other) continue;
       for (const e2 of other.edges) {
         if (e2.link || !e2.path) continue;
-        candidates.push(pathEntryFromEdge(e2));
+        if (!e2.path.active) continue;
+        const entry = pathEntryFromEdge(e2);
+        if (entry) candidates.push(entry);
       }
     } else if (e.path) {
       if (e.path.pieceId === live.pieceId && e.path.id === live.id) continue;
-      candidates.push(pathEntryFromEdge(e));
+      if (!e.path.active) continue;
+      // Same-piece path change (turnouts / 3-way at shared connector)
+      const entry = pathEntryFromEdge(e);
+      if (entry) candidates.push(entry);
     }
   }
 
-  if (candidates.length === 0) return null;
-
-  const travelAng = train.ang;
+  if (!candidates.length) return null;
   candidates.sort(
     (a, b) =>
       angleDiff(a.entryAng, travelAng) - angleDiff(b.entryAng, travelAng)
   );
-  return candidates[0];
+  // Reject absurd U-turns unless only option
+  const best = candidates[0];
+  if (angleDiff(best.entryAng, travelAng) > Math.PI * 0.75 && candidates.length > 1) {
+    return candidates[1];
+  }
+  return best;
 }
 
 function pathEntryFromEdge(edge) {
   const path = edge.path;
+  if (!path?.points?.length) return null;
   const reverse = edge.reverse;
   const s = reverse ? 1 : 0;
   const dir = reverse ? -1 : 1;
   const pose = pointOnPolyline(path.points, s);
-  const entryAng = dir > 0 ? pose.ang : normalizeAngle(pose.ang + Math.PI);
+  const entryAng =
+    dir > 0 ? pose.ang : normalizeAngle(pose.ang + Math.PI);
   return { path, s, dir, entryAng };
+}
+
+/** Join paths whose ends sit near each other with matching heading. */
+function findNextGeometric(board, live, x, y, travelAng) {
+  const candidates = [];
+  for (const path of board.pathIndex) {
+    if (!path.active) continue;
+    if (path.pieceId === live.pieceId && path.id === live.id) continue;
+    if (!path.points || path.points.length < 2) continue;
+
+    // Enter at start going forward (increasing s)
+    {
+      const pose = pointOnPolyline(path.points, 0);
+      const d = Math.hypot(pose.x - x, pose.y - y);
+      if (d <= PATH_HOP_DIST) {
+        const entryAng = pose.ang;
+        const err = angleDiff(entryAng, travelAng);
+        if (err <= PATH_HOP_ANGLE) {
+          candidates.push({ path, s: 0, dir: 1, entryAng, d, err });
+        }
+      }
+    }
+    // Enter at end going reverse (decreasing s)
+    {
+      const pose = pointOnPolyline(path.points, 1);
+      const d = Math.hypot(pose.x - x, pose.y - y);
+      if (d <= PATH_HOP_DIST) {
+        // At s=1, increasing-s tangent is pose.ang; reverse travel faces opposite
+        const entryAng = normalizeAngle(pose.ang + Math.PI);
+        const err = angleDiff(entryAng, travelAng);
+        if (err <= PATH_HOP_ANGLE) {
+          candidates.push({ path, s: 1, dir: -1, entryAng, d, err });
+        }
+      }
+    }
+  }
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => a.err * 40 + a.d - (b.err * 40 + b.d));
+  return candidates[0];
 }
 
 function leaveRails(train) {
   train.mode = TrainMode.OFF_RAIL;
   train.pathRef = null;
-  // Keep body heading; velocity along nose
   train.vx = Math.cos(train.ang) * train.speed;
   train.vy = Math.sin(train.ang) * train.speed;
-  train.reRailCooldown = 0.4;
+  // Longer ignore so we clear the mouth / don't instantly re-rail on wrong leg
+  train.reRailCooldown = 0.45;
 }
 
 function stepOffRail(train, board, dt, bounds) {
-  // Integrate body center
   let x = train.x + train.vx * dt;
   let y = train.y + train.vy * dt;
   let ang = train.ang;
   let vx = train.vx;
   let vy = train.vy;
 
-  // Canvas edge uses body center
+  // Canvas edge — stop
   if (
     x < bounds.minX ||
     x > bounds.maxX ||
@@ -292,12 +430,10 @@ function stepOffRail(train, board, dt, bounds) {
     return;
   }
 
-  // Collide using FRONT AXLE (primary) + rear axle — not the body center.
-  // This matches the short wheelbase: walls push the guiding wheels, body yaws.
+  // Wall glide — front axle primary, rear secondary
   let hitAny = false;
-  for (let iter = 0; iter < 5; iter++) {
+  for (let iter = 0; iter < 6; iter++) {
     let hit = false;
-    // Recompute axle positions from current body pose
     const fa = {
       x: x + Math.cos(ang) * FRONT_AXLE_OFFSET,
       y: y + Math.sin(ang) * FRONT_AXLE_OFFSET,
@@ -312,41 +448,41 @@ function stepOffRail(train, board, dt, bounds) {
       [ra, false],
     ]) {
       for (const w of board.walls) {
-        const res = resolveCircleSegment(axle.x, axle.y, WHEEL_RADIUS, w);
+        const res = resolveCircleSegment(
+          axle.x,
+          axle.y,
+          WHEEL_RADIUS,
+          w
+        );
         if (!res) continue;
         hit = true;
         hitAny = true;
-        // Displacement of this axle
-        const dx = res.x - axle.x;
-        const dy = res.y - axle.y;
-        // Move whole body by the push
-        x += dx;
-        y += dy;
-        // Velocity response at contact
+        x += res.x - axle.x;
+        y += res.y - axle.y;
+
         const nx = res.nx;
         const ny = res.ny;
         const vn = vx * nx + vy * ny;
         if (vn < 0) {
+          // Slide along wall: kill normal component, keep tangent
           vx = vx - (1 + EDGE_RESTITUTION) * vn * nx;
           vy = vy - (1 + EDGE_RESTITUTION) * vn * ny;
+          // Prefer pure wall slide for toy feel
+          const tx = -ny;
+          const ty = nx;
+          const along = vx * tx + vy * ty;
+          const sign = along >= 0 ? 1 : -1;
+          // Blend: mostly slide, little bounce
+          const sp = train.speed;
+          vx = vx * 0.25 + tx * sign * sp * 0.75;
+          vy = vy * 0.25 + ty * sign * sp * 0.75;
         }
-        // Front axle hits steer the heading more (guiding bogie)
+
         if (isFront) {
           const sp = Math.hypot(vx, vy);
           if (sp > 1e-3) {
-            // Blend velocity heading into ang — shallower than nose-first
             const vAng = Math.atan2(vy, vx);
-            ang = normalizeAngle(ang + 0.55 * normalizeAngle(vAng - ang));
-          }
-          // If nearly head-on, slide along wall using tangent from front axle
-          if (Math.hypot(vx, vy) < train.speed * 0.2) {
-            const tx = -ny;
-            const ty = nx;
-            const d1 = Math.cos(ang) * tx + Math.sin(ang) * ty;
-            const sign = d1 >= 0 ? 1 : -1;
-            vx = tx * sign * train.speed;
-            vy = ty * sign * train.speed;
-            ang = Math.atan2(vy, vx);
+            ang = normalizeAngle(ang + 0.65 * normalizeAngle(vAng - ang));
           }
         }
       }
@@ -354,15 +490,14 @@ function stepOffRail(train, board, dt, bounds) {
     if (!hit) break;
   }
 
-  // Toy motor: keep cruise speed along heading
+  // Cruise speed
   let sp = Math.hypot(vx, vy);
   if (sp > 1e-3) {
     const target = train.speed;
     vx = (vx / sp) * target;
     vy = (vy / sp) * target;
-    // Soft align body to velocity (front-guided feel)
     const vAng = Math.atan2(vy, vx);
-    ang = normalizeAngle(ang + 0.35 * normalizeAngle(vAng - ang));
+    ang = normalizeAngle(ang + 0.4 * normalizeAngle(vAng - ang));
   } else if (hitAny) {
     vx = Math.cos(ang) * train.speed;
     vy = Math.sin(ang) * train.speed;
@@ -393,7 +528,7 @@ function resolveCircleSegment(cx, cy, radius, seg) {
   if (dist >= radius || dist < 1e-8) return null;
   nx /= dist;
   ny /= dist;
-  const push = radius - dist;
+  const push = radius - dist + 0.5;
   return {
     x: cx + nx * push,
     y: cy + ny * push,
@@ -403,19 +538,19 @@ function resolveCircleSegment(cx, cy, radius, seg) {
 }
 
 function tryRerail(train, board) {
-  // Re-rail based on FRONT AXLE position / heading
   const fa = frontAxlePos(train);
-  const hit = closestPathPoint(board, fa.x, fa.y);
-  if (!hit || hit.dist > RE_RAIL_LATERAL) return;
+  const hit = closestPathPoint(board, fa.x, fa.y, RE_RAIL_LATERAL + 6);
+  if (!hit) return;
 
   const pathAng = hit.ang;
   const d1 = angleDiff(train.ang, pathAng);
   const d2 = angleDiff(train.ang, pathAng + Math.PI);
   const best = Math.min(d1, d2);
 
-  const nearMouth = hit.s < 0.12 || hit.s > 0.88;
-  const angLimit = nearMouth ? RE_RAIL_ANGLE * 1.15 : RE_RAIL_ANGLE;
-  const latLimit = nearMouth ? RE_RAIL_LATERAL + 6 : RE_RAIL_LATERAL;
+  // Prefer mid-path re-rail (mouth re-entry is looser)
+  const nearMouth = hit.s < 0.1 || hit.s > 0.9;
+  const angLimit = nearMouth ? RE_RAIL_ANGLE * 1.05 : RE_RAIL_ANGLE * 0.85;
+  const latLimit = nearMouth ? RE_RAIL_LATERAL + 4 : RE_RAIL_LATERAL - 2;
   if (hit.dist > latLimit || best > angLimit) return;
 
   train.mode = TrainMode.ON_RAIL;

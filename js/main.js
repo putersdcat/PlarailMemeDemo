@@ -38,6 +38,9 @@ import {
 import {
   createTrain,
   placeTrainOnPath,
+  snapTrainToPoint,
+  flipTrainDirection,
+  hitTestTrain,
   startTrain,
   stopTrain,
   resetTrainHard,
@@ -222,6 +225,14 @@ document.getElementById("btn-rotate").addEventListener("click", () => {
 document.getElementById("btn-flip").addEventListener("click", () => {
   if (ghost) {
     flipGhost();
+  } else if (trainPlaced && (train.selected || (!board.selectedId && selectedIds.size === 0))) {
+    // Flip train travel direction when train is the selection target
+    flipTrainDirection(train, board);
+    train.selected = true;
+    clearSelection();
+    setHint(
+      `Train facing ${train.dir > 0 ? "forward" : "reverse"}. Start to run that way.`
+    );
   } else {
     for (const id of selectedIds.size ? selectedIds : [board.selectedId]) {
       if (id) flipPiece(board, id);
@@ -395,22 +406,13 @@ function downloadJsonFile(json, filename) {
 }
 
 function tryPlaceTrainAt(x, y, maxDist = 48) {
-  const hit = closestPathPoint(board, x, y);
-  if (hit && hit.dist <= maxDist) {
-    placeTrainOnPath(train, hit);
+  const hit = closestPathPoint(board, x, y, maxDist);
+  if (hit) {
+    placeTrainOnPath(train, hit, { keepDir: true, dir: train.dir || 1 });
     trainPlaced = true;
     running = false;
-    train.mode = TrainMode.IDLE;
     return true;
   }
-  // Free place off-rail (still visible; Start will slide)
-  train.x = x;
-  train.y = y;
-  train.ang = 0;
-  train.pathRef = null;
-  train.mode = TrainMode.IDLE;
-  trainPlaced = true;
-  running = false;
   return false;
 }
 
@@ -422,11 +424,10 @@ function dateStamp() {
 
 btnStart.addEventListener("click", () => {
   if (!trainPlaced) {
-    // Auto-place on nearest path to center if possible
     const cx = view.camX + view.w / 2;
     const cy = view.camY + view.h / 2;
     if (!tryPlaceTrainAt(cx, cy, 2000)) {
-      setHint("Drag 🚂 train onto a rail (or right-click a path), then Start.");
+      setHint("Drag 🚂 train from the palette onto a rail, then Start.");
       return;
     }
   }
@@ -434,15 +435,18 @@ btnStart.addEventListener("click", () => {
     setHint("Train hit the edge. Reset Train, place on rail, then Start.");
     return;
   }
-  // If idle off-path, try re-snap under train body
   if (!train.pathRef) {
-    tryPlaceTrainAt(train.x, train.y, 50);
+    if (!tryPlaceTrainAt(train.x, train.y, 56)) {
+      setHint("Train is not on a rail — drag 🚂 onto a blue path.");
+      return;
+    }
   }
   if (startTrain(train)) {
     running = true;
-    setHint("Running. Open ends derail; walls glide; canvas edge stops.");
+    train.selected = false;
+    setHint("Running. Follows connected track · open ends derail · walls glide.");
   } else {
-    setHint("Could not start — put the train on an active rail path first.");
+    setHint("Could not start — seat the train on an active rail path first.");
   }
 });
 btnStop.addEventListener("click", () => {
@@ -453,7 +457,7 @@ btnResetTrain.addEventListener("click", () => {
   running = false;
   resetTrainHard(train);
   trainPlaced = false;
-  setHint("Train cleared. Drag 🚂 onto a rail (or right-click path), then Start.");
+  setHint("Train cleared. Drag 🚂 from palette onto a rail, then Start.");
   updateStatus();
 });
 
@@ -652,7 +656,7 @@ function onPointerDown(e) {
     return;
   }
 
-  // ── RIGHT CLICK: train first (on rails), then switch / rotate ──
+  // ── RIGHT CLICK: piece rotate / switch only (never place train) ──
   if (e.button === 2) {
     e.preventDefault();
     handleRightClick(p);
@@ -663,11 +667,23 @@ function onPointerDown(e) {
 
   canvas.setPointerCapture?.(e.pointerId);
 
-  // Train tool click / drag on canvas
+  // Train tool from palette — place/move like a piece
   if (trainTool) {
     beginTrainDrag(e, p);
     return;
   }
+
+  // Click existing train body first (select + drag along track)
+  if (hitTestTrain(train, p.x, p.y, trainPlaced)) {
+    running = false;
+    stopTrain(train);
+    train.selected = true;
+    clearSelection();
+    beginTrainDrag(e, p, { fromExisting: true });
+    setHint("Train selected. Drag along rails · 🦄 / F flips direction · Start runs.");
+    return;
+  }
+  train.selected = false;
 
   // Hit-test piece / lever
   const hit = hitTestPiece(board, p.x, p.y);
@@ -765,18 +781,11 @@ function onPointerDown(e) {
   };
 }
 
+/**
+ * Right-click is ONLY for track edits — never places the train
+ * (train is placed like a piece via 🚂 drag / click).
+ */
 function handleRightClick(p) {
-  // PRIORITY: place train on rail (even when over a piece body)
-  const pathHit = closestPathPoint(board, p.x, p.y);
-  if (pathHit && pathHit.dist < 32) {
-    placeTrainOnPath(train, pathHit);
-    trainPlaced = true;
-    running = false;
-    setHint("Train on rail. Press Start (or Space).");
-    updateStatus();
-    return;
-  }
-
   const hit = hitTestPiece(board, p.x, p.y);
 
   if (hit?.lever) {
@@ -806,22 +815,29 @@ function handleRightClick(p) {
   }
 
   setHint(
-    "Right-click rail → train · piece → rotate · empty+palette → stamp · lever → switch."
+    "Right-click piece → rotate · lever → switch · empty+palette → stamp. Place train with 🚂."
   );
 }
 
-function beginTrainDrag(e, worldP) {
+function beginTrainDrag(e, worldP, opts = {}) {
   const p = worldP || canvasPoint(e);
-  trainGhost = { x: p.x, y: p.y, onRail: false };
+  running = false;
+  stopTrain(train);
+  trainGhost = {
+    x: p.x,
+    y: p.y,
+    onRail: false,
+    dir: train.dir || 1,
+  };
   drag = {
     kind: "train",
     pointerId: e.pointerId,
     moved: false,
     startX: e.clientX,
     startY: e.clientY,
+    fromExisting: !!opts.fromExisting,
   };
   canvas.classList.add("dragging");
-  // If started from palette, may need to track over canvas
   try {
     canvas.setPointerCapture?.(e.pointerId);
   } catch {
@@ -831,17 +847,20 @@ function beginTrainDrag(e, worldP) {
 }
 
 function updateTrainGhost(x, y) {
-  const hit = closestPathPoint(board, x, y);
-  if (hit && hit.dist < 40) {
+  const hit = closestPathPoint(board, x, y, 52);
+  const dir = train.dir || 1;
+  if (hit) {
+    const ang = dir > 0 ? hit.ang : hit.ang + Math.PI;
     trainGhost = {
       x: hit.x,
       y: hit.y,
-      ang: hit.ang,
+      ang,
       onRail: true,
       hit,
+      dir,
     };
   } else {
-    trainGhost = { x, y, ang: 0, onRail: false, hit: null };
+    trainGhost = { x, y, ang: train.ang || 0, onRail: false, hit: null, dir };
   }
 }
 
@@ -1022,19 +1041,26 @@ function onPointerUp(e) {
     const p = canvasPoint(e);
     updateTrainGhost(p.x, p.y);
     if (trainGhost?.onRail && trainGhost.hit) {
-      placeTrainOnPath(train, trainGhost.hit);
+      placeTrainOnPath(train, trainGhost.hit, {
+        dir: train.dir || 1,
+        keepDir: true,
+      });
       trainPlaced = true;
+      train.selected = true;
       running = false;
-      setHint("Train on rails. Press Start (or Space).");
-    } else if (trainGhost) {
-      tryPlaceTrainAt(trainGhost.x, trainGhost.y, 40);
+      clearSelection();
       setHint(
-        trainPlaced
-          ? "Train near rails — drag closer for a clean snap, then Start."
-          : "Drop the train on a blue rail path."
+        "Train on rails. 🦄 / F flips direction · Start / Space runs."
       );
+    } else {
+      setHint("Drop the train on a blue rail centerline (green ring = snapped).");
+      if (!drag.fromExisting) {
+        // Cancelled new place — leave previous train if any
+      }
     }
     trainGhost = null;
+    trainTool = false;
+    refreshPaletteActive();
     drag = { suppressClick: true };
     setTimeout(() => {
       if (drag?.suppressClick) drag = null;
@@ -1142,10 +1168,11 @@ function onPointerUp(e) {
 
 function placeTrainAtHint(hint) {
   if (!hint) return;
-  const hit = closestPathPoint(board, hint.x, hint.y);
+  const hit = closestPathPoint(board, hint.x, hint.y, 80);
   if (hit) {
-    placeTrainOnPath(train, hit);
+    placeTrainOnPath(train, hit, { dir: 1 });
     trainPlaced = true;
+    train.selected = false;
     running = false;
     updateStatus();
   }

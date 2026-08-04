@@ -130,29 +130,38 @@ export function drawScene(ctx, view, board, train, ghost, opts = {}) {
     ctx.setLineDash([]);
   }
 
-  // Train ghost while placing
+  // Train ghost while placing / dragging (piece-like)
   if (opts.trainGhost) {
     const g = opts.trainGhost;
     ctx.save();
-    ctx.globalAlpha = g.onRail ? 0.95 : 0.45;
+    ctx.globalAlpha = g.onRail ? 0.95 : 0.4;
+    const ang = g.ang || 0;
     const ghostTrain = {
-      x: g.x,
-      y: g.y,
-      ang: g.ang || 0,
+      x: g.onRail ? g.x - Math.cos(ang) * FRONT_AXLE_OFFSET : g.x,
+      y: g.onRail ? g.y - Math.sin(ang) * FRONT_AXLE_OFFSET : g.y,
+      ang,
       mode: TrainMode.IDLE,
+      selected: true,
     };
-    // Offset body so front axle sits on rail hit
-    if (g.onRail) {
-      ghostTrain.x = g.x - Math.cos(g.ang || 0) * FRONT_AXLE_OFFSET;
-      ghostTrain.y = g.y - Math.sin(g.ang || 0) * FRONT_AXLE_OFFSET;
-    }
     drawTrain(ctx, ghostTrain);
     if (g.onRail) {
-      ctx.strokeStyle = "rgba(80, 200, 120, 0.9)";
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = "rgba(80, 200, 120, 0.95)";
+      ctx.lineWidth = 2.5;
       ctx.beginPath();
-      ctx.arc(g.x, g.y, 14, 0, Math.PI * 2);
+      ctx.arc(g.x, g.y, 16, 0, Math.PI * 2);
       ctx.stroke();
+      // Direction chevron at nose
+      ctx.fillStyle = "rgba(80, 200, 120, 0.9)";
+      ctx.beginPath();
+      const nx = Math.cos(ang);
+      const ny = Math.sin(ang);
+      const tipX = g.x + nx * 28;
+      const tipY = g.y + ny * 28;
+      ctx.moveTo(tipX, tipY);
+      ctx.lineTo(tipX - nx * 12 + ny * 7, tipY - ny * 12 - nx * 7);
+      ctx.lineTo(tipX - nx * 12 - ny * 7, tipY - ny * 12 + nx * 7);
+      ctx.closePath();
+      ctx.fill();
     }
     ctx.restore();
   } else if (opts.trainVisible && train) {
@@ -366,6 +375,15 @@ export function drawTrain(ctx, train) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(ang);
+
+  // Selection halo
+  if (train.selected) {
+    ctx.strokeStyle = "rgba(240, 192, 64, 0.9)";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, TRAIN_LENGTH * 0.55, TRAIN_RADIUS + 8, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
 
   // shadow
   ctx.fillStyle = "rgba(0,0,0,0.18)";
