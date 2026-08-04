@@ -115,19 +115,19 @@ export function loadMemeStyle(board, cx, cy) {
   addPiece(board, PIECE_TYPES.R12, cx - UNIT * 0.2, cy - UNIT * 0.95, 2, {
     switchState: 0,
   });
-  addPiece(board, PIECE_TYPES.RY3, cx + UNIT * 0.9, cy - UNIT * 0.2, 0, {
+  addPiece(board, PIECE_TYPES.R17, cx + UNIT * 0.9, cy - UNIT * 0.2, 0, {
     switchState: 1,
   });
 
-  // Large / shallow curves + 90° quarters for outer arcs
-  addPiece(board, PIECE_TYPES.R09, cx + LARGE_R * 0.15, cy + UNIT * 1.6, 0);
-  addPiece(board, PIECE_TYPES.R09, cx + LARGE_R * 0.15, cy + UNIT * 1.6, 1);
+  // Large curves (R-04) + 90° convenience pieces
+  addPiece(board, PIECE_TYPES.R04, cx + LARGE_R * 0.15, cy + UNIT * 1.6, 0);
+  addPiece(board, PIECE_TYPES.R04, cx + LARGE_R * 0.15, cy + UNIT * 1.6, 1);
   addPiece(board, PIECE_TYPES.R90, cx - UNIT * 1.4, cy - UNIT * 0.2, 3);
   addPiece(board, PIECE_TYPES.R90, cx + UNIT * 1.4, cy + UNIT * 0.2, 7);
 
-  // Long straights + stop bump (geometry only)
-  addPiece(board, PIECE_TYPES.R01L, cx, cy + UNIT * 0.55, 0, { flip: true });
-  addPiece(board, PIECE_TYPES.R01S, cx - UNIT * 0.2, cy - UNIT * 1.55, 0);
+  // R-07 double straight + R-08 stop
+  addPiece(board, PIECE_TYPES.R07, cx, cy + UNIT * 0.55, 0, { flip: true });
+  addPiece(board, PIECE_TYPES.R08, cx - UNIT * 0.2, cy - UNIT * 1.55, 0);
 
   // Half straights + extra curves for wall mass (meme bounce surfaces)
   addPiece(board, PIECE_TYPES.R02, cx + UNIT * 1.6, cy - UNIT * 0.4, 2);
@@ -144,7 +144,7 @@ export function loadMemeStyle(board, cx, cy) {
 
   return {
     trainHint: { x: cx, y: outer.yBottom },
-    note: "Meme-style cluster: outer loop, large curves, Y-3 split, slopes. Build your own with magnetic snap for the screenshot layout.",
+    note: "Meme-style cluster (R-01…R-17 units). Drag pieces; snap does not auto-rotate.",
   };
 }
 

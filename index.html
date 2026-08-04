@@ -12,8 +12,8 @@
         <header>
           <h1>Plarail Meme Sim</h1>
           <p>
-            <strong>Left-drag</strong> from palette to place (snap).<br />
-            <strong>Right-click:</strong> train · rotate · stamp selected.
+            Unit = R-01 = R-03 radius.<br />
+            <strong>Left-drag</strong> place · <strong>Right-click</strong> train/rotate.
           </p>
         </header>
 
@@ -23,77 +23,77 @@
             <canvas width="56" height="40"></canvas>
             <div class="meta">
               <strong>R-01 Straight</strong>
-              <span>Standard length</span>
-            </div>
-          </button>
-          <button class="piece-btn" data-type="R01L" type="button">
-            <canvas width="56" height="40"></canvas>
-            <div class="meta">
-              <strong>R-L Long Straight</strong>
-              <span>2× length</span>
-            </div>
-          </button>
-          <button class="piece-btn" data-type="R01S" type="button">
-            <canvas width="56" height="40"></canvas>
-            <div class="meta">
-              <strong>R-Stop Straight</strong>
-              <span>Long + side bump-out</span>
+              <span>1 unit</span>
             </div>
           </button>
           <button class="piece-btn" data-type="R02" type="button">
             <canvas width="56" height="40"></canvas>
             <div class="meta">
               <strong>R-02 Half</strong>
-              <span>1/2 straight</span>
+              <span>0.5 unit</span>
             </div>
           </button>
           <button class="piece-btn" data-type="R03" type="button">
             <canvas width="56" height="40"></canvas>
             <div class="meta">
               <strong>R-03 Curve 45°</strong>
-              <span>Standard curve</span>
+              <span>Radius 1 unit</span>
+            </div>
+          </button>
+          <button class="piece-btn" data-type="R04" type="button">
+            <canvas width="56" height="40"></canvas>
+            <div class="meta">
+              <strong>R-04 Large Curve</strong>
+              <span>45°, radius ~1.4 unit</span>
+            </div>
+          </button>
+          <button class="piece-btn" data-type="R07" type="button">
+            <canvas width="56" height="40"></canvas>
+            <div class="meta">
+              <strong>R-07 Double Straight</strong>
+              <span>2 units</span>
+            </div>
+          </button>
+          <button class="piece-btn" data-type="R08" type="button">
+            <canvas width="56" height="40"></canvas>
+            <div class="meta">
+              <strong>R-08 Stop Rail</strong>
+              <span>1 unit + stop bump</span>
             </div>
           </button>
           <button class="piece-btn" data-type="R90" type="button">
             <canvas width="56" height="40"></canvas>
             <div class="meta">
-              <strong>R-90 Curve 90°</strong>
-              <span>Quarter turn (sharper)</span>
-            </div>
-          </button>
-          <button class="piece-btn" data-type="R09" type="button">
-            <canvas width="56" height="40"></canvas>
-            <div class="meta">
-              <strong>R-09 Large Curve</strong>
-              <span>Shallower 45° (2× R)</span>
+              <strong>R-90* Curve 90°</strong>
+              <span>2×R-03 (sim only)</span>
             </div>
           </button>
           <button class="piece-btn" data-type="R11" type="button">
             <canvas width="56" height="40"></canvas>
             <div class="meta">
               <strong>R-11 Turnout</strong>
-              <span>Straight + branch</span>
+              <span>~1×1 unit</span>
             </div>
           </button>
           <button class="piece-btn" data-type="R12" type="button">
             <canvas width="56" height="40"></canvas>
             <div class="meta">
-              <strong>R-12 Y-Point</strong>
-              <span>Figure-8 dual curve</span>
-            </div>
-          </button>
-          <button class="piece-btn" data-type="RY3" type="button">
-            <canvas width="56" height="40"></canvas>
-            <div class="meta">
-              <strong>Y-3 Three-way</strong>
-              <span>1→3, outers 90° apart</span>
+              <strong>R-12 Y / Fig-8 Point</strong>
+              <span>Dual curve branch</span>
             </div>
           </button>
           <button class="piece-btn" data-type="R14" type="button">
             <canvas width="56" height="40"></canvas>
             <div class="meta">
-              <strong>R-14 Cross</strong>
-              <span>4-way + corner webbing</span>
+              <strong>R-14 Cross Point</strong>
+              <span>1×1 solid body</span>
+            </div>
+          </button>
+          <button class="piece-btn" data-type="R17" type="button">
+            <canvas width="56" height="40"></canvas>
+            <div class="meta">
+              <strong>R-17 3-Way Point</strong>
+              <span>~1 unit long, 1→3</span>
             </div>
           </button>
         </div>
@@ -167,32 +167,21 @@
         <h2>Controls</h2>
         <ul>
           <li>
-            <strong>Left-drag</strong> from palette / pieces — magnetic snap when
-            open ends are near. Left-click empty does <em>not</em> spawn pieces.
+            <strong>Left-drag</strong> from palette — magnetic snap joins open ends
+            (no auto-rotate / auto-flip). Rotate with R first if needed.
           </li>
           <li>
-            <strong>Right-click rail</strong> — place train ·
-            <strong>right-click piece</strong> — rotate ·
-            <strong>right-click empty</strong> with a palette piece selected — stamp ·
-            yellow lever — switch.
+            <strong>Right-click rail</strong> — train ·
+            <strong>piece</strong> — rotate ·
+            <strong>empty + palette select</strong> — stamp.
           </li>
-          <li>
-            <strong>Save JSON / Load JSON</strong> — export or restore your layout
-            (native <code>.json</code> format).
-          </li>
+          <li><strong>Save / Load JSON</strong> for layouts.</li>
         </ul>
-        <h2>Pieces</h2>
-        <ul>
-          <li>Straights: R-01, <strong>R-L (2×)</strong>, <strong>R-Stop (bump)</strong>, R-02</li>
-          <li>Curves: R-03 45°, <strong>R-90 quarter</strong>, R-09 large/shallow</li>
-          <li>Points: R-11, R-12, <strong>Y-3 (1→3, outers 90°)</strong>, R-14 with corner webbing</li>
-        </ul>
-        <h2>Physics note</h2>
+        <h2>Units (critical)</h2>
         <p>
-          The train’s <strong>front axle</strong> sits about ⅓ of the body
-          length back from the nose. Path following and wall glides use that
-          short wheelbase so exits from curves are shallower than a
-          center-point model.
+          <strong>1 unit = R-01 length = R-03 radius</strong> (sim <code>UNIT</code> px).
+          R-07 = 2 units · R-14 / R-11 ≈ 1×1 · R-17 ≈ 1 unit long · R-04 radius ≈ 1.4.
+          See <code>plarail_r01_to_r17_table.md</code>.
         </p>
         <div class="close-row">
           <button type="button" class="ui primary" id="btn-help-close">

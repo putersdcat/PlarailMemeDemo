@@ -119,8 +119,10 @@ export function drawPiece(ctx, piece, selected = false, opts = {}) {
   const geo = worldGeometry(piece);
   const color = geo.tpl.color || null;
 
-  // Cross rounded corner webbing (plastic fillets for edge-glide)
-  if (geo.tpl.webbing) {
+  // Solid body webbing (R-14 plate, R-17 leg fills) under rails
+  if (geo.tpl.webbingPolys?.length) {
+    drawWebbingPolys(ctx, piece, geo.tpl.webbingPolys);
+  } else if (geo.tpl.webbing) {
     drawWebbing(ctx, piece, geo.tpl.webbing);
   }
 
@@ -144,20 +146,25 @@ export function drawPiece(ctx, piece, selected = false, opts = {}) {
     drawConnector(ctx, c.wx, c.wy, c.wang, c.gender, free || opts.highlightPorts);
   }
 
-  // Lever
-  if (geo.lever && geo.tpl.switchable) {
-    ctx.beginPath();
-    ctx.fillStyle = "#f0c040";
-    ctx.strokeStyle = "#a67c00";
-    ctx.lineWidth = 1.5;
-    ctx.arc(geo.lever.x, geo.lever.y, 7, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = "#333";
-    ctx.font = "9px sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(String(piece.switchState ?? 0), geo.lever.x, geo.lever.y);
+  // Yellow levers
+  if (geo.tpl.switchable) {
+    const lvs = geo.levers?.length ? geo.levers : geo.lever ? [geo.lever] : [];
+    for (const lv of lvs) {
+      ctx.beginPath();
+      ctx.fillStyle = "#f0c040";
+      ctx.strokeStyle = "#a67c00";
+      ctx.lineWidth = 1.5;
+      ctx.arc(lv.x, lv.y, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+    if (geo.lever) {
+      ctx.fillStyle = "#333";
+      ctx.font = "9px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(String(piece.switchState ?? 0), geo.lever.x, geo.lever.y);
+    }
   }
 
   // Selection / snap rings at the *visual* rail center (not model origin)
@@ -400,7 +407,7 @@ function transformLocal(lx, ly, piece) {
 }
 
 function drawWebbing(ctx, piece, webs) {
-  ctx.fillStyle = "rgba(45, 120, 185, 0.5)";
+  ctx.fillStyle = "rgba(45, 120, 185, 0.55)";
   ctx.strokeStyle = "rgba(30, 90, 150, 0.45)";
   ctx.lineWidth = 1;
   for (const w of webs) {
@@ -415,7 +422,6 @@ function drawWebbing(ctx, piece, webs) {
       if (i === 0) ctx.moveTo(p.x, p.y);
       else ctx.lineTo(p.x, p.y);
     }
-    // close to arm corner
     const corner = transformLocal(w.cx, w.cy, piece);
     ctx.lineTo(corner.x, corner.y);
     ctx.closePath();
@@ -423,13 +429,31 @@ function drawWebbing(ctx, piece, webs) {
   }
 }
 
+function drawWebbingPolys(ctx, piece, polys) {
+  ctx.fillStyle = "rgba(50, 130, 195, 0.9)";
+  ctx.strokeStyle = "rgba(28, 85, 145, 0.7)";
+  ctx.lineWidth = 1.25;
+  for (const poly of polys) {
+    if (!poly?.length) continue;
+    ctx.beginPath();
+    for (let i = 0; i < poly.length; i++) {
+      const p = transformLocal(poly[i].x, poly[i].y, piece);
+      if (i === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+}
+
 function drawStopBump(ctx, piece) {
-  // Local bump on +Y of a 2× straight
-  const len = UNIT * 2;
-  const bx0 = -len * 0.18;
-  const bx1 = len * 0.18;
+  // R-08 stop bump on +Y of a 1-unit straight
+  const len = UNIT;
+  const bx0 = -len * 0.22;
+  const bx1 = len * 0.22;
   const by0 = HALF_W * 0.9;
-  const by1 = HALF_W + 20;
+  const by1 = HALF_W + 18;
   const corners = [
     { x: bx0, y: by0 },
     { x: bx0, y: by1 },
@@ -478,21 +502,21 @@ export function drawPaletteIcon(canvas, type) {
   };
 
   const scale =
-    type === "R09"
-      ? 0.12
+    type === "R04"
+      ? 0.14
       : type === "R90"
         ? 0.18
-        : type === "R01L" || type === "R01S"
+        : type === "R07"
           ? 0.18
-          : type === "RY3" || type === "R12" || type === "R14"
-            ? 0.2
+          : type === "R17" || type === "R12" || type === "R14"
+            ? 0.18
             : 0.28;
 
   ctx.save();
   ctx.translate(w / 2, h / 2);
   ctx.scale(scale, scale);
-  if (type === "R09" || type === "R03" || type === "R90") {
-    ctx.translate(-UNIT * (type === "R09" ? 1.2 : type === "R90" ? 0.7 : 0.55), 0);
+  if (type === "R04" || type === "R03" || type === "R90") {
+    ctx.translate(-UNIT * (type === "R04" ? 0.9 : type === "R90" ? 0.7 : 0.55), 0);
   }
   drawPiece(ctx, piece, false);
   ctx.restore();

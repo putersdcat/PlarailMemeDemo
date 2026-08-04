@@ -1,46 +1,70 @@
 /**
  * Plarail piece geometry templates (local space) + transform helpers.
- * Scale: UNIT ≈ full R-01 length (matches curve radius).
+ *
+ * Dimensional system (see plarail_r01_to_r17_table.md):
+ *   1 unit = R-01 length = R-03 curve radius ≈ 216 mm (sim: UNIT px)
  */
 
 export const UNIT = 96;
 export const HALF = UNIT / 2;
-/** Larger / shallower curve radius (≈ 2× standard) for big outer loops. */
-export const LARGE_R = UNIT * 2;
+/** Historical large curve radius (R-04 era) ≈ 1.4 units. */
+export const LARGE_R = UNIT * 1.4;
 export const TRACK_W = 40;
 export const HALF_W = TRACK_W / 2;
-/** Magnetic snap: open ends within this distance pull together (forgiving). */
-export const SNAP_DIST = 56;
-export const SNAP_ANGLE = (25 * Math.PI) / 180;
+/**
+ * Magnetic snap distance (medium).
+ * Was 56 (too grabby) then ~26 (too tight); ~38 is the compromise.
+ */
+export const SNAP_DIST = 38;
+export const SNAP_ANGLE = (22 * Math.PI) / 180;
 export const DEG45 = Math.PI / 4;
 
 export const PIECE_TYPES = {
-  R01: "R01", // standard straight
-  R01L: "R01L", // long straight (2×)
-  R01S: "R01S", // long straight + stop bump-out (collision / shape)
-  R02: "R02",
-  R03: "R03", // 45° standard curve
-  R90: "R90", // 90° quarter-circle (long sharper turn)
-  R09: "R09", // large / shallow 45° curve
-  R11: "R11",
-  R12: "R12",
-  R14: "R14",
-  RY3: "RY3", // 1→3 Y-split, outers 90° apart
+  R01: "R01", // straight — 1 unit
+  R02: "R02", // half straight — 0.5 unit
+  R03: "R03", // curve 45° — radius 1 unit
+  R04: "R04", // large curve 45° — radius ~1.4 units (historical)
+  R07: "R07", // double-length straight — 2 units
+  R08: "R08", // stop rail — 1 unit + stop bump
+  R11: "R11", // turnout — ~1×1 footprint
+  R12: "R12", // figure-8 / Y point
+  R14: "R14", // cross point — ~1×1 footprint, solid body
+  R17: "R17", // three-way point — ~1 unit long
+  // Convenience (not a catalog SKU): single 90° at standard radius = two R-03
+  R90: "R90",
+  // Legacy aliases (load mapping)
+  R01L: "R07",
+  R01S: "R08",
+  R09: "R04",
+  RY3: "R17",
 };
 
 export const PIECE_META = {
-  R01: { code: "R-01", name: "Straight", desc: "Full-length rail" },
-  R01L: { code: "R-L", name: "Long Straight", desc: "2× length" },
-  R01S: { code: "R-Stop", name: "Stop Straight", desc: "Long + side bump-out" },
-  R02: { code: "R-02", name: "Half Straight", desc: "1/2 length" },
-  R03: { code: "R-03", name: "Curve 45°", desc: "Standard curve" },
-  R90: { code: "R-90", name: "Curve 90°", desc: "Quarter turn (sharper)" },
-  R09: { code: "R-09", name: "Large Curve", desc: "Shallower 45° (2× R)" },
-  R11: { code: "R-11", name: "Turnout", desc: "Straight + branch" },
-  R12: { code: "R-12", name: "Y-Point", desc: "Figure-8 / dual curve" },
-  R14: { code: "R-14", name: "Cross Point", desc: "4-way + corner webbing" },
-  RY3: { code: "Y-3", name: "3-Way Y", desc: "1→3, outers at 90°" },
+  R01: { code: "R-01", name: "Straight", desc: "1 unit" },
+  R02: { code: "R-02", name: "Half Straight", desc: "0.5 unit" },
+  R03: { code: "R-03", name: "Curve 45°", desc: "Radius 1 unit" },
+  R04: { code: "R-04", name: "Large Curve", desc: "45°, radius ~1.4 unit" },
+  R07: { code: "R-07", name: "Double Straight", desc: "2 units long" },
+  R08: { code: "R-08", name: "Stop Rail", desc: "1 unit + stop bump" },
+  R11: { code: "R-11", name: "Turnout", desc: "~1×1 unit" },
+  R12: { code: "R-12", name: "Y-Point / Fig-8", desc: "Dual curve branch" },
+  R14: { code: "R-14", name: "Cross Point", desc: "1×1 unit, solid body" },
+  R17: { code: "R-17", name: "3-Way Point", desc: "~1 unit long, 1→3" },
+  R90: { code: "R-90*", name: "Curve 90°", desc: "2×R-03 (sim only)" },
 };
+
+/** Normalize legacy type ids from older saves / code. */
+export function normalizePieceType(type) {
+  if (!type) return type;
+  const map = {
+    R01L: "R07",
+    R01S: "R08",
+    R09: "R04",
+    RY3: "R17",
+    R90: "R90",
+  };
+  return map[type] || type;
+}
 
 export function degToRad(d) {
   return (d * Math.PI) / 180;
@@ -212,32 +236,33 @@ export function pointOnPolyline(pts, s) {
 export function buildTemplate(type, options = {}) {
   const flip = !!options.flip;
   const branchSide = options.branchSide === "L" ? -1 : 1; // for R11
+  const t = normalizePieceType(type);
 
-  switch (type) {
-    case PIECE_TYPES.R01:
-      return straightTemplate(UNIT, flip, PIECE_TYPES.R01);
-    case PIECE_TYPES.R01L:
-      return straightTemplate(UNIT * 2, flip, PIECE_TYPES.R01L);
-    case PIECE_TYPES.R01S:
+  switch (t) {
+    case "R01":
+      return straightTemplate(UNIT, flip, "R01");
+    case "R02":
+      return straightTemplate(HALF, flip, "R02");
+    case "R03":
+      return curveTemplate(flip, UNIT, DEG45, "R03");
+    case "R04":
+      return curveTemplate(flip, LARGE_R, DEG45, "R04");
+    case "R07":
+      return straightTemplate(UNIT * 2, flip, "R07");
+    case "R08":
       return stopStraightTemplate(flip);
-    case PIECE_TYPES.R02:
-      return straightTemplate(HALF, flip, PIECE_TYPES.R02);
-    case PIECE_TYPES.R03:
-      return curveTemplate(flip, UNIT, DEG45, PIECE_TYPES.R03);
-    case PIECE_TYPES.R90:
-      return curveTemplate(flip, UNIT, Math.PI / 2, PIECE_TYPES.R90);
-    case PIECE_TYPES.R09:
-      return curveTemplate(flip, LARGE_R, DEG45, PIECE_TYPES.R09);
-    case PIECE_TYPES.R11:
+    case "R90":
+      return curveTemplate(flip, UNIT, Math.PI / 2, "R90");
+    case "R11":
       return turnoutTemplate(branchSide, flip);
-    case PIECE_TYPES.R12:
+    case "R12":
       return yPointTemplate(flip);
-    case PIECE_TYPES.R14:
+    case "R14":
       return crossTemplate(flip);
-    case PIECE_TYPES.RY3:
+    case "R17":
       return threeWayTemplate(flip);
     default:
-      return straightTemplate(UNIT, flip, PIECE_TYPES.R01);
+      return straightTemplate(UNIT, flip, "R01");
   }
 }
 
@@ -329,61 +354,66 @@ function curveTemplate(flip, radius = UNIT, spanRad = DEG45, type = PIECE_TYPES.
 }
 
 /**
- * Long straight with a lateral “station / stop” bump-out on one side.
- * Same connector length as 2× straight; bump adds wall geometry for edge gliding.
+ * R-08 Stop Rail — 1 unit long with side stop/bump for wall glide.
  */
 function stopStraightTemplate(flip) {
-  const len = UNIT * 2;
-  const base = straightTemplate(len, flip, PIECE_TYPES.R01S);
-  // Bump on +Y side (or -Y if flip for visual variety — keep +Y in local)
-  const bx0 = -len * 0.18;
-  const bx1 = len * 0.18;
+  const len = UNIT;
+  const base = straightTemplate(len, flip, "R08");
+  const bx0 = -len * 0.22;
+  const bx1 = len * 0.22;
   const by0 = HALF_W;
-  const by1 = HALF_W + 22;
-  // Outer perimeter of bump as wall segments
+  const by1 = HALF_W + 18;
   base.walls.push(
     { x1: bx0, y1: by0, x2: bx0, y2: by1 },
     { x1: bx0, y1: by1, x2: bx1, y2: by1 },
     { x1: bx1, y1: by1, x2: bx1, y2: by0 }
   );
-  // Rounded-ish bump front/back fillets
-  const fillet = sampleArc(bx0, by0, 10, Math.PI / 2, Math.PI, 4);
-  for (let i = 1; i < fillet.length; i++) {
-    base.walls.push({
-      x1: fillet[i - 1].x,
-      y1: fillet[i - 1].y,
-      x2: fillet[i].x,
-      y2: fillet[i].y,
-    });
-  }
   base.bump = true;
   return base;
 }
 
 /**
- * 1→3 three-way point.
- * Stem (in) from west; three exits: left, center, right.
- * Outer left & right exit headings are 90° apart (±45° from centerline).
- * Left/right use standard-radius arcs so geometry matches Plarail branch radius.
+ * R-17 Three-way Point (2014–2025 product).
+ * Overall length ≈ **1 unit** (official). Stem + center through = 1 unit.
+ * Left/right branch with R-03-compatible radius; outers ~90° apart.
+ * Footprint fits roughly in a 1×1 unit box.
  */
 function threeWayTemplate(flip) {
-  const stemLen = HALF;
+  // Through path: full 1 unit
+  const xIn = -UNIT / 2;
+  const xOut = UNIT / 2;
+  // Throat (branch origin) slightly past mid toward the exit side
+  const xThroat = -UNIT * 0.05;
+
   const stem = [
-    { x: -stemLen, y: 0 },
-    { x: 0, y: 0 },
+    { x: xIn, y: 0 },
+    { x: xThroat, y: 0 },
   ];
-  // Use slightly tighter branch radius so the piece is compact but outers land at ±45°
-  const r = UNIT * 0.85;
-  // Left: arc 45° → exit heading +45°; angle between L and R outers = 90°
-  const left = sampleArc(0, r, r, -Math.PI / 2, -Math.PI / 2 + DEG45, 14);
-  left[0] = { x: 0, y: 0 };
-  const right = sampleArc(0, -r, r, Math.PI / 2, Math.PI / 2 - DEG45, 14);
-  right[0] = { x: 0, y: 0 };
-  // Center: longer straight so all three exits feel like full paths out
   const center = [
-    { x: 0, y: 0 },
-    { x: UNIT * 0.75, y: 0 },
+    { x: xThroat, y: 0 },
+    { x: xOut, y: 0 },
   ];
+
+  // Branch radius so 45° arcs stay inside ~1 unit footprint
+  const r = UNIT * 0.55;
+  const left = sampleArc(
+    xThroat,
+    r,
+    r,
+    -Math.PI / 2,
+    -Math.PI / 2 + DEG45,
+    14
+  );
+  left[0] = { x: xThroat, y: 0 };
+  const right = sampleArc(
+    xThroat,
+    -r,
+    r,
+    Math.PI / 2,
+    Math.PI / 2 - DEG45,
+    14
+  );
+  right[0] = { x: xThroat, y: 0 };
 
   const lEnd = left[left.length - 1];
   const rEnd = right[right.length - 1];
@@ -392,55 +422,73 @@ function threeWayTemplate(flip) {
   const gA = flip ? "F" : "M";
   const gOut = flip ? "M" : "F";
 
-  // Webbing between arms — outer envelope arcs so free train can glide corners
-  const webWalls = [
-    ...curveSideWalls(0, r, r, -Math.PI / 2, -Math.PI / 2 + DEG45, HALF_W),
-    ...curveSideWalls(0, -r, r, Math.PI / 2, Math.PI / 2 - DEG45, HALF_W),
+  const leftPath = [...stem, ...left.slice(1)];
+  const rightPath = [...stem, ...right.slice(1)];
+  const centerPath = [...stem, ...center.slice(1)];
+
+  const walls = [
     ...outerWallsAlongPolyline(stem, HALF_W, false, false),
     ...outerWallsAlongPolyline(center, HALF_W, false, false),
-    // Fillet between left and center arms
-    ...arcWall(lEnd.x * 0.35, lEnd.y * 0.35, HALF_W * 1.2, Math.PI * 0.15, -Math.PI * 0.15, 6),
-    // Fillet between right and center
-    ...arcWall(rEnd.x * 0.35, rEnd.y * 0.35, HALF_W * 1.2, -Math.PI * 0.15, Math.PI * 0.15, 6),
+    ...curveSideWalls(
+      xThroat,
+      r,
+      r,
+      -Math.PI / 2,
+      -Math.PI / 2 + DEG45,
+      HALF_W
+    ),
+    ...curveSideWalls(
+      xThroat,
+      -r,
+      r,
+      Math.PI / 2,
+      Math.PI / 2 - DEG45,
+      HALF_W
+    ),
+  ];
+
+  // Solid body fill between the three legs (simple polys for renderer)
+  const webbingPolys = [
+    [
+      { x: xThroat, y: 0 },
+      { x: lEnd.x * 0.5 + xThroat * 0.5, y: lEnd.y * 0.5 },
+      { x: (xThroat + xOut) * 0.5, y: HALF_W * 0.85 },
+      { x: (xThroat + xOut) * 0.45, y: 0 },
+    ],
+    [
+      { x: xThroat, y: 0 },
+      { x: rEnd.x * 0.5 + xThroat * 0.5, y: rEnd.y * 0.5 },
+      { x: (xThroat + xOut) * 0.5, y: -HALF_W * 0.85 },
+      { x: (xThroat + xOut) * 0.45, y: 0 },
+    ],
   ];
 
   return {
-    type: PIECE_TYPES.RY3,
+    type: "R17",
     switchable: true,
     defaultSwitch: 1,
     switchCount: 3,
     connectors: [
-      { id: "a", x: stem[0].x, y: 0, ang: Math.PI, gender: gA },
+      { id: "a", x: xIn, y: 0, ang: Math.PI, gender: gA },
       { id: "b", x: lEnd.x, y: lEnd.y, ang: Math.PI / 4, gender: gOut },
       { id: "c", x: cEnd.x, y: cEnd.y, ang: 0, gender: gOut },
       { id: "d", x: rEnd.x, y: rEnd.y, ang: -Math.PI / 4, gender: gOut },
     ],
     paths: [
-      {
-        id: "left",
-        points: [...stem, ...left.slice(1)],
-        fromC: "a",
-        toC: "b",
-        switchIndex: 0,
-      },
+      { id: "left", points: leftPath, fromC: "a", toC: "b", switchIndex: 0 },
       {
         id: "center",
-        points: [...stem, ...center.slice(1)],
+        points: centerPath,
         fromC: "a",
         toC: "c",
         switchIndex: 1,
       },
-      {
-        id: "right",
-        points: [...stem, ...right.slice(1)],
-        fromC: "a",
-        toC: "d",
-        switchIndex: 2,
-      },
+      { id: "right", points: rightPath, fromC: "a", toC: "d", switchIndex: 2 },
     ],
-    walls: webWalls,
+    walls,
+    webbingPolys,
     bed: null,
-    lever: { x: -12, y: -20 },
+    lever: { x: xThroat + UNIT * 0.08, y: 0 },
     color: null,
   };
 }
@@ -607,70 +655,110 @@ function yPointTemplate(flip) {
   };
 }
 
+/**
+ * R-14 Crossing Point — overall footprint ≈ **1 × 1 unit**.
+ *
+ * Real piece is a solid blue plate with two rail routes crossing and thick
+ * plastic body (webbing) between the arms. Sim approach:
+ *   1. Rail paths: W–E and N–S through the square (centerlines).
+ *   2. Body: single solid rounded-square / diamond plate (webbingPolys).
+ *   3. Walls: outer perimeter of that plate so off-rail trains glide around
+ *      the whole piece (not tiny broken fillets at corners).
+ *
+ * Ports sit at mid-edges of the 1-unit square (compatible with straights).
+ */
 function crossTemplate(flip) {
-  // Plus-shaped cross (R-14 style) with rounded corner webbing.
-  // The four inner corners get fillet arcs so an off-rail train can glide
-  // around the junction interior edges — critical for the meme recover path.
-  const len = UNIT * 0.9;
-  const hw = HALF_W * 0.9;
+  // Edge-to-edge through center = 1 unit
+  const half = UNIT / 2;
+  const hw = HALF_W;
+
   const h = [
-    { x: -len / 2, y: 0 },
-    { x: len / 2, y: 0 },
+    { x: -half, y: 0 },
+    { x: half, y: 0 },
   ];
   const v = [
-    { x: 0, y: -len / 2 },
-    { x: 0, y: len / 2 },
+    { x: 0, y: -half },
+    { x: 0, y: half },
   ];
   const g = (m) => (flip ? (m === "M" ? "F" : "M") : m);
 
-  // Webbing: quarter-circle fillets in each of the four corner pockets.
-  // Outer edge of webbing sits at ~hw from both axes (rounded plastic between arms).
-  const webR = hw * 1.15;
-  // Centers of fillets sit at (±hw, ±hw) from origin, arcs face outward into each quadrant.
-  const webs = [
-    // NE: from north arm outer to east arm outer
-    ...arcWall(hw, -hw, webR, Math.PI, Math.PI / 2, 10),
-    // SE
-    ...arcWall(hw, hw, webR, -Math.PI / 2, 0, 10),
-    // SW
-    ...arcWall(-hw, hw, webR, 0, Math.PI / 2, 10),
-    // NW
-    ...arcWall(-hw, -hw, webR, Math.PI / 2, Math.PI, 10),
+  // Outer body radius: fills most of the 1×1 square, leaving rail mouths open
+  // Mouth half-width ≈ hw; body extends to ~half - small margin on axes, fuller in diagonals
+  const bodyOuter = half - 2; // nearly full unit square
+  // Rounded-square outline (superellipse-ish) for solid webbing body
+  const bodyPoly = roundedSquarePoly(bodyOuter, 0.65, 32);
+
+  // Outer walls = closed body perimeter (primary off-rail glide surface)
+  const bodyWalls = [];
+  for (let i = 0; i < bodyPoly.length; i++) {
+    const a = bodyPoly[i];
+    const b = bodyPoly[(i + 1) % bodyPoly.length];
+    bodyWalls.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y });
+  }
+
+  // Rail groove side walls (inner guidance when scraping past tracks)
+  const railWalls = [
+    ...outerWallsAlongPolyline(h, hw * 0.85, false, false),
+    ...outerWallsAlongPolyline(v, hw * 0.85, false, false),
   ];
 
-  // Also keep side walls of the arms (open mouths)
-  const armWalls = [
-    ...outerWallsAlongPolyline(h, hw, false, false),
-    ...outerWallsAlongPolyline(v, hw, false, false),
-  ];
+  // Open mouth notches: remove perimeter segments near port centers so
+  // trains can enter/exit the paths (cutouts on the body wall list)
+  const openWalls = bodyWalls.filter((seg) => {
+    const mx = (seg.x1 + seg.x2) / 2;
+    const my = (seg.y1 + seg.y2) / 2;
+    // Near a port if close to axis and near the rim
+    const nearW = Math.abs(my) < hw * 1.1 && mx < -half * 0.75;
+    const nearE = Math.abs(my) < hw * 1.1 && mx > half * 0.75;
+    const nearN = Math.abs(mx) < hw * 1.1 && my < -half * 0.75;
+    const nearS = Math.abs(mx) < hw * 1.1 && my > half * 0.75;
+    return !(nearW || nearE || nearN || nearS);
+  });
 
+  const leverD = half * 0.32;
   return {
-    type: PIECE_TYPES.R14,
+    type: "R14",
     switchable: true,
     defaultSwitch: 0,
     bothPathsActive: true,
     connectors: [
-      { id: "w", x: -len / 2, y: 0, ang: Math.PI, gender: g("M") },
-      { id: "e", x: len / 2, y: 0, ang: 0, gender: g("F") },
-      { id: "n", x: 0, y: -len / 2, ang: -Math.PI / 2, gender: g("M") },
-      { id: "s", x: 0, y: len / 2, ang: Math.PI / 2, gender: g("F") },
+      { id: "w", x: -half, y: 0, ang: Math.PI, gender: g("M") },
+      { id: "e", x: half, y: 0, ang: 0, gender: g("F") },
+      { id: "n", x: 0, y: -half, ang: -Math.PI / 2, gender: g("M") },
+      { id: "s", x: 0, y: half, ang: Math.PI / 2, gender: g("F") },
     ],
     paths: [
       { id: "horiz", points: h, fromC: "w", toC: "e" },
       { id: "vert", points: v, fromC: "n", toC: "s" },
     ],
-    walls: [...armWalls, ...webs],
-    // Draw helper: rounded webbing for renderer
-    webbing: [
-      { cx: hw, cy: -hw, r: webR, a0: Math.PI, a1: Math.PI / 2 },
-      { cx: hw, cy: hw, r: webR, a0: -Math.PI / 2, a1: 0 },
-      { cx: -hw, cy: hw, r: webR, a0: 0, a1: Math.PI / 2 },
-      { cx: -hw, cy: -hw, r: webR, a0: Math.PI / 2, a1: Math.PI },
-    ],
+    walls: [...openWalls, ...railWalls],
+    // One solid plate = the webbing between all cross sections
+    webbingPolys: [bodyPoly],
     bed: null,
-    lever: { x: 16, y: -16 },
+    levers: [
+      { x: leverD, y: -leverD },
+      { x: leverD, y: leverD },
+      { x: -leverD, y: leverD },
+      { x: -leverD, y: -leverD },
+    ],
+    lever: { x: leverD, y: -leverD },
     color: null,
   };
+}
+
+/** Rounded square / soft diamond poly, radius ~r, power k (lower = more diamond). */
+function roundedSquarePoly(r, k = 0.7, n = 32) {
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 + Math.PI / 4; // flat toward axes? start offset
+    // Use axis-aligned rounded square: max-norm blend
+    const c = Math.cos(a);
+    const s = Math.sin(a);
+    const m = Math.pow(Math.abs(c), 2 / k) + Math.pow(Math.abs(s), 2 / k);
+    const scale = r / Math.pow(m, k / 2);
+    pts.push({ x: scale * c, y: scale * s });
+  }
+  return pts;
 }
 
 function rectPoly(x, y, w, h) {
@@ -801,5 +889,9 @@ export function worldGeometry(piece) {
     const p = transformPoint(tpl.lever, piece);
     lever = { x: p.x, y: p.y };
   }
-  return { tpl, connectors, paths, walls, lever };
+  const levers = (tpl.levers || (tpl.lever ? [tpl.lever] : [])).map((lv) => {
+    const p = transformPoint(lv, piece);
+    return { x: p.x, y: p.y };
+  });
+  return { tpl, connectors, paths, walls, lever, levers };
 }

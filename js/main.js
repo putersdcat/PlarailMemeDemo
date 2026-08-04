@@ -81,16 +81,16 @@ let hidePieceId = null;
 // ── Palette ──
 const paletteOrder = [
   "R01",
-  "R01L",
-  "R01S",
   "R02",
   "R03",
+  "R04",
+  "R07",
+  "R08",
   "R90",
-  "R09",
   "R11",
   "R12",
-  "RY3",
   "R14",
+  "R17",
 ];
 
 function refreshPaletteActive() {

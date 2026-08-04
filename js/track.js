@@ -10,12 +10,12 @@ import {
   rotStepsToRad,
   buildTemplate,
   worldGeometry,
-  DEG45,
   worldPivot,
   rotateAroundVisualPivot,
   flipAroundVisualPivot,
   localPivotForPiece,
   rotatePoint,
+  normalizePieceType,
 } from "./geometry.js";
 
 let nextId = 1;
@@ -34,7 +34,7 @@ export function createBoard() {
 export function addPiece(board, type, x, y, rotSteps = 0, opts = {}) {
   const piece = {
     id: `p${nextId++}`,
-    type,
+    type: normalizePieceType(type),
     x,
     y,
     rotSteps: ((rotSteps % 8) + 8) % 8,
@@ -102,12 +102,9 @@ export function loadBoard(board, data) {
   let maxN = 0;
   for (const raw of list) {
     if (!raw || !raw.type) continue;
-    // Map brief R17 alias if present in a save from the reverted experiment
-    let type = raw.type;
-    if (type === "R17") type = "RY3";
     const piece = addPiece(
       board,
-      type,
+      normalizePieceType(raw.type),
       Number(raw.x) || 0,
       Number(raw.y) || 0,
       Number(raw.rotSteps) || 0,
@@ -290,9 +287,11 @@ function buildGraph(pathIndex, pairs, board) {
 }
 
 /**
- * Magnetic snap: open ends near each other → join exactly.
- * Scores by connector / visual-pivot distance (not model origin — curves' origins
- * sit at the curvature center off the rail and used to break snap).
+ * Magnetic snap — translate only to join open ends.
+ * - NO auto-rotate (uses ghost.rotSteps only)
+ * - NO auto-flip (uses ghost.flip only)
+ * - Medium magnet (~SNAP_DIST 38)
+ * Prefers the free port pair whose ends are already closest.
  */
 export function findSnap(board, ghost, magnetDist = SNAP_DIST) {
   let best = null;
@@ -308,94 +307,75 @@ export function findSnap(board, ghost, magnetDist = SNAP_DIST) {
       ? { x: ghost.pivotX, y: ghost.pivotY }
       : worldPivot(ghost);
 
-  const flipOptions = [!!ghost.flip, !ghost.flip];
+  const flip = !!ghost.flip;
+  const rotSteps = ((ghost.rotSteps % 8) + 8) % 8;
+  const rotAng = rotStepsToRad(rotSteps);
 
-  for (const flip of flipOptions) {
-    const tpl = buildTemplate(ghost.type, {
-      flip,
-      branchSide: ghost.branchSide || "R",
-    });
-    const localPiv = localPivotForPiece({
-      type: ghost.type,
-      flip,
-      branchSide: ghost.branchSide || "R",
-    });
+  const tpl = buildTemplate(ghost.type, {
+    flip,
+    branchSide: ghost.branchSide || "R",
+  });
+  const localPiv = localPivotForPiece({
+    type: ghost.type,
+    flip,
+    branchSide: ghost.branchSide || "R",
+  });
 
-    for (const local of tpl.connectors) {
-      for (const bc of freeBoard) {
-        if (local.gender === bc.gender) continue;
+  for (const local of tpl.connectors) {
+    for (const bc of freeBoard) {
+      if (local.gender === bc.gender) continue;
 
-        const desiredOut = normalizeAngle(bc.wang + Math.PI);
-        const rotAngIdeal = normalizeAngle(desiredOut - local.ang);
-        let rotSteps = Math.round(rotAngIdeal / DEG45);
-        rotSteps = ((rotSteps % 8) + 8) % 8;
+      // Keep current rotation — only accept if already facing (within tolerance)
+      const outAng = normalizeAngle(local.ang + rotAng);
+      const faceErr = angleDiff(outAng, bc.wang + Math.PI);
+      if (faceErr > SNAP_ANGLE) continue;
 
-        const quantErr = angleDiff(rotAngIdeal, rotStepsToRad(rotSteps));
-        if (quantErr > DEG45 * 0.34) continue;
+      const rLoc = rotatePoint(local.x, local.y, rotAng);
+      const ox = bc.wx - rLoc.x;
+      const oy = bc.wy - rLoc.y;
 
-        const rotAng = rotStepsToRad(rotSteps);
-        const rLoc = rotatePoint(local.x, local.y, rotAng);
-        const ox = bc.wx - rLoc.x;
-        const oy = bc.wy - rLoc.y;
+      // Current end distance (before snap) — magnet gate
+      const endDist = Math.hypot(
+        ghost.x + rLoc.x - bc.wx,
+        ghost.y + rLoc.y - bc.wy
+      );
+      if (endDist > magnetDist) continue;
 
-        // Verify exact endpoint alignment after pose
-        const verify = {
-          type: ghost.type,
+      const verify = {
+        type: ghost.type,
+        x: ox,
+        y: oy,
+        rotSteps,
+        flip,
+        branchSide: ghost.branchSide || "R",
+      };
+      const vGeo = worldGeometry(verify);
+      const vc = vGeo.connectors.find((c) => c.id === local.id);
+      if (!vc) continue;
+      const alignErr = Math.hypot(vc.wx - bc.wx, vc.wy - bc.wy);
+      if (alignErr > 0.75) continue;
+
+      const rPiv = rotatePoint(localPiv.x, localPiv.y, rotAng);
+      const pivX = ox + rPiv.x;
+      const pivY = oy + rPiv.y;
+      const pivotJump = Math.hypot(pivX - curPivot.x, pivY - curPivot.y);
+
+      // Prefer nearer ends; small penalty for large visual jumps
+      const score = endDist * 0.7 + pivotJump * 0.25 + faceErr * 8;
+
+      if (score < bestScore) {
+        bestScore = score;
+        best = {
           x: ox,
           y: oy,
           rotSteps,
           flip,
-          branchSide: ghost.branchSide || "R",
+          snapped: true,
+          to: bc,
+          localId: local.id,
+          pivotX: pivX,
+          pivotY: pivY,
         };
-        const vGeo = worldGeometry(verify);
-        const vc = vGeo.connectors.find((c) => c.id === local.id);
-        if (!vc) continue;
-        const alignErr = Math.hypot(vc.wx - bc.wx, vc.wy - bc.wy);
-        if (alignErr > 0.75) continue;
-        const faceErr = angleDiff(vc.wang, bc.wang + Math.PI);
-        if (faceErr > (18 * Math.PI) / 180) continue;
-
-        const rPiv = rotatePoint(localPiv.x, localPiv.y, rotAng);
-        const pivX = ox + rPiv.x;
-        const pivY = oy + rPiv.y;
-        const pivotJump = Math.hypot(pivX - curPivot.x, pivY - curPivot.y);
-
-        // End proximity: how far this connector is from bc if we only re-origin
-        // using trial rot at current model origin
-        const endDist = Math.hypot(
-          ghost.x + rLoc.x - bc.wx,
-          ghost.y + rLoc.y - bc.wy
-        );
-        const portToPivot = Math.hypot(bc.wx - curPivot.x, bc.wy - curPivot.y);
-
-        const near =
-          pivotJump <= magnetDist * 1.2 ||
-          endDist <= magnetDist ||
-          portToPivot <= magnetDist * 1.3;
-        if (!near) continue;
-
-        const flipPenalty = flip === !!ghost.flip ? 0 : 5;
-        const score =
-          pivotJump * 0.45 +
-          endDist * 0.35 +
-          alignErr * 10 +
-          faceErr * 8 +
-          flipPenalty;
-
-        if (score < bestScore) {
-          bestScore = score;
-          best = {
-            x: ox,
-            y: oy,
-            rotSteps,
-            flip,
-            snapped: true,
-            to: bc,
-            localId: local.id,
-            pivotX: pivX,
-            pivotY: pivY,
-          };
-        }
       }
     }
   }
@@ -414,11 +394,12 @@ export function nearbyFreeConnectors(board, x, y, radius = SNAP_DIST) {
 
 /** Hit-test piece under point (path proximity + levers). */
 export function hitTestPiece(board, x, y) {
-  // Levers first (larger hit target)
+  // Levers first (R-14 has four)
   for (const piece of board.pieces) {
     const geo = worldGeometry(piece);
-    if (geo.lever) {
-      const d = Math.hypot(geo.lever.x - x, geo.lever.y - y);
+    const lvs = geo.levers?.length ? geo.levers : geo.lever ? [geo.lever] : [];
+    for (const lv of lvs) {
+      const d = Math.hypot(lv.x - x, lv.y - y);
       if (d < 16) return { pieceId: piece.id, lever: true };
     }
   }
