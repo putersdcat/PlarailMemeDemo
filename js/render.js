@@ -504,7 +504,7 @@ export function drawPaletteIcon(canvas, type) {
   const scale =
     type === "R04"
       ? 0.14
-      : type === "R90"
+      : type === "R105"
         ? 0.18
         : type === "R07"
           ? 0.18
@@ -515,8 +515,11 @@ export function drawPaletteIcon(canvas, type) {
   ctx.save();
   ctx.translate(w / 2, h / 2);
   ctx.scale(scale, scale);
-  if (type === "R04" || type === "R03" || type === "R90") {
-    ctx.translate(-UNIT * (type === "R04" ? 0.9 : type === "R90" ? 0.7 : 0.55), 0);
+  if (type === "R04" || type === "R03" || type === "R105") {
+    ctx.translate(
+      -UNIT * (type === "R04" ? 0.9 : type === "R105" ? 0.7 : 0.55),
+      0
+    );
   }
   drawPiece(ctx, piece, false);
   ctx.restore();

@@ -30,13 +30,18 @@ export const PIECE_TYPES = {
   R12: "R12", // figure-8 / Y point
   R14: "R14", // cross point — ~1×1 footprint, solid body
   R17: "R17", // three-way point — ~1 unit long
-  // Convenience (not a catalog SKU): single 90° at standard radius = two R-03
-  R90: "R90",
+  /**
+   * R-10.5 — custom single 90° curve (not an official SKU).
+   * Inspired by catalog R-10 U-turn “tight corners” / two R-03 = 90° / R-21 2× curve.
+   * Geometry: 90° arc, radius = 1 unit (same centerline as R-03). 4 pieces = full circle.
+   */
+  R105: "R105",
   // Legacy aliases (load mapping)
   R01L: "R07",
   R01S: "R08",
   R09: "R04",
   RY3: "R17",
+  R90: "R105",
 };
 
 export const PIECE_META = {
@@ -50,7 +55,11 @@ export const PIECE_META = {
   R12: { code: "R-12", name: "Y-Point / Fig-8", desc: "Dual curve branch" },
   R14: { code: "R-14", name: "Cross Point", desc: "1×1 unit, solid body" },
   R17: { code: "R-17", name: "3-Way Point", desc: "~1 unit long, 1→3" },
-  R90: { code: "R-90*", name: "Curve 90°", desc: "2×R-03 (sim only)" },
+  R105: {
+    code: "R-10.5",
+    name: "Curve 90°",
+    desc: "Custom: 90°, radius 1 unit (4 = circle)",
+  },
 };
 
 /** Normalize legacy type ids from older saves / code. */
@@ -61,7 +70,9 @@ export function normalizePieceType(type) {
     R01S: "R08",
     R09: "R04",
     RY3: "R17",
-    R90: "R90",
+    R90: "R105",
+    "R-10.5": "R105",
+    R10_5: "R105",
   };
   return map[type] || type;
 }
@@ -251,8 +262,9 @@ export function buildTemplate(type, options = {}) {
       return straightTemplate(UNIT * 2, flip, "R07");
     case "R08":
       return stopStraightTemplate(flip);
-    case "R90":
-      return curveTemplate(flip, UNIT, Math.PI / 2, "R90");
+    case "R105":
+      // R-10.5: single 90° at R-03 radius (unit system; 4 → full circle)
+      return curveTemplate(flip, UNIT, Math.PI / 2, "R105");
     case "R11":
       return turnoutTemplate(branchSide, flip);
     case "R12":

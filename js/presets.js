@@ -122,8 +122,8 @@ export function loadMemeStyle(board, cx, cy) {
   // Large curves (R-04) + 90° convenience pieces
   addPiece(board, PIECE_TYPES.R04, cx + LARGE_R * 0.15, cy + UNIT * 1.6, 0);
   addPiece(board, PIECE_TYPES.R04, cx + LARGE_R * 0.15, cy + UNIT * 1.6, 1);
-  addPiece(board, PIECE_TYPES.R90, cx - UNIT * 1.4, cy - UNIT * 0.2, 3);
-  addPiece(board, PIECE_TYPES.R90, cx + UNIT * 1.4, cy + UNIT * 0.2, 7);
+  addPiece(board, PIECE_TYPES.R105, cx - UNIT * 1.4, cy - UNIT * 0.2, 2);
+  addPiece(board, PIECE_TYPES.R105, cx + UNIT * 1.4, cy + UNIT * 0.2, 6);
 
   // R-07 double straight + R-08 stop
   addPiece(board, PIECE_TYPES.R07, cx, cy + UNIT * 0.55, 0, { flip: true });
