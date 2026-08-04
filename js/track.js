@@ -13,9 +13,11 @@ import {
   worldPivot,
   rotateAroundVisualPivot,
   flipAroundVisualPivot,
+  mirrorAroundVisualPivot,
   localPivotForPiece,
   rotatePoint,
   normalizePieceType,
+  isMirrorable,
 } from "./geometry.js";
 
 let nextId = 1;
@@ -144,6 +146,16 @@ export function flipPiece(board, id) {
   if (!p) return;
   flipAroundVisualPivot(p);
   rebuild(board);
+}
+
+/** Geometric L/R (or A/B) mirror — toggles branchSide. */
+export function mirrorPiece(board, id) {
+  const p = getPiece(board, id);
+  if (!p) return;
+  if (!isMirrorable(p.type)) return false;
+  mirrorAroundVisualPivot(p);
+  rebuild(board);
+  return true;
 }
 
 export function toggleSwitch(board, id) {

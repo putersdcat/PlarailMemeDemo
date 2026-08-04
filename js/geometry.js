@@ -18,22 +18,28 @@ export const HALF_W = TRACK_W / 2;
 export const SNAP_DIST = 38;
 export const SNAP_ANGLE = (22 * Math.PI) / 180;
 export const DEG45 = Math.PI / 4;
+/** Plarail double-track centreline spacing ≈ 70 mm ≈ 0.32 unit. */
+export const DOUBLE_GAP = UNIT * 0.32;
 
 export const PIECE_TYPES = {
   R01: "R01", // straight — 1 unit
   R02: "R02", // half straight — 0.5 unit
   R03: "R03", // curve 45° — radius 1 unit
-  R04: "R04", // large curve 45° — radius ~1.4 units (historical)
+  R04: "R04", // large curve 45° — radius ~1.4 units (historical / meme)
   R07: "R07", // double-length straight — 2 units
   R08: "R08", // stop rail — 1 unit + stop bump
-  R11: "R11", // turnout — ~1×1 footprint
-  R12: "R12", // figure-8 / Y point
-  R14: "R14", // cross point — ~1×1 footprint, solid body
-  R17: "R17", // three-way point — ~1 unit long
+  R10: "R10", // U-turn 180°
+  R11: "R11", // turnout L/R — ~1×1 footprint
+  R12: "R12", // figure-8 point L/R
+  R13: "R13", // single↔double point A/B (L/R)
+  R14: "R14", // cross point
+  R17: "R17", // three-way point
+  R20: "R20", // 1/4 straight — 0.25 unit
+  R21: "R21", // double curve 90° (2× R-03)
+  R22: "R22", // Y-point
+  R23: "R23", // wavy / meandering rail
   /**
-   * R-10.5 — custom single 90° curve (not an official SKU).
-   * Inspired by catalog R-10 U-turn “tight corners” / two R-03 = 90° / R-21 2× curve.
-   * Geometry: 90° arc, radius = 1 unit (same centerline as R-03). 4 pieces = full circle.
+   * R-10.5 — custom single 90° (alias of catalog R-21 geometry).
    */
   R105: "R105",
   // Legacy aliases (load mapping)
@@ -45,26 +51,90 @@ export const PIECE_TYPES = {
 };
 
 export const PIECE_META = {
-  R01: { code: "R-01", name: "Straight", desc: "1 unit" },
-  R02: { code: "R-02", name: "Half Straight", desc: "0.5 unit" },
-  R03: { code: "R-03", name: "Curve 45°", desc: "Radius 1 unit" },
-  R04: { code: "R-04", name: "Large Curve", desc: "45°, radius ~1.4 unit" },
-  R07: { code: "R-07", name: "Double Straight", desc: "2 units long" },
-  R08: { code: "R-08", name: "Stop Rail", desc: "1 unit + stop bump" },
-  R11: { code: "R-11", name: "Turnout", desc: "~1×1 unit" },
-  R12: { code: "R-12", name: "Y-Point / Fig-8", desc: "Dual curve branch" },
-  R14: { code: "R-14", name: "Cross Point", desc: "1×1 unit, solid body" },
+  R01: { code: "R-01", name: "Straight", desc: "1 unit", mirrorable: false },
+  R02: { code: "R-02", name: "Half Straight", desc: "0.5 unit", mirrorable: false },
+  R03: {
+    code: "R-03",
+    name: "Curve 45°",
+    desc: "Radius 1 unit · 🦄 gender · ⇋ bend L/R",
+    mirrorable: true,
+  },
+  R04: {
+    code: "R-04",
+    name: "Large Curve",
+    desc: "45°, r≈1.4 · 🦄 gender · ⇋ bend L/R",
+    mirrorable: true,
+  },
+  R07: { code: "R-07", name: "Double Straight", desc: "2 units", mirrorable: false },
+  R08: { code: "R-08", name: "Stop Rail", desc: "1 unit + stop bump", mirrorable: false },
+  R10: {
+    code: "R-10",
+    name: "U-Turn",
+    desc: "180° reverse · 🦄 gender · ⇋ side",
+    mirrorable: true,
+  },
+  R11: {
+    code: "R-11",
+    name: "Turnout L/R",
+    desc: "Straight + R-03 branch · ⇋ L/R",
+    mirrorable: true,
+  },
+  R12: {
+    code: "R-12",
+    name: "Fig-8 Point L/R",
+    desc: "Curved turnout · ⇋ L/R",
+    mirrorable: true,
+  },
+  R13: {
+    code: "R-13",
+    name: "Single/Double Point",
+    desc: "1→2 track · ⇋ A/B (L/R)",
+    mirrorable: true,
+  },
+  R14: { code: "R-14", name: "Cross Point", desc: "2×R-07 + 4×R-10.5 walls", mirrorable: false },
   R17: {
     code: "R-17",
     name: "3-Way Point",
     desc: "R-07 + R-02 offset + 2×R-04",
+    mirrorable: false,
+  },
+  R20: {
+    code: "R-20",
+    name: "1/4 Straight",
+    desc: "0.25 unit",
+    mirrorable: false,
+  },
+  R21: {
+    code: "R-21",
+    name: "Double Curve 90°",
+    desc: "2× R-03 = 90° · ⇋ bend L/R",
+    mirrorable: true,
+  },
+  R22: {
+    code: "R-22",
+    name: "Y-Point",
+    desc: "Dual curve split",
+    mirrorable: false,
+  },
+  R23: {
+    code: "R-23",
+    name: "Wavy Rail",
+    desc: "S-curve meander · ⇋ L/R",
+    mirrorable: true,
   },
   R105: {
     code: "R-10.5",
     name: "Curve 90°",
-    desc: "Custom: 90°, radius 1 unit (4 = circle)",
+    desc: "Custom 90° r=1 · same as R-21",
+    mirrorable: true,
   },
 };
+
+/** Types where ⇋ mirror (branchSide L/R) changes geometry. */
+export function isMirrorable(type) {
+  const t = normalizePieceType(type);
+  return !!PIECE_META[t]?.mirrorable;
+}
 
 /** Normalize legacy type ids from older saves / code. */
 export function normalizePieceType(type) {
@@ -79,6 +149,12 @@ export function normalizePieceType(type) {
     R10_5: "R105",
   };
   return map[type] || type;
+}
+
+/** Gender swap only — does not reverse curve bend (use mirror for L/R). */
+export function gendersForFlip(flip, g0 = "M", g1 = "F") {
+  if (!flip) return [g0, g1];
+  return [g0 === "M" ? "F" : "M", g1 === "M" ? "F" : "M"];
 }
 
 export function degToRad(d) {
@@ -184,12 +260,26 @@ export function rotateAroundVisualPivot(piece, deltaSteps = 1) {
 }
 
 /**
- * Flip piece while keeping visual pivot fixed in world space.
+ * Gender flip only (🦄) — swaps M/F. Geometry (curve bend / L/R) unchanged.
+ * Keeps visual pivot fixed in world space.
  */
 export function flipAroundVisualPivot(piece) {
   const piv = worldPivot(piece);
   piece.flip = !piece.flip;
-  // After flip, local pivot may shift (curves reverse); re-anchor
+  const o = originFromWorldPivot(piece, piv.x, piv.y);
+  piece.x = o.x;
+  piece.y = o.y;
+  return piece;
+}
+
+/**
+ * Geometric mirror (⇋) — toggles branchSide L ↔ R for asymmetric pieces
+ * (turnouts, curve bend side, single/double point A/B, etc.).
+ * Keeps visual pivot fixed. No-op side effect for symmetric types.
+ */
+export function mirrorAroundVisualPivot(piece) {
+  const piv = worldPivot(piece);
+  piece.branchSide = piece.branchSide === "L" ? "R" : "L";
   const o = originFromWorldPivot(piece, piv.x, piv.y);
   piece.x = o.x;
   piece.y = o.y;
@@ -250,7 +340,9 @@ export function pointOnPolyline(pts, s) {
  */
 export function buildTemplate(type, options = {}) {
   const flip = !!options.flip;
-  const branchSide = options.branchSide === "L" ? -1 : 1; // for R11
+  // branchSide "L" = geometric mirror (left bend / left branch / B side)
+  const mirror = options.branchSide === "L";
+  const side = mirror ? -1 : 1;
   const t = normalizePieceType(type);
 
   switch (t) {
@@ -258,25 +350,36 @@ export function buildTemplate(type, options = {}) {
       return straightTemplate(UNIT, flip, "R01");
     case "R02":
       return straightTemplate(HALF, flip, "R02");
+    case "R20":
+      return straightTemplate(UNIT * 0.25, flip, "R20");
     case "R03":
-      return curveTemplate(flip, UNIT, DEG45, "R03");
+      return curveTemplate(flip, UNIT, DEG45, "R03", mirror);
     case "R04":
-      return curveTemplate(flip, LARGE_R, DEG45, "R04");
+      return curveTemplate(flip, LARGE_R, DEG45, "R04", mirror);
     case "R07":
       return straightTemplate(UNIT * 2, flip, "R07");
     case "R08":
       return stopStraightTemplate(flip);
+    case "R10":
+      return uTurnTemplate(flip, mirror);
     case "R105":
-      // R-10.5: single 90° at R-03 radius (unit system; 4 → full circle)
-      return curveTemplate(flip, UNIT, Math.PI / 2, "R105");
+    case "R21":
+      // R-21 = 2× R-03 = 90° at unit radius (R-10.5 same geometry)
+      return curveTemplate(flip, UNIT, Math.PI / 2, t === "R21" ? "R21" : "R105", mirror);
     case "R11":
-      return turnoutTemplate(branchSide, flip);
+      return turnoutTemplate(side, flip);
     case "R12":
-      return yPointTemplate(flip);
+      return figureEightPointTemplate(side, flip);
+    case "R13":
+      return singleDoublePointTemplate(side, flip);
     case "R14":
       return crossTemplate(flip);
     case "R17":
       return threeWayTemplate(flip);
+    case "R22":
+      return yPointTemplate(flip);
+    case "R23":
+      return wavyTemplate(flip, mirror);
     default:
       return straightTemplate(UNIT, flip, "R01");
   }
@@ -308,21 +411,32 @@ function straightTemplate(len, flip, type) {
 }
 
 /**
- * Curve arc. spanRad = 45° (R-03/R-09) or 90° (R-90 quarter turn).
- * radius = UNIT or LARGE_R. Center of curvature at origin; flip → CW.
+ * Curve arc. spanRad = 45° (R-03) or 90° (R-21 / R-10.5).
+ * radius = UNIT or LARGE_R.
+ *
+ * 🦄 flip   = gender only (M↔F) — does NOT reverse the bend
+ * ⇋ mirror = reverse arc (CW vs CCW) — L vs R bend
+ * Center of curvature at origin; default (mirror=false) is CCW.
  */
-function curveTemplate(flip, radius = UNIT, spanRad = DEG45, type = PIECE_TYPES.R03) {
+function curveTemplate(
+  flip,
+  radius = UNIT,
+  spanRad = DEG45,
+  type = PIECE_TYPES.R03,
+  mirror = false
+) {
   const r = radius;
   const a0 = 0;
-  const a1 = flip ? -spanRad : spanRad;
-  const nSamp = spanRad > DEG45 * 1.2 ? 24 : type === PIECE_TYPES.R09 ? 20 : 16;
+  const a1 = mirror ? -spanRad : spanRad;
+  const nSamp = spanRad > DEG45 * 1.2 ? 24 : 16;
   const pts = sampleArc(0, 0, r, a0, a1, nSamp);
 
-  // Path start tangent (CCW at a=0 is +Y); end tangent at a1
-  const startDir = flip ? -Math.PI / 2 : Math.PI / 2;
-  // At angle α, CCW tangent ang = α + π/2; CW = α - π/2
-  const endDir = flip ? a1 - Math.PI / 2 : a1 + Math.PI / 2;
+  // Path start tangent: CCW at a=0 is +Y; CW is -Y
+  const startDir = mirror ? -Math.PI / 2 : Math.PI / 2;
+  // At angle α, CCW tangent = α + π/2; CW = α - π/2
+  const endDir = mirror ? a1 - Math.PI / 2 : a1 + Math.PI / 2;
 
+  // Gender ONLY from flip — geometry independent
   const g0 = flip ? "F" : "M";
   const g1 = flip ? "M" : "F";
 
@@ -353,6 +467,7 @@ function curveTemplate(flip, radius = UNIT, spanRad = DEG45, type = PIECE_TYPES.
 
   return {
     type,
+    mirrorable: true,
     connectors: [
       {
         id: "a",
@@ -524,9 +639,14 @@ function arcWall(cx, cy, r, a0, a1, n = 8) {
   return segs;
 }
 
+/**
+ * R-11 ターンアウトレール (L/R).
+ * Straight through = R-01 (1 unit). Branch = R-03 curve (45°, r=1) leaving
+ * from mid-piece toward the branch side. Footprint ≈ 1×1 unit square.
+ * side > 0 = R (branch +y / screen down), side < 0 = L (branch −y / up).
+ * 🦄 flip = gender only; ⇋ mirror toggles side via branchSide.
+ */
 function turnoutTemplate(side, flip) {
-  // Main straight + curved branch (R-03 radius) leaving mid-ish toward branch.
-  // Classic: straight through, curve diverges from one end region.
   const len = UNIT;
   const x0 = -len / 2;
   const x1 = len / 2;
@@ -535,54 +655,40 @@ function turnoutTemplate(side, flip) {
     { x: x1, y: 0 },
   ];
 
-  // Branch: from near center toward curved exit matching R-03
-  // Arc center offset so branch starts at origin area and curves 45°.
-  // Start branch at (0,0) path along +x then curve... 
-  // Simpler: branch from x=0 along curve with center at (0, -side*UNIT) so it arcs to 45°.
+  // Branch leaves at mid as R-03. side>+1 (R) → +y (screen down); L → −y.
   const r = UNIT;
   const cx = 0;
-  const cy = -side * r;
-  // Arc from angle (side>0? π/2 : -π/2) ... 
-  // For side=+1 (right/bottom in screen y+): center (0, -r), start at (0,0) which is angle π/2 from center
-  // angle of point relative to center: atan2(y-cy, x-cx)
-  // start (0,0): atan2(r, 0) = π/2 for cy=-r
-  // end after 45° toward +x: angle goes to π/2 - 45° = π/4 for right branch (side=+1, decreasing angle for clockwise from center)
-  const aStart = side > 0 ? Math.PI / 2 : -Math.PI / 2;
-  const aEnd = side > 0 ? Math.PI / 4 : -Math.PI / 4;
-  const branchPts = sampleArc(cx, cy, r, aStart, aEnd, 14);
-  // Ensure first point is exactly (0,0)
+  const cy = side * r;
+  // R: center (0,+r), a −π/2 → −π/4; L: center (0,−r), a π/2 → π/4
+  const aStart = side > 0 ? -Math.PI / 2 : Math.PI / 2;
+  const aEnd = side > 0 ? -Math.PI / 4 : Math.PI / 4;
+  const branchPts = sampleArc(cx, cy, r, aStart, aEnd, 16);
   branchPts[0] = { x: 0, y: 0 };
 
   const gA = flip ? "F" : "M";
   const gB = flip ? "M" : "F";
-  const gC = flip ? "F" : "M";
+  const gC = flip ? "M" : "F"; // branch exit same gender family as through exit
 
   const bEnd = branchPts[branchPts.length - 1];
-  // Outward at branch end: tangent
-  const endDir =
-    side > 0
-      ? Math.atan2(
-          Math.cos(aEnd), // d/da of (cx + r cos a) with da along path
-          -Math.sin ? 0 : 0
-        )
-      : 0;
-  // For center (cx,cy), point (cx+r cos a, cy + r sin a)
-  // da along path from aStart to aEnd (decreasing for side>0):
-  // derivative ( -r sin a, r cos a ) * a'
-  // a' < 0 for side>0: dir = (sin a, -cos a)
-  // at aEnd=π/4: (sin π/4, -cos π/4) = (√2/2, -√2/2) ang = -π/4
-  const branchEndDir = side > 0 ? -Math.PI / 4 : Math.PI / 4;
+  const branchEndDir = side > 0 ? Math.PI / 4 : -Math.PI / 4;
 
-  const branchPath = [{ x: x0, y: 0 }, { x: 0, y: 0 }, ...branchPts.slice(1)];
+  // Path from entry through split then along branch
+  const branchPath = [
+    { x: x0, y: 0 },
+    { x: 0, y: 0 },
+    ...branchPts.slice(1),
+  ];
   const walls = [
     ...outerWallsAlongPolyline(main, HALF_W, false, false),
-    ...outerWallsAlongPolyline(branchPath, HALF_W, false, false),
+    ...outerWallsAlongPolyline(branchPts, HALF_W, false, false),
   ];
 
   return {
     type: "R11",
     switchable: true,
-    defaultSwitch: 0, // 0 = main, 1 = branch
+    mirrorable: true,
+    defaultSwitch: 0,
+    switchCount: 2,
     connectors: [
       { id: "a", x: x0, y: 0, ang: Math.PI, gender: gA },
       { id: "b", x: x1, y: 0, ang: 0, gender: gB },
@@ -604,35 +710,185 @@ function turnoutTemplate(side, flip) {
       offsetPolylinePoly(branchPath, HALF_W),
     ].filter(Boolean),
     bed: null,
-    lever: { x: 10, y: -side * (HALF_W + 10) },
+    lever: { x: 8, y: -side * (HALF_W + 12) },
+    color: null,
   };
 }
 
-function yPointTemplate(flip) {
-  // Two 45° curves from a shared stem — figure-8 style Y.
+/**
+ * R-12 8の字ポイントレール (L/R) — figure-8 / curved turnout.
+ * Both routes are R-03-radius curves: “through” continues one way, branch the other.
+ * Catalog sells L and R; ⇋ toggles side.
+ */
+function figureEightPointTemplate(side, flip) {
   const r = UNIT;
-  // Stem short straight then split
+  // Entry short stem then two curved exits (one “main” softer, one branch)
+  // Geometry: shared entry at (−HALF*0.5, 0), split at origin.
+  // Main: curves with branch side (same as R-11 branch style) but BOTH are curves.
+  // Through curve: center (0, side*r) going the opposite of branch so one goes up one down? 
+  // Catalog figure-8 point: one path is straighter-ish curve continuing, one diverges.
+  // Practical model: main = 45° curve to +x bent toward −side, branch = 45° to +x bent toward +side
+  // Actually classic R-12: looks like a Y of two curves from one stem — but L/R means only one branch side.
+  // Real R-12 L: stem + curve through + curve branch on one side for figure-8.
+  // Simpler accurate-enough model used by builders:
+  //   - Main path: R-03 curve (45°) 
+  //   - Branch: another R-03 curve diverging more sharply
+  // Use: stem from (−0.5u,0) to (0,0), then:
+  //   main: arc center (0, −side*r) → ends at 45° (same as R-11 branch but as "main")
+  //   branch: arc that goes more to the side — second 45° with center further
+
+  const stem = [
+    { x: -HALF * 0.85, y: 0 },
+    { x: 0, y: 0 },
+  ];
+
+  // Main curve (continues mostly forward, bends to −side)
+  const mainCy = side * r; // bend opposite of "branch" label
+  const mainA0 = side > 0 ? -Math.PI / 2 : Math.PI / 2;
+  const mainA1 = side > 0 ? -Math.PI / 2 + DEG45 : Math.PI / 2 - DEG45;
+  const mainArc = sampleArc(0, mainCy, r, mainA0, mainA1, 14);
+  mainArc[0] = { x: 0, y: 0 };
+
+  // Branch curve (bends to +side)
+  const brCy = -side * r;
+  const brA0 = side > 0 ? Math.PI / 2 : -Math.PI / 2;
+  const brA1 = side > 0 ? Math.PI / 2 - DEG45 : -Math.PI / 2 + DEG45;
+  const brArc = sampleArc(0, brCy, r, brA0, brA1, 14);
+  brArc[0] = { x: 0, y: 0 };
+
+  const mEnd = mainArc[mainArc.length - 1];
+  const bEnd = brArc[brArc.length - 1];
+  const mainEndDir = side > 0 ? Math.PI / 4 : -Math.PI / 4;
+  const brEndDir = side > 0 ? -Math.PI / 4 : Math.PI / 4;
+
+  const gA = flip ? "F" : "M";
+  const gOut = flip ? "M" : "F";
+
+  const mainPath = [...stem, ...mainArc.slice(1)];
+  const branchPath = [...stem, ...brArc.slice(1)];
+
+  return {
+    type: "R12",
+    switchable: true,
+    mirrorable: true,
+    defaultSwitch: 0,
+    switchCount: 2,
+    connectors: [
+      { id: "a", x: stem[0].x, y: 0, ang: Math.PI, gender: gA },
+      { id: "b", x: mEnd.x, y: mEnd.y, ang: mainEndDir, gender: gOut },
+      { id: "c", x: bEnd.x, y: bEnd.y, ang: brEndDir, gender: gOut },
+    ],
+    paths: [
+      { id: "main", points: mainPath, fromC: "a", toC: "b", switchIndex: 0 },
+      { id: "branch", points: branchPath, fromC: "a", toC: "c", switchIndex: 1 },
+    ],
+    walls: [
+      ...outerWallsAlongPolyline(stem, HALF_W, false, false),
+      ...outerWallsAlongPolyline(mainArc, HALF_W, false, false),
+      ...outerWallsAlongPolyline(brArc, HALF_W, false, false),
+    ],
+    webbingPolys: [
+      offsetPolylinePoly(mainPath, HALF_W),
+      offsetPolylinePoly(branchPath, HALF_W),
+    ].filter(Boolean),
+    bed: null,
+    lever: { x: -4, y: -side * (HALF_W + 10) },
+    color: null,
+  };
+}
+
+/**
+ * R-13 単線・複線ポイントレール (A/B = L/R).
+ * Single-track in → two parallel tracks out (double-track spacing).
+ * One path nearly straight; other S-curves out to DOUBLE_GAP.
+ * Length ≈ 1 unit. ⇋ toggles which side the diverging track sits on.
+ */
+function singleDoublePointTemplate(side, flip) {
+  const len = UNIT;
+  const x0 = -len / 2;
+  const x1 = len / 2;
+  const gap = DOUBLE_GAP;
+
+  // Through stays on y=0 (single → “inner” of double)
+  const main = [
+    { x: x0, y: 0 },
+    { x: x1, y: 0 },
+  ];
+
+  // Diverging path: smooth S from (x0,0) to (x1, side*gap), ending parallel (+x)
+  const branch = sampleSBend(x0, 0, x1, side * gap, 20);
+
+  const bEnd = branch[branch.length - 1];
+  // End tangent ≈ +x
+  const bi = branch.length - 1;
+  const branchEndDir = Math.atan2(
+    branch[bi].y - branch[bi - 1].y,
+    branch[bi].x - branch[bi - 1].x
+  );
+
+  const gA = flip ? "F" : "M";
+  const gOut = flip ? "M" : "F";
+
+  return {
+    type: "R13",
+    switchable: true,
+    mirrorable: true,
+    defaultSwitch: 0,
+    switchCount: 2,
+    connectors: [
+      { id: "a", x: x0, y: 0, ang: Math.PI, gender: gA },
+      { id: "b", x: x1, y: 0, ang: 0, gender: gOut },
+      { id: "c", x: bEnd.x, y: bEnd.y, ang: branchEndDir, gender: gOut },
+    ],
+    paths: [
+      { id: "main", points: main, fromC: "a", toC: "b", switchIndex: 0 },
+      { id: "branch", points: branch, fromC: "a", toC: "c", switchIndex: 1 },
+    ],
+    walls: [
+      ...outerWallsAlongPolyline(main, HALF_W, false, false),
+      ...outerWallsAlongPolyline(branch, HALF_W, false, false),
+    ],
+    webbingPolys: [
+      offsetPolylinePoly(main, HALF_W),
+      offsetPolylinePoly(branch, HALF_W),
+    ].filter(Boolean),
+    bed: null,
+    lever: { x: 0, y: -side * (HALF_W + 10) },
+    color: null,
+  };
+}
+
+/** Smooth S-bend from (x0,y0) to (x1,y1) with horizontal end tangents. */
+function sampleSBend(x0, y0, x1, y1, n = 18) {
+  const pts = [];
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    // Smoothstep for lateral offset; linear in x
+    const s = t * t * (3 - 2 * t);
+    pts.push({
+      x: x0 + (x1 - x0) * t,
+      y: y0 + (y1 - y0) * s,
+    });
+  }
+  return pts;
+}
+
+/**
+ * R-22 Yポイントレール — dual curved split (both sides).
+ */
+function yPointTemplate(flip) {
+  const r = UNIT;
   const stem = [
     { x: -HALF * 0.6, y: 0 },
     { x: 0, y: 0 },
   ];
-  const aL0 = Math.PI / 2;
-  const aL1 = Math.PI / 2 + DEG45;
-  const aR0 = -Math.PI / 2;
-  const aR1 = -Math.PI / 2 - DEG45;
-  // Left branch center (0, r), start (0,0)
   const left = sampleArc(0, r, r, -Math.PI / 2, -Math.PI / 2 + DEG45, 12);
   left[0] = { x: 0, y: 0 };
-  // Right branch center (0, -r)
   const right = sampleArc(0, -r, r, Math.PI / 2, Math.PI / 2 - DEG45, 12);
   right[0] = { x: 0, y: 0 };
 
   const lEnd = left[left.length - 1];
   const rEnd = right[right.length - 1];
-  // End dirs
-  // left: center (0,r), a from -π/2 to -π/2+π/4 = -π/4
-  // point (r cos a, r + r sin a); da>0 tangent (-r sin a, r cos a)
-  // at a=-π/4: (r √2/2, r cos(-π/4)) dir ang = atan2(cos(-π/4), -sin(-π/4)) = atan2(√2/2, √2/2)=π/4
   const leftEndDir = Math.PI / 4;
   const rightEndDir = -Math.PI / 4;
 
@@ -643,29 +899,18 @@ function yPointTemplate(flip) {
   const leftPath = [...stem, ...left.slice(1)];
   const rightPath = [...stem, ...right.slice(1)];
   return {
-    type: "R12",
+    type: "R22",
     switchable: true,
     defaultSwitch: 0,
+    switchCount: 2,
     connectors: [
       { id: "a", x: stem[0].x, y: 0, ang: Math.PI, gender: gA },
       { id: "b", x: lEnd.x, y: lEnd.y, ang: leftEndDir, gender: gB },
       { id: "c", x: rEnd.x, y: rEnd.y, ang: rightEndDir, gender: gC },
     ],
     paths: [
-      {
-        id: "left",
-        points: leftPath,
-        fromC: "a",
-        toC: "b",
-        switchIndex: 0,
-      },
-      {
-        id: "right",
-        points: rightPath,
-        fromC: "a",
-        toC: "c",
-        switchIndex: 1,
-      },
+      { id: "left", points: leftPath, fromC: "a", toC: "b", switchIndex: 0 },
+      { id: "right", points: rightPath, fromC: "a", toC: "c", switchIndex: 1 },
     ],
     walls: [
       ...outerWallsAlongPolyline(stem, HALF_W, false, false),
@@ -679,6 +924,116 @@ function yPointTemplate(flip) {
     ].filter(Boolean),
     bed: null,
     lever: { x: -6, y: -HALF_W - 8 },
+    color: null,
+  };
+}
+
+/**
+ * R-10 Uターンレール — 180° reverse (semicircle).
+ * Ends face opposite ways; train reverses heading. ⇋ flips which way the U opens.
+ */
+function uTurnTemplate(flip, mirror) {
+  const r = UNIT;
+  // Open toward −y when !mirror, +y when mirror
+  const a0 = mirror ? 0 : Math.PI;
+  const a1 = mirror ? Math.PI : 0;
+  const pts = sampleArc(0, 0, r, a0, a1, 24);
+  const p0 = pts[0];
+  const p1 = pts[pts.length - 1];
+
+  // Tangents at semicircle ends
+  // a=π point (−r,0): CCW tangent is −Y if going π→0? path π→0 is CW decreasing...
+  // sampleArc from a0 to a1: for !mirror a0=π a1=0, going through (0,r) top if y-up... 
+  // Our y+ is down. a=π/2 is (0,r) = screen down.
+  // !mirror: π → 0 via π/2: starts (−r,0) ends (r,0) through (0,+r) bottom of screen.
+  const startDir = mirror ? Math.PI / 2 : -Math.PI / 2;
+  const endDir = mirror ? Math.PI / 2 : -Math.PI / 2;
+  // Outward connector angles (pointing out of the piece)
+  // At start: coming from path direction startDir; outward opposite entry = startDir+π for port a
+  // Port "a" at p0 faces outward against path start
+  const angA = normalizeAngle(startDir + Math.PI);
+  const angB = normalizeAngle(endDir);
+
+  const g0 = flip ? "F" : "M";
+  const g1 = flip ? "M" : "F";
+
+  const outerR = r + HALF_W;
+  const innerR = Math.max(8, r - HALF_W);
+  const outerPts = sampleArc(0, 0, outerR, a0, a1, 24);
+  const innerPts = sampleArc(0, 0, innerR, a0, a1, 24);
+  const walls = [];
+  for (let i = 1; i < outerPts.length; i++) {
+    walls.push({
+      x1: outerPts[i - 1].x,
+      y1: outerPts[i - 1].y,
+      x2: outerPts[i].x,
+      y2: outerPts[i].y,
+    });
+  }
+  for (let i = 1; i < innerPts.length; i++) {
+    walls.push({
+      x1: innerPts[i - 1].x,
+      y1: innerPts[i - 1].y,
+      x2: innerPts[i].x,
+      y2: innerPts[i].y,
+    });
+  }
+
+  return {
+    type: "R10",
+    mirrorable: true,
+    connectors: [
+      { id: "a", x: p0.x, y: p0.y, ang: angA, gender: g0 },
+      { id: "b", x: p1.x, y: p1.y, ang: angB, gender: g1 },
+    ],
+    paths: [{ id: "main", points: pts, fromC: "a", toC: "b" }],
+    walls,
+    webbingPolys: [offsetPolylinePoly(pts, HALF_W)].filter(Boolean),
+    bed: null,
+    color: null,
+  };
+}
+
+/**
+ * R-23 まがレール — wavy / meandering S over ~1.5 units.
+ */
+function wavyTemplate(flip, mirror) {
+  const len = UNIT * 1.5;
+  const amp = UNIT * 0.22 * (mirror ? -1 : 1);
+  const x0 = -len / 2;
+  const x1 = len / 2;
+  const n = 24;
+  const pts = [];
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    const x = x0 + (x1 - x0) * t;
+    // Full S: sin(2π t) 
+    const y = amp * Math.sin(t * Math.PI * 2);
+    pts.push({ x, y });
+  }
+  const g0 = flip ? "F" : "M";
+  const g1 = flip ? "M" : "F";
+  const p0 = pts[0];
+  const p1 = pts[pts.length - 1];
+  // End tangents approximately +x
+  const a0 = Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x);
+  const a1 = Math.atan2(
+    pts[pts.length - 1].y - pts[pts.length - 2].y,
+    pts[pts.length - 1].x - pts[pts.length - 2].x
+  );
+
+  return {
+    type: "R23",
+    mirrorable: true,
+    connectors: [
+      { id: "a", x: p0.x, y: p0.y, ang: normalizeAngle(a0 + Math.PI), gender: g0 },
+      { id: "b", x: p1.x, y: p1.y, ang: a1, gender: g1 },
+    ],
+    paths: [{ id: "main", points: pts, fromC: "a", toC: "b" }],
+    walls: outerWallsAlongPolyline(pts, HALF_W, false, false),
+    webbingPolys: [offsetPolylinePoly(pts, HALF_W)].filter(Boolean),
+    bed: null,
+    color: null,
   };
 }
 

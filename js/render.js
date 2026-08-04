@@ -504,20 +504,38 @@ export function drawPaletteIcon(canvas, type) {
   const scale =
     type === "R04"
       ? 0.14
-      : type === "R105"
-        ? 0.18
-        : type === "R07"
-          ? 0.18
-          : type === "R17" || type === "R12" || type === "R14"
+      : type === "R10" || type === "R21" || type === "R105"
+        ? 0.16
+        : type === "R07" || type === "R23"
+          ? 0.16
+          : type === "R17" ||
+              type === "R12" ||
+              type === "R13" ||
+              type === "R14" ||
+              type === "R11" ||
+              type === "R22"
             ? 0.18
-            : 0.28;
+            : type === "R20"
+              ? 0.4
+              : 0.28;
 
   ctx.save();
   ctx.translate(w / 2, h / 2);
   ctx.scale(scale, scale);
-  if (type === "R04" || type === "R03" || type === "R105") {
+  if (
+    type === "R04" ||
+    type === "R03" ||
+    type === "R105" ||
+    type === "R21" ||
+    type === "R10"
+  ) {
     ctx.translate(
-      -UNIT * (type === "R04" ? 0.9 : type === "R105" ? 0.7 : 0.55),
+      -UNIT *
+        (type === "R04"
+          ? 0.9
+          : type === "R105" || type === "R21" || type === "R10"
+            ? 0.7
+            : 0.55),
       0
     );
   }

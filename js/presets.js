@@ -111,8 +111,16 @@ export function loadMemeStyle(board, cx, cy) {
     switchState: 1,
   });
 
-  // Y-points + critical 1→3 split (screenshot multi-junction language)
-  addPiece(board, PIECE_TYPES.R12, cx - UNIT * 0.2, cy - UNIT * 0.95, 2, {
+  // Y-point (R-22) + fig-8 point (R-12) + 1→3 (R-17)
+  addPiece(board, PIECE_TYPES.R22, cx - UNIT * 0.2, cy - UNIT * 0.95, 2, {
+    switchState: 0,
+  });
+  addPiece(board, PIECE_TYPES.R12, cx + UNIT * 0.35, cy + UNIT * 0.9, 6, {
+    branchSide: "R",
+    switchState: 0,
+  });
+  addPiece(board, PIECE_TYPES.R13, cx - UNIT * 1.5, cy - UNIT * 0.7, 0, {
+    branchSide: "R",
     switchState: 0,
   });
   addPiece(board, PIECE_TYPES.R17, cx + UNIT * 0.9, cy - UNIT * 0.2, 0, {

@@ -16,6 +16,7 @@ import {
   SNAP_DIST,
   worldPivot,
   originFromWorldPivot,
+  isMirrorable,
 } from "./geometry.js";
 import {
   createBoard,
@@ -24,6 +25,7 @@ import {
   clearBoard,
   rotatePiece,
   flipPiece,
+  mirrorPiece,
   toggleSwitch,
   findSnap,
   hitTestPiece,
@@ -73,7 +75,7 @@ let showWalls = false;
 let lastT = performance.now();
 let hidePieceId = null;
 
-// ── Palette ──
+// ── Palette (catalog order; HTML may be sparse — we build buttons in JS) ──
 const paletteOrder = [
   "R01",
   "R02",
@@ -81,12 +83,20 @@ const paletteOrder = [
   "R04",
   "R07",
   "R08",
+  "R10",
   "R105",
   "R11",
   "R12",
+  "R13",
   "R14",
   "R17",
+  "R20",
+  "R21",
+  "R22",
+  "R23",
 ];
+
+const paletteEl = document.getElementById("palette");
 
 function refreshPaletteActive() {
   document.querySelectorAll(".piece-btn").forEach((btn) => {
@@ -94,40 +104,49 @@ function refreshPaletteActive() {
   });
 }
 
-for (const type of paletteOrder) {
-  const btn = document.querySelector(`.piece-btn[data-type="${type}"]`);
-  if (!btn) continue;
-  const c = btn.querySelector("canvas");
-  if (c) {
+function ensurePaletteButtons() {
+  // Rebuild palette from PIECE_META so new SKUs always appear
+  paletteEl.innerHTML = "";
+  for (const type of paletteOrder) {
+    const meta = PIECE_META[type];
+    if (!meta) continue;
+    const btn = document.createElement("button");
+    btn.className = "piece-btn";
+    btn.type = "button";
+    btn.dataset.type = type;
+    btn.innerHTML = `
+      <canvas width="72" height="52"></canvas>
+      <div class="meta">
+        <strong>${meta.code} ${meta.name}</strong>
+        <span>${meta.desc}</span>
+      </div>`;
+    const c = btn.querySelector("canvas");
     c.width = 72;
     c.height = 52;
     drawPaletteIcon(c, type);
+
+    btn.addEventListener("click", (e) => {
+      if (drag?.kind === "palette" || drag?.suppressClick) return;
+      paletteTool = paletteTool === type ? null : type;
+      refreshPaletteActive();
+      setHint(
+        paletteTool
+          ? `Selected: ${meta.code} ${meta.name}. Left-drag to place · 🦄 gender · ⇋ L/R mirror · Right-click empty to stamp.`
+          : "Palette selection cleared. Left-drag pieces from the palette to build."
+      );
+    });
+    btn.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      paletteTool = type;
+      refreshPaletteActive();
+      beginPaletteDrag(type, e);
+    });
+    paletteEl.appendChild(btn);
   }
-
-  // Click = highlight active palette piece (for right-click stamp only)
-  btn.addEventListener("click", (e) => {
-    // Ignore click that ends a drag-from-palette
-    if (drag?.kind === "palette" || drag?.suppressClick) return;
-    paletteTool = paletteTool === type ? null : type;
-    refreshPaletteActive();
-    const meta = PIECE_META[type];
-    setHint(
-      paletteTool
-        ? `Selected: ${meta.code} ${meta.name}. Left-drag from palette to place · Right-click empty canvas to stamp.`
-        : "Palette selection cleared. Left-drag pieces from the palette to build."
-    );
-  });
-
-  // Pointer drag from palette
-  btn.addEventListener("pointerdown", (e) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    e.stopPropagation();
-    paletteTool = type;
-    refreshPaletteActive();
-    beginPaletteDrag(type, e);
-  });
 }
+ensurePaletteButtons();
 
 // ── Toolbar buttons ──
 document.getElementById("btn-rotate").addEventListener("click", () => {
@@ -139,6 +158,20 @@ document.getElementById("btn-flip").addEventListener("click", () => {
   if (ghost) {
     flipGhost();
   } else if (board.selectedId) flipPiece(board, board.selectedId);
+});
+document.getElementById("btn-mirror").addEventListener("click", () => {
+  if (ghost) {
+    mirrorGhost();
+  } else if (board.selectedId) {
+    const p = getPiece(board, board.selectedId);
+    if (p && !isMirrorable(p.type)) {
+      setHint(`${PIECE_META[p.type]?.code || p.type} has no L/R variant (symmetric).`);
+      return;
+    }
+    mirrorPiece(board, board.selectedId);
+    const side = getPiece(board, board.selectedId)?.branchSide || "R";
+    setHint(`Mirrored → ${side === "L" ? "L / A" : "R / B"} side.`);
+  }
 });
 document.getElementById("btn-delete").addEventListener("click", () => {
   if (board.selectedId) {
@@ -338,6 +371,19 @@ window.addEventListener("keydown", (e) => {
     if (ghost) {
       flipGhost();
     } else if (board.selectedId) flipPiece(board, board.selectedId);
+  } else if (e.key === "m" || e.key === "M") {
+    if (ghost) {
+      mirrorGhost();
+    } else if (board.selectedId) {
+      const p = getPiece(board, board.selectedId);
+      if (p && !isMirrorable(p.type)) {
+        setHint(`${PIECE_META[p.type]?.code || p.type} has no L/R variant.`);
+      } else {
+        mirrorPiece(board, board.selectedId);
+        const side = getPiece(board, board.selectedId)?.branchSide || "R";
+        setHint(`Mirrored → ${side === "L" ? "L / A" : "R / B"} side.`);
+      }
+    }
   } else if (e.key === "Delete" || e.key === "Backspace") {
     if (
       board.selectedId &&
@@ -419,6 +465,7 @@ function flipGhost() {
     ghost.pivotX != null
       ? { x: ghost.pivotX, y: ghost.pivotY }
       : worldPivot(ghost);
+  // Gender only — geometry (curve bend) unchanged
   ghost.flip = !ghost.flip;
   const o = originFromWorldPivot(ghost, piv.x, piv.y);
   ghost.x = o.x;
@@ -426,6 +473,32 @@ function flipGhost() {
   ghost.pivotX = piv.x;
   ghost.pivotY = piv.y;
   applyGhostSnap();
+  setHint(
+    `Gender ${ghost.flip ? "flipped (F↔M)" : "default (M→F)"}. Use ⇋ / M for L/R bend.`
+  );
+}
+
+/** Geometric L/R mirror for ghost (branchSide). */
+function mirrorGhost() {
+  if (!ghost) return;
+  if (!isMirrorable(ghost.type)) {
+    setHint(
+      `${PIECE_META[ghost.type]?.code || ghost.type} has no L/R variant (symmetric).`
+    );
+    return;
+  }
+  const piv =
+    ghost.pivotX != null
+      ? { x: ghost.pivotX, y: ghost.pivotY }
+      : worldPivot(ghost);
+  ghost.branchSide = ghost.branchSide === "L" ? "R" : "L";
+  const o = originFromWorldPivot(ghost, piv.x, piv.y);
+  ghost.x = o.x;
+  ghost.y = o.y;
+  ghost.pivotX = piv.x;
+  ghost.pivotY = piv.y;
+  applyGhostSnap();
+  setHint(`Mirror → ${ghost.branchSide === "L" ? "L / A" : "R / B"} side.`);
 }
 
 /** Move ghost so visual center follows (px, py), then snap. */

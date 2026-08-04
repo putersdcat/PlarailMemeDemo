@@ -19,83 +19,7 @@
 
         <div class="section-label">Track pieces</div>
         <div id="palette">
-          <button class="piece-btn" data-type="R01" type="button">
-            <canvas width="72" height="52"></canvas>
-            <div class="meta">
-              <strong>R-01 Straight</strong>
-              <span>1 unit</span>
-            </div>
-          </button>
-          <button class="piece-btn" data-type="R02" type="button">
-            <canvas width="72" height="52"></canvas>
-            <div class="meta">
-              <strong>R-02 Half</strong>
-              <span>0.5 unit</span>
-            </div>
-          </button>
-          <button class="piece-btn" data-type="R03" type="button">
-            <canvas width="72" height="52"></canvas>
-            <div class="meta">
-              <strong>R-03 Curve 45°</strong>
-              <span>Radius 1 unit</span>
-            </div>
-          </button>
-          <button class="piece-btn" data-type="R04" type="button">
-            <canvas width="72" height="52"></canvas>
-            <div class="meta">
-              <strong>R-04 Large Curve</strong>
-              <span>45°, radius ~1.4 unit</span>
-            </div>
-          </button>
-          <button class="piece-btn" data-type="R07" type="button">
-            <canvas width="72" height="52"></canvas>
-            <div class="meta">
-              <strong>R-07 Double Straight</strong>
-              <span>2 units</span>
-            </div>
-          </button>
-          <button class="piece-btn" data-type="R08" type="button">
-            <canvas width="72" height="52"></canvas>
-            <div class="meta">
-              <strong>R-08 Stop Rail</strong>
-              <span>1 unit + stop bump</span>
-            </div>
-          </button>
-          <button class="piece-btn" data-type="R105" type="button">
-            <canvas width="72" height="52"></canvas>
-            <div class="meta">
-              <strong>R-10.5 Curve 90°</strong>
-              <span>Custom: r=1 unit, 4=circle</span>
-            </div>
-          </button>
-          <button class="piece-btn" data-type="R11" type="button">
-            <canvas width="72" height="52"></canvas>
-            <div class="meta">
-              <strong>R-11 Turnout</strong>
-              <span>~1×1 unit</span>
-            </div>
-          </button>
-          <button class="piece-btn" data-type="R12" type="button">
-            <canvas width="72" height="52"></canvas>
-            <div class="meta">
-              <strong>R-12 Y / Fig-8 Point</strong>
-              <span>Dual curve branch</span>
-            </div>
-          </button>
-          <button class="piece-btn" data-type="R14" type="button">
-            <canvas width="72" height="52"></canvas>
-            <div class="meta">
-              <strong>R-14 Cross Point</strong>
-              <span>2×R-07 + · 4×R-10.5 walls</span>
-            </div>
-          </button>
-          <button class="piece-btn" data-type="R17" type="button">
-            <canvas width="72" height="52"></canvas>
-            <div class="meta">
-              <strong>R-17 3-Way Point</strong>
-              <span>R-07 + R-02 offset + 2×R-04</span>
-            </div>
-          </button>
+          <!-- Populated by main.js from catalog list -->
         </div>
 
         <div class="tools">
@@ -143,10 +67,19 @@
             type="button"
             class="icon-btn icon-btn-emoji"
             id="btn-flip"
-            title="Flip gender (F)"
+            title="Flip gender M↔F only (F) — does not reverse curve bend"
             aria-label="Flip gender"
           >
             🦄
+          </button>
+          <button
+            type="button"
+            class="icon-btn"
+            id="btn-mirror"
+            title="Mirror L/R or A/B (M) — curve bend / turnout side"
+            aria-label="Mirror left right"
+          >
+            ⇋
           </button>
           <button
             type="button"
@@ -202,16 +135,20 @@
             <strong>empty + palette select</strong> — stamp.
           </li>
           <li>
-            Bottom bar: ↻ rotate · 🦄 flip gender · 🗑 delete · ✕ clear board.
+            Bottom bar: ↻ rotate · <strong>🦄 gender</strong> (M↔F only) ·
+            <strong>⇋ mirror</strong> (L/R bend / turnout side, key M) · 🗑 delete · ✕ clear.
+          </li>
+          <li>
+            <strong>R-11 / R-12 / R-13</strong> ship as L/R (or A/B) pairs — use ⇋ after placing.
+            Curves: 🦄 = gender only; ⇋ = reverse bend.
           </li>
           <li><strong>Save / Load JSON</strong> for layouts.</li>
         </ul>
         <h2>Units (critical)</h2>
         <p>
           <strong>1 unit = R-01 length = R-03 radius</strong> (sim <code>UNIT</code> px).
-          R-07 = 2 units · R-14 / R-11 ≈ 1×1 · R-17 ≈ 1 unit long · R-04 radius ≈ 1.4 ·
-          <strong>R-10.5</strong> = custom 90° at radius 1 (4 = circle; like two R-03 / catalog R-21).
-          See <code>plarail_r01_to_r17_table.md</code>.
+          R-20 = ¼ · R-02 = ½ · R-07 = 2 · R-21 / R-10.5 = 90° at r=1 · R-04 large r≈1.4 ·
+          R-13 double-track gap ≈ 0.32 unit. Catalog extras: R-10 U-turn, R-22 Y, R-23 wavy.
         </p>
         <div class="close-row">
           <button type="button" class="ui primary" id="btn-help-close">
