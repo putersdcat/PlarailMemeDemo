@@ -664,21 +664,21 @@ function yPointTemplate(flip) {
 }
 
 /**
- * R-14 交差ポイントレール — built exactly like stacking:
- *   2× R-07 (double straight, 2 units) as dead-straight + arms
- *   4× R-10.5 (90°, radius 1 unit) as outer webbing walls in each corner
+ * R-14 = same footprint as stacking 2× R-07 + 4× R-10.5.
  *
- * TRACK: pure straight W–E and N–S, ports at (±1u, 0) and (0, ±1u).
- * WEBBING: ¼-circle arcs of radius 1 unit centered at the four outer corners
- * (±1u, ±1u), connecting outer edges of adjacent arms (concave cross silhouette).
+ * TRACK: dead-straight + (two R-07 centerlines), ports at (±1u, 0) / (0, ±1u).
+ * OUTER WALLS / WEBBING: four R-10.5 rail beds (¼-circle, radius 1 unit)
+ * with centers at the outer corners (±1u, ±1u). That is the arch perimeter
+ * from the composite — not a solid square, not diagonal rails.
  */
 function crossTemplate(flip) {
-  // Half of R-07 = 1 unit from center to each port
-  const arm = UNIT;
+  const arm = UNIT; // center → each port = 1 unit
   const hw = HALF_W;
+  const r = UNIT; // R-10.5 path radius
+  const n = 18;
   const g = (m) => (flip ? (m === "M" ? "F" : "M") : m);
 
-  // Dead-straight track = full R-07 length each way (2 units end-to-end)
+  // Straight arms (2× R-07 through the middle)
   const pathH = [
     { x: -arm, y: 0 },
     { x: arm, y: 0 },
@@ -688,101 +688,49 @@ function crossTemplate(flip) {
     { x: 0, y: arm },
   ];
 
-  const bedH = offsetPolylinePoly(pathH, hw);
-  const bedV = offsetPolylinePoly(pathV, hw);
+  // Four R-10.5 centerlines: each quarter-circle from one arm tip to the next.
+  // Centers at outer corners of the 2u×2u square; path radius = arm = UNIT.
+  // NE: (arm,0) → (0,-arm)   center (arm,-arm)  angles π/2 → π
+  // SE: (arm,0) → (0, arm)   center (arm, arm)   angles -π/2 → -π
+  // SW: (-arm,0) → (0, arm)  center (-arm, arm)  angles -π/2 → 0
+  // NW: (-arm,0) → (0,-arm)  center (-arm,-arm)  angles π/2 → 0
+  // Note: H tips (arm,0)/(-arm,0) are shared by two arcs each — same as composite joints.
+  const arcNE = sampleArc(arm, -arm, r, Math.PI / 2, Math.PI, n);
+  const arcSE = sampleArc(arm, arm, r, -Math.PI / 2, -Math.PI, n);
+  const arcSW = sampleArc(-arm, arm, r, -Math.PI / 2, 0, n);
+  const arcNW = sampleArc(-arm, -arm, r, Math.PI / 2, 0, n);
 
-  // R-10.5 style corner arcs: radius = UNIT (same as R-10.5 / R-03 radius)
-  // Centers at outer corners of the 2u×2u bounding square
-  // Arc free edge = outer webbing wall (matches 4× R-10.5 stacked in corners)
-  const r = UNIT;
-  const n = 16;
+  // Force exact port endpoints
+  arcNE[0] = { x: arm, y: 0 };
+  arcNE[arcNE.length - 1] = { x: 0, y: -arm };
+  arcSE[0] = { x: arm, y: 0 };
+  arcSE[arcSE.length - 1] = { x: 0, y: arm };
+  arcSW[0] = { x: -arm, y: 0 };
+  arcSW[arcSW.length - 1] = { x: 0, y: arm };
+  arcNW[0] = { x: -arm, y: 0 };
+  arcNW[arcNW.length - 1] = { x: 0, y: -arm };
 
-  // NE outer corner center (arm, -arm): arc from east arm tip-north to north arm tip-east
-  // angles: from π/2 (toward +y from center in math = down on screen? )
-  // Math angle 0 = +x, π/2 = +y (down on canvas).
-  // Point on east arm north edge at tip: (arm, -hw)
-  //   vector from NE center (arm,-arm): (0, -hw+arm) ≈ (0, arm) = -y direction = angle -π/2 or 3π/2
-  // Point on north arm east edge at tip: (hw, -arm)
-  //   vector from NE center: (hw-arm, 0) ≈ (-arm, 0) = -x = angle π
-  // Arc from -π/2 to π (via π/2? no - via going through the outer or inner)
-  // From -π/2 (north of center in math... -π/2 is -y = up on screen) to π (west):
-  // Shortest quarter for concave (toward origin): from -π/2 through -π or through 0?
-  // Point mid on concave arc toward center: around angle -3π/4 or 3π/4
-  // From θ=-π/2 to θ=π going clockwise: -π/2 → -π → ... that's half
-  // From θ=-π/2 to θ=π counterclockwise: -π/2 → 0 → π/2 → π = 270° wrong
-  // From θ=π/2 ... let me use explicit endpoints.
-  //
-  // NE center C=(arm,-arm):
-  //   P_east_top = (arm, -hw)  → angle atan2(-hw-(-arm), arm-arm) = atan2(arm-hw, 0) = -π/2 if y-up...
-  //   With y-down canvas: atan2(dy,dx) with dy = -hw-(-arm) = arm-hw > 0 → atan2(+ , 0) = π/2
-  //   P_north_right = (hw, -arm) → atan2(-arm-(-arm), hw-arm) = atan2(0, hw-arm) = π (since hw-arm < 0)
+  // Solid plastic = straight rail beds + four R-10.5 rail beds only
+  const webbingPolys = [
+    offsetPolylinePoly(pathH, hw),
+    offsetPolylinePoly(pathV, hw),
+    offsetPolylinePoly(arcNE, hw),
+    offsetPolylinePoly(arcSE, hw),
+    offsetPolylinePoly(arcSW, hw),
+    offsetPolylinePoly(arcNW, hw),
+  ].filter(Boolean);
 
-  // So NE arc from π/2 to π (CCW is π/2→π = quarter into the inner side toward origin)
-  // Mid angle 3π/4: (arm + r*cos(3π/4), -arm + r*sin(3π/4)) = (arm - r/√2, -arm + r/√2)
-  // with r=arm=UNIT: (UNIT*0.293, -UNIT*0.293) toward center — concave outer edge. ✓
-
-  const webs = [
-    // NE: center (arm,-arm), π/2 → π
-    {
-      cx: arm,
-      cy: -arm,
-      a0: Math.PI / 2,
-      a1: Math.PI,
-      poly: quarterWebPoly(arm, -arm, r, Math.PI / 2, Math.PI, n),
-      walls: arcWall(arm, -arm, r, Math.PI / 2, Math.PI, n),
-    },
-    // SE: center (arm, arm), 0 → π/2? 
-    // P_east_bot (arm, hw): atan2(hw-arm, 0) = atan2(neg, 0) = -π/2
-    // P_south_right (hw, arm): atan2(0, hw-arm) = π
-    // Wait SE: P_east_bot (arm, hw): dy=hw-arm<0, dx=0 → -π/2
-    //          P_south_right (hw, arm): dy=0, dx=hw-arm<0 → π
-    // From -π/2 to π: better from -π/2 down to -π, or use π/2 to 0 going the other way
-    // P_east_bot angle -π/2, P_south_right angle π.
-    // Concave mid toward origin: angle -3π/4 or 3π/4
-    // Arc from -π/2 to -π (same as to π with direction): a0=-π/2, a1=-π
-    {
-      cx: arm,
-      cy: arm,
-      a0: -Math.PI / 2,
-      a1: -Math.PI,
-      poly: quarterWebPoly(arm, arm, r, -Math.PI / 2, -Math.PI, n),
-      walls: arcWall(arm, arm, r, -Math.PI / 2, -Math.PI, n),
-    },
-    // SW: center (-arm, arm)
-    // P_west_bot (-arm, hw): atan2(hw-arm, 0) = -π/2
-    // P_south_left (-hw, arm): atan2(0, -hw-(-arm)) = atan2(0, arm-hw) = 0
-    // From -π/2 to 0: mid -π/4: toward bottom-right of SW center = toward origin ✓
-    {
-      cx: -arm,
-      cy: arm,
-      a0: -Math.PI / 2,
-      a1: 0,
-      poly: quarterWebPoly(-arm, arm, r, -Math.PI / 2, 0, n),
-      walls: arcWall(-arm, arm, r, -Math.PI / 2, 0, n),
-    },
-    // NW: center (-arm, -arm)
-    // P_west_top (-arm, -hw): atan2(-hw-(-arm), 0) = atan2(arm-hw, 0) = π/2
-    // P_north_left (-hw, -arm): atan2(0, -hw-(-arm)) = atan2(0, arm-hw) = 0
-    // From π/2 to 0: mid π/4 toward origin ✓
-    {
-      cx: -arm,
-      cy: -arm,
-      a0: Math.PI / 2,
-      a1: 0,
-      poly: quarterWebPoly(-arm, -arm, r, Math.PI / 2, 0, n),
-      walls: arcWall(-arm, -arm, r, Math.PI / 2, 0, n),
-    },
-  ];
-
-  // Rail side walls only along the straight arms (not through webbing zone fully)
-  // Keep full outerWalls for track + webbing arc free edges
+  // Glide walls = outer edges of straights + outer edges of the four corner arcs
   const walls = [
     ...outerWallsAlongPolyline(pathH, hw, false, false),
     ...outerWallsAlongPolyline(pathV, hw, false, false),
-    ...webs.flatMap((w) => w.walls),
+    ...outerWallsAlongPolyline(arcNE, hw, false, false),
+    ...outerWallsAlongPolyline(arcSE, hw, false, false),
+    ...outerWallsAlongPolyline(arcSW, hw, false, false),
+    ...outerWallsAlongPolyline(arcNW, hw, false, false),
   ];
 
-  const leverD = arm * 0.22;
+  const leverD = arm * 0.2;
   return {
     type: "R14",
     switchable: true,
@@ -794,16 +742,13 @@ function crossTemplate(flip) {
       { id: "n", x: 0, y: -arm, ang: -Math.PI / 2, gender: g("M") },
       { id: "s", x: 0, y: arm, ang: Math.PI / 2, gender: g("F") },
     ],
+    // Train only uses the straight cross (dead straight track)
     paths: [
       { id: "horiz", points: pathH, fromC: "w", toC: "e" },
       { id: "vert", points: pathV, fromC: "n", toC: "s" },
     ],
     walls,
-    webbingPolys: [
-      bedH,
-      bedV,
-      ...webs.map((w) => w.poly),
-    ].filter(Boolean),
+    webbingPolys,
     bed: null,
     levers: [
       { x: leverD, y: -leverD },
@@ -814,19 +759,6 @@ function crossTemplate(flip) {
     lever: { x: leverD, y: -leverD },
     color: null,
   };
-}
-
-/**
- * Filled ¼-circle sector (pie) for R-14 webbing — matches one R-10.5 corner.
- */
-function quarterWebPoly(cx, cy, r, a0, a1, n = 12) {
-  const pts = [{ x: cx, y: cy }];
-  for (let i = 0; i <= n; i++) {
-    const t = i / n;
-    const a = a0 + (a1 - a0) * t;
-    pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
-  }
-  return pts;
 }
 
 /** Bowed path from a→b (still used by R-17 side legs). */
