@@ -387,87 +387,89 @@ function stopStraightTemplate(flip) {
 }
 
 /**
- * R-17 3分岐ポイント (2014–2025).
- * Real piece: long single-track stem, yellow lever at throat, three exits
- * fanning L / center / R. Overall length ≈ 1 unit.
+ * R-17 3分岐ポイントレール (catalog: 直線と左右両側の3方向に分岐).
  *
- * Layout (local +X = exit side):
- *   input ──stem── throat ─┬─ left  45°
- *                          ├─ center straight
- *                          └─ right 45°
+ * Catalog line art: stem on one side, three rail mouths on the other —
+ * left / center / right — like a flat trident / bird-foot, not a blob.
+ * Pack is (A)+(B) gender variants; we model one orientation + flip.
+ *
+ * Length ≈ 1 unit. Width of fan ≈ 0.9 unit.
  */
 function threeWayTemplate(flip) {
-  // Overall length 1 unit; fan width ~0.85 unit (packaging proportions)
+  // Catalog proportions: stem ~ half the length, then clear three-way split
   const xIn = -UNIT / 2;
   const xOut = UNIT / 2;
-  // Long stem (~45% of length) then fan — matches product photo
-  const xThroat = xIn + UNIT * 0.45;
+  const xThroat = -UNIT * 0.05; // split near middle
+
+  // Three exit mouths along the forward edge (catalog trident)
+  // Center continues on axis; L/R are ~35–40° off and shorter arm to outer corners
+  const cEnd = { x: xOut, y: 0 };
+  const lEnd = {
+    x: xOut - UNIT * 0.08,
+    y: -UNIT * 0.42,
+  };
+  const rEnd = {
+    x: xOut - UNIT * 0.08,
+    y: UNIT * 0.42,
+  };
 
   const stem = [
     { x: xIn, y: 0 },
     { x: xThroat, y: 0 },
   ];
-  const cEnd = { x: xOut, y: 0 };
-  const center = [
+  const centerRun = [
     { x: xThroat, y: 0 },
     cEnd,
   ];
 
-  // Side exits: far forward and wide, heading ±45° (real fan mouths)
-  const lEnd = { x: UNIT * 0.28, y: UNIT * 0.4 };
-  const rEnd = { x: UNIT * 0.28, y: -UNIT * 0.4 };
-
-  // Smooth curves throat → side exits (bowed for plastic rail look)
-  const leftBranch = sampleBowedPath(
+  // Side legs: gentle curve from throat to exit (catalog shows smooth forks)
+  const leftLeg = sampleBowedPath(
     { x: xThroat, y: 0 },
     lEnd,
-    UNIT * 0.06,
-    14
+    UNIT * 0.04,
+    12
   );
-  const rightBranch = sampleBowedPath(
+  const rightLeg = sampleBowedPath(
     { x: xThroat, y: 0 },
     rEnd,
-    -UNIT * 0.06,
-    14
+    -UNIT * 0.04,
+    12
   );
 
-  const leftPath = [...stem, ...leftBranch.slice(1)];
-  const rightPath = [...stem, ...rightBranch.slice(1)];
-  const centerPath = [...stem, ...center.slice(1)];
+  // Exit headings: left ~-50°, center 0°, right ~+50° (outward from piece)
+  const leftAng = Math.atan2(lEnd.y - xThroat * 0, lEnd.x - xThroat);
+  const rightAng = Math.atan2(rEnd.y, rEnd.x - xThroat);
 
   const gA = flip ? "F" : "M";
   const gOut = flip ? "M" : "F";
 
+  const leftPath = [...stem, ...leftLeg.slice(1)];
+  const rightPath = [...stem, ...rightLeg.slice(1)];
+  const centerPath = [...stem, ...centerRun.slice(1)];
+
+  // Solid plastic: each rail bed + triangular fill of the whole fan body
   const webbingPolys = [
     offsetPolylinePoly(stem, HALF_W),
-    offsetPolylinePoly(center, HALF_W),
-    offsetPolylinePoly(leftBranch, HALF_W),
-    offsetPolylinePoly(rightBranch, HALF_W),
-  ].filter(Boolean);
-
-  // Fill between center and side legs (solid fan body)
-  webbingPolys.push(
+    offsetPolylinePoly(centerRun, HALF_W),
+    offsetPolylinePoly(leftLeg, HALF_W),
+    offsetPolylinePoly(rightLeg, HALF_W),
+    // Solid fan plate between the three legs (catalog solid blue body)
     [
-      { x: xThroat, y: 0 },
-      { x: lEnd.x * 0.55, y: lEnd.y * 0.55 },
-      { x: lEnd.x * 0.7, y: lEnd.y * 0.35 },
-      { x: xOut * 0.7, y: HALF_W * 0.9 },
-      { x: xOut * 0.55, y: 0 },
+      { x: xThroat - HALF_W * 0.3, y: 0 },
+      { x: lEnd.x, y: lEnd.y - HALF_W * 0.3 },
+      { x: lEnd.x + HALF_W * 0.4, y: lEnd.y },
+      { x: cEnd.x, y: -HALF_W },
+      { x: cEnd.x, y: HALF_W },
+      { x: rEnd.x + HALF_W * 0.4, y: rEnd.y },
+      { x: rEnd.x, y: rEnd.y + HALF_W * 0.3 },
     ],
-    [
-      { x: xThroat, y: 0 },
-      { x: rEnd.x * 0.55, y: rEnd.y * 0.55 },
-      { x: rEnd.x * 0.7, y: rEnd.y * 0.35 },
-      { x: xOut * 0.7, y: -HALF_W * 0.9 },
-      { x: xOut * 0.55, y: 0 },
-    ]
-  );
+  ].filter(Boolean);
 
   const walls = [
     ...outerWallsAlongPolyline(stem, HALF_W, false, false),
-    ...outerWallsAlongPolyline(center, HALF_W, false, false),
-    ...outerWallsAlongPolyline(leftBranch, HALF_W, false, false),
-    ...outerWallsAlongPolyline(rightBranch, HALF_W, false, false),
+    ...outerWallsAlongPolyline(centerRun, HALF_W, false, false),
+    ...outerWallsAlongPolyline(leftLeg, HALF_W, false, false),
+    ...outerWallsAlongPolyline(rightLeg, HALF_W, false, false),
   ];
 
   return {
@@ -477,9 +479,9 @@ function threeWayTemplate(flip) {
     switchCount: 3,
     connectors: [
       { id: "a", x: xIn, y: 0, ang: Math.PI, gender: gA },
-      { id: "b", x: lEnd.x, y: lEnd.y, ang: Math.PI / 4, gender: gOut },
+      { id: "b", x: lEnd.x, y: lEnd.y, ang: leftAng, gender: gOut },
       { id: "c", x: cEnd.x, y: cEnd.y, ang: 0, gender: gOut },
-      { id: "d", x: rEnd.x, y: rEnd.y, ang: -Math.PI / 4, gender: gOut },
+      { id: "d", x: rEnd.x, y: rEnd.y, ang: rightAng, gender: gOut },
     ],
     paths: [
       { id: "left", points: leftPath, fromC: "a", toC: "b", switchIndex: 0 },
@@ -495,7 +497,7 @@ function threeWayTemplate(flip) {
     walls,
     webbingPolys,
     bed: null,
-    lever: { x: xThroat + 4, y: -HALF_W - 8 },
+    lever: { x: xThroat + UNIT * 0.08, y: 0 },
     color: null,
   };
 }
@@ -674,142 +676,133 @@ function yPointTemplate(flip) {
 }
 
 /**
- * R-14 交差ポイント — footprint ≈ 1×1 unit (table).
+ * R-14 交差ポイントレール — catalog line art is a clear **X** (not a + clover).
  *
- * Real piece: solid blue plate; two rail routes cross in an X of *tighter*
- * curves; thick webbing between arms; four yellow levers; four mouths that
- * accept R-02 half-straights. Outer silhouette is a cross/X with filled
- * pockets (concave floor pockets, convex plastic edge).
- *
- * Geometry:
- *   Ports at mid-sides of a 1-unit square (W/E/N/S) for layout compatibility.
- *   Paths: slightly curved through-routes (not a bare thin plus).
- *   Body: rail-bed unions + pocket fill between arms (solid plastic).
- *   Walls: outer perimeter of the solid body for off-rail edge glide.
+ * Two rails cross on diagonals:
+ *   Path A: NW tip ↔ SE tip
+ *   Path B: NE tip ↔ SW tip
+ * Ports at the four tips of the X. Solid plastic fills the center and
+ * between arms. Four yellow levers. Pack includes 4× R-02 half-straights.
+ * Footprint fits ~1×1 unit square (tips at corners of that square).
  */
 function crossTemplate(flip) {
-  const half = UNIT / 2; // opposite ports = 1 unit apart
-  const hw = HALF_W;
+  // Tips at corners of a 1×1 unit square → classic X silhouette
+  const s = UNIT / 2;
+  const hw = HALF_W * 0.92;
   const g = (m) => (flip ? (m === "M" ? "F" : "M") : m);
 
-  // Curved through-paths (tighter internal curves than plain straights)
-  // Horizontal: W→E with slight S-bow
-  const pathH = sampleBowedPath(
-    { x: -half, y: 0 },
-    { x: half, y: 0 },
-    UNIT * 0.08,
-    18
-  );
-  // Vertical: N→S with opposite bow so they cross cleanly at center
-  const pathV = sampleBowedPath(
-    { x: 0, y: -half },
-    { x: 0, y: half },
-    -UNIT * 0.08,
-    18
-  );
+  // Corners of the square (canvas y+ down)
+  const nw = { x: -s, y: -s };
+  const ne = { x: s, y: -s };
+  const se = { x: s, y: s };
+  const sw = { x: -s, y: s };
 
-  // Rail beds
-  const bedH = offsetPolylinePoly(pathH, hw);
-  const bedV = offsetPolylinePoly(pathV, hw);
+  // Diagonal paths through center (slight bow so rails look molded, not wire)
+  const pathA = sampleBowedPath(nw, se, UNIT * 0.04, 16); // NW–SE
+  const pathB = sampleBowedPath(ne, sw, -UNIT * 0.04, 16); // NE–SW
 
-  // Pocket fills: solid plastic between arms in each quadrant (the webbing)
-  // Outer tip of each pocket ~ halfway to corner of bounding square
-  const pock = half * 0.55;
+  // Outward angles at tips (away from origin along diagonal)
+  const angNW = Math.atan2(nw.y, nw.x); // toward NW from center... outward = that dir
+  const angNE = Math.atan2(ne.y, ne.x);
+  const angSE = Math.atan2(se.y, se.x);
+  const angSW = Math.atan2(sw.y, sw.x);
+
+  // Rail beds = thick X arms
+  const bedA = offsetPolylinePoly(pathA, hw);
+  const bedB = offsetPolylinePoly(pathB, hw);
+
+  // Center diamond fill (solid webbing where paths cross)
+  const core = s * 0.28;
+  const centerFill = [
+    { x: 0, y: -core },
+    { x: core, y: 0 },
+    { x: 0, y: core },
+    { x: -core, y: 0 },
+  ];
+
+  // Pocket fills between adjacent arms (the solid blue between X legs)
+  const p = s * 0.42;
   const pockets = [
-    // NE
+    // N pocket (between NW and NE arms)
     [
-      { x: hw * 0.9, y: 0 },
-      { x: half * 0.55, y: 0 },
-      { x: pock, y: -pock * 0.35 },
-      { x: pock * 0.35, y: -pock },
-      { x: 0, y: -hw * 0.9 },
       { x: 0, y: -hw * 0.5 },
-      { x: hw * 0.5, y: -hw * 0.5 },
+      { x: -p * 0.35, y: -p },
+      { x: 0, y: -p * 1.15 },
+      { x: p * 0.35, y: -p },
     ],
-    // SE
+    // E pocket
     [
-      { x: hw * 0.9, y: 0 },
-      { x: half * 0.55, y: 0 },
-      { x: pock, y: pock * 0.35 },
-      { x: pock * 0.35, y: pock },
-      { x: 0, y: hw * 0.9 },
+      { x: hw * 0.5, y: 0 },
+      { x: p, y: -p * 0.35 },
+      { x: p * 1.15, y: 0 },
+      { x: p, y: p * 0.35 },
+    ],
+    // S pocket
+    [
       { x: 0, y: hw * 0.5 },
-      { x: hw * 0.5, y: hw * 0.5 },
+      { x: p * 0.35, y: p },
+      { x: 0, y: p * 1.15 },
+      { x: -p * 0.35, y: p },
     ],
-    // SW
+    // W pocket
     [
-      { x: -hw * 0.9, y: 0 },
-      { x: -half * 0.55, y: 0 },
-      { x: -pock, y: pock * 0.35 },
-      { x: -pock * 0.35, y: pock },
-      { x: 0, y: hw * 0.9 },
-      { x: 0, y: hw * 0.5 },
-      { x: -hw * 0.5, y: hw * 0.5 },
-    ],
-    // NW
-    [
-      { x: -hw * 0.9, y: 0 },
-      { x: -half * 0.55, y: 0 },
-      { x: -pock, y: -pock * 0.35 },
-      { x: -pock * 0.35, y: -pock },
-      { x: 0, y: -hw * 0.9 },
-      { x: 0, y: -hw * 0.5 },
-      { x: -hw * 0.5, y: -hw * 0.5 },
+      { x: -hw * 0.5, y: 0 },
+      { x: -p, y: p * 0.35 },
+      { x: -p * 1.15, y: 0 },
+      { x: -p, y: -p * 0.35 },
     ],
   ];
 
-  // Outer glide walls: perimeter of cross silhouette
-  // Build closed outline: outer edges of arms + convex arcs across pockets
-  const outline = crossBodyOutline(half, hw, pock);
-  const outlineWalls = [];
+  // Outer walls from rail-bed edges + pocket outer edges for glide
+  const walls = [
+    ...outerWallsAlongPolyline(pathA, hw, false, false),
+    ...outerWallsAlongPolyline(pathB, hw, false, false),
+  ];
+  // Outline of filled X: walk outer perimeter roughly
+  const outline = xBodyOutline(s, hw, p);
   for (let i = 0; i < outline.length; i++) {
     const a = outline[i];
     const b = outline[(i + 1) % outline.length];
-    // Skip segments that form the open mouths
     const mx = (a.x + b.x) / 2;
     const my = (a.y + b.y) / 2;
-    const mouth =
-      (Math.abs(my) < hw * 1.05 && Math.abs(mx) > half * 0.82) ||
-      (Math.abs(mx) < hw * 1.05 && Math.abs(my) > half * 0.82);
-    if (!mouth) outlineWalls.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y });
+    // Open mouths at diagonal tips
+    const rTip = Math.hypot(mx, my);
+    const nearTip = rTip > s * 0.88;
+    if (!nearTip) walls.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y });
   }
 
-  const railWalls = [
-    ...outerWallsAlongPolyline(pathH, hw * 0.9, false, false),
-    ...outerWallsAlongPolyline(pathV, hw * 0.9, false, false),
-  ];
-
-  const leverD = half * 0.34;
+  const leverD = s * 0.22;
   return {
     type: "R14",
     switchable: true,
     defaultSwitch: 0,
     bothPathsActive: true,
     connectors: [
-      { id: "w", x: -half, y: 0, ang: Math.PI, gender: g("M") },
-      { id: "e", x: half, y: 0, ang: 0, gender: g("F") },
-      { id: "n", x: 0, y: -half, ang: -Math.PI / 2, gender: g("M") },
-      { id: "s", x: 0, y: half, ang: Math.PI / 2, gender: g("F") },
+      // Tips of the X — attach R-02 half-straights as in the catalog pack
+      { id: "nw", x: nw.x, y: nw.y, ang: angNW, gender: g("M") },
+      { id: "ne", x: ne.x, y: ne.y, ang: angNE, gender: g("F") },
+      { id: "se", x: se.x, y: se.y, ang: angSE, gender: g("M") },
+      { id: "sw", x: sw.x, y: sw.y, ang: angSW, gender: g("F") },
     ],
     paths: [
-      { id: "horiz", points: pathH, fromC: "w", toC: "e" },
-      { id: "vert", points: pathV, fromC: "n", toC: "s" },
+      { id: "diagA", points: pathA, fromC: "nw", toC: "se" }, // NW–SE
+      { id: "diagB", points: pathB, fromC: "ne", toC: "sw" }, // NE–SW
     ],
-    walls: [...outlineWalls, ...railWalls],
-    webbingPolys: [bedH, bedV, ...pockets].filter(Boolean),
+    walls,
+    webbingPolys: [bedA, bedB, centerFill, ...pockets].filter(Boolean),
     bed: null,
     levers: [
-      { x: leverD, y: -leverD },
-      { x: leverD, y: leverD },
-      { x: -leverD, y: leverD },
-      { x: -leverD, y: -leverD },
+      { x: leverD, y: -leverD * 0.3 },
+      { x: leverD * 0.3, y: leverD },
+      { x: -leverD, y: leverD * 0.3 },
+      { x: -leverD * 0.3, y: -leverD },
     ],
-    lever: { x: leverD, y: -leverD },
+    lever: { x: leverD, y: -leverD * 0.3 },
     color: null,
   };
 }
 
-/** Bowed path from a→b (perp offset mid) for tighter R-14 curves. */
+/** Bowed path from a→b (perp offset mid). */
 function sampleBowedPath(a, b, bow, n = 16) {
   const pts = [];
   const dx = b.x - a.x;
@@ -819,7 +812,6 @@ function sampleBowedPath(a, b, bow, n = 16) {
   const py = dx / L;
   for (let i = 0; i <= n; i++) {
     const t = i / n;
-    // quadratic bow: max at mid
     const s = 4 * t * (1 - t);
     pts.push({
       x: a.x + dx * t + px * bow * s,
@@ -832,48 +824,46 @@ function sampleBowedPath(a, b, bow, n = 16) {
 }
 
 /**
- * Closed outer outline of R-14: cross arms + convex pocket edges.
- * Walks clockwise around the solid plate silhouette.
+ * Outer silhouette of an X-shaped plate (catalog R-14).
+ * Clockwise around the solid body, including arm outer edges.
  */
-function crossBodyOutline(half, hw, pock) {
-  // Key points around the perimeter (clockwise from W mouth north corner)
-  const pts = [];
-  // West arm top side outward → NE pocket outer → North arm right → ...
-  // W arm north edge (from tip toward center, then pocket)
-  pts.push({ x: -half, y: -hw }); // W mouth N
-  pts.push({ x: -hw * 1.15, y: -hw }); // toward center along arm
-  // NW pocket outer bulge
-  pts.push({ x: -pock, y: -pock * 0.45 });
-  pts.push({ x: -pock * 0.45, y: -pock });
-  pts.push({ x: -hw, y: -hw * 1.15 });
-  // North arm west to tip
-  pts.push({ x: -hw, y: -half }); // N mouth W
-  pts.push({ x: hw, y: -half }); // N mouth E
-  pts.push({ x: hw, y: -hw * 1.15 });
-  // NE pocket
-  pts.push({ x: pock * 0.45, y: -pock });
-  pts.push({ x: pock, y: -pock * 0.45 });
-  pts.push({ x: hw * 1.15, y: -hw });
-  // East arm
-  pts.push({ x: half, y: -hw }); // E mouth N
-  pts.push({ x: half, y: hw }); // E mouth S
-  pts.push({ x: hw * 1.15, y: hw });
-  // SE pocket
-  pts.push({ x: pock, y: pock * 0.45 });
-  pts.push({ x: pock * 0.45, y: pock });
-  pts.push({ x: hw, y: hw * 1.15 });
-  // South arm
-  pts.push({ x: hw, y: half }); // S mouth E
-  pts.push({ x: -hw, y: half }); // S mouth W
-  pts.push({ x: -hw, y: hw * 1.15 });
-  // SW pocket
-  pts.push({ x: -pock * 0.45, y: pock });
-  pts.push({ x: -pock, y: pock * 0.45 });
-  pts.push({ x: -hw * 1.15, y: hw });
-  // West arm south back to start
-  pts.push({ x: -half, y: hw }); // W mouth S
-  // close via W mouth (open — walls filter handles mouths)
-  return pts;
+function xBodyOutline(s, hw, pock) {
+  // Parametric-ish outline: 8 “outer” points of a thick X
+  // Arm half-width along perpendicular to each diagonal
+  const t = hw; // thickness offset
+  // Diagonal unit vectors
+  const d1 = { x: 1 / Math.SQRT2, y: 1 / Math.SQRT2 }; // NW→SE dir
+  const d2 = { x: 1 / Math.SQRT2, y: -1 / Math.SQRT2 }; // SW→NE dir
+  // Perps
+  const p1 = { x: -d1.y, y: d1.x };
+  const p2 = { x: -d2.y, y: d2.x };
+
+  // Build outline by tracing outer corners of each arm tip + pocket bulges
+  // Simpler explicit point list matching thick X:
+  const a = s;
+  const w = hw * 1.05;
+  return [
+    // NW tip
+    { x: -a + w * 0.5, y: -a - w * 0.2 },
+    { x: -a - w * 0.2, y: -a + w * 0.5 },
+    // W pocket
+    { x: -pock * 1.05, y: 0 },
+    // SW tip
+    { x: -a - w * 0.2, y: a - w * 0.5 },
+    { x: -a + w * 0.5, y: a + w * 0.2 },
+    // S pocket
+    { x: 0, y: pock * 1.05 },
+    // SE tip
+    { x: a - w * 0.5, y: a + w * 0.2 },
+    { x: a + w * 0.2, y: a - w * 0.5 },
+    // E pocket
+    { x: pock * 1.05, y: 0 },
+    // NE tip
+    { x: a + w * 0.2, y: -a + w * 0.5 },
+    { x: a - w * 0.5, y: -a - w * 0.2 },
+    // N pocket
+    { x: 0, y: -pock * 1.05 },
+  ];
 }
 
 /**
