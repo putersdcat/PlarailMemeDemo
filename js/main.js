@@ -214,54 +214,75 @@ document.getElementById("file-load").addEventListener("change", async (e) => {
 });
 
 async function saveLayoutToFile() {
-  const payload = serializeBoard(board);
-  // Optional train snapshot
-  if (trainPlaced) {
-    payload.train = {
-      x: train.x,
-      y: train.y,
-      ang: train.ang,
-      mode: train.mode,
-    };
-  }
-  const json = JSON.stringify(payload, null, 2);
-  const defaultName = `plarail-layout-${dateStamp()}.json`;
-
-  // Prefer File System Access API when available (real save dialog)
-  if (window.showSaveFilePicker) {
-    try {
-      const handle = await window.showSaveFilePicker({
-        suggestedName: defaultName,
-        types: [
-          {
-            description: "Plarail layout JSON",
-            accept: { "application/json": [".json"] },
-          },
-        ],
-      });
-      const writable = await handle.createWritable();
-      await writable.write(json);
-      await writable.close();
-      setHint(`Saved layout (${board.pieces.length} pieces) to ${handle.name}.`);
-      return;
-    } catch (err) {
-      if (err?.name === "AbortError") {
-        setHint("Save cancelled.");
-        return;
-      }
-      // fall through to download
+  try {
+    const payload = serializeBoard(board);
+    // Optional train snapshot
+    if (trainPlaced) {
+      payload.train = {
+        x: train.x,
+        y: train.y,
+        ang: train.ang,
+        mode: train.mode,
+      };
     }
-  }
+    const json = JSON.stringify(payload, null, 2);
+    const defaultName = `plarail-layout-${dateStamp()}.json`;
 
-  // Fallback: browser download
-  const blob = new Blob([json], { type: "application/json" });
+    // File System Access API (Chrome/Edge secure contexts). Abort = user cancel only.
+    if (typeof window.showSaveFilePicker === "function") {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: defaultName,
+          types: [
+            {
+              description: "Plarail layout JSON",
+              accept: { "application/json": [".json"] },
+            },
+          ],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(json);
+        await writable.close();
+        setHint(
+          `Saved layout (${board.pieces.length} pieces) to ${handle.name}.`
+        );
+        return;
+      } catch (err) {
+        if (err?.name === "AbortError") {
+          setHint("Save cancelled.");
+          return;
+        }
+        // Not supported / permission / etc. → download fallback
+        console.warn("showSaveFilePicker failed, using download:", err);
+      }
+    }
+
+    downloadJsonFile(json, defaultName);
+    setHint(
+      `Downloaded ${defaultName} (${board.pieces.length} pieces). Check Downloads folder.`
+    );
+  } catch (err) {
+    console.error("Save failed:", err);
+    setHint(`Save failed: ${err?.message || err}`);
+  }
+}
+
+/** Reliable blob download (must attach <a> for some browsers). */
+function downloadJsonFile(json, filename) {
+  const blob = new Blob([json], { type: "application/json;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = defaultName;
+  a.download = filename;
+  a.rel = "noopener";
+  a.style.display = "none";
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
-  setHint(`Downloaded ${defaultName} (${board.pieces.length} pieces).`);
+  // Revoke after click has been processed
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+    a.remove();
+  }, 1500);
 }
 
 function dateStamp() {

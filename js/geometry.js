@@ -391,25 +391,26 @@ function stopStraightTemplate(flip) {
 }
 
 /**
- * R-17 3分岐ポイントレール — same as stacking:
+ * R-17 3分岐ポイントレール — same as stacking (user composite):
  *   1× R-07 double straight (2 units) for the through path
- *   1× R-02 half straight overlapping the R-07 to offset where the branches start
+ *   1× R-02 half straight overlapping the INPUT end of the R-07
  *   2× R-04 large curves (45°, radius LARGE_R ≈ 1.4 unit) for L/R branches
  *
- * Throat is shifted +R-02 (0.5 unit) from the R-07 midpoint toward the exit,
- * so center stub after the split = R-02 length and the stem is longer.
+ * Hidden R-02 sits on the input end: throat is R-02 past the input mouth
+ * (at x = −HALF). Branches leave early; long center run continues to exit.
  *
- *   input ── long stem (1.5u) ── throat ─┬─ R-04 left
- *                                        ├─ center (0.5u = R-02)
- *                                        └─ R-04 right
+ *   input ── stem (0.5u = R-02) ── throat ─┬─ R-04 left
+ *                                          ├─ center (1.5u)
+ *                                          └─ R-04 right
+ *                                          ── exit (R-07 far end)
  */
 function threeWayTemplate(flip) {
-  // Through = full R-07 length (2 units)
+  // Through = full R-07 length (2 units), origin at R-07 center
   const through = UNIT * 2;
   const xIn = -through / 2; // -UNIT
   const xOut = through / 2; // +UNIT
-  // Hidden R-02 offset: branch start is R-02 past the R-07 midpoint (toward exit)
-  const xThroat = HALF; // +0.5 unit — center run throat→exit is exactly R-02
+  // Hidden R-02 on INPUT end: branch start = input + R-02 length
+  const xThroat = xIn + HALF; // -HALF — matches physical R-02 + R-07 stack
 
   const stem = [
     { x: xIn, y: 0 },
@@ -421,7 +422,7 @@ function threeWayTemplate(flip) {
   ];
   const cEnd = { x: xOut, y: 0 };
 
-  // R-04 branch geometry: 45° arc, radius LARGE_R
+  // R-04 branch geometry: 45° arc, radius LARGE_R, start at throat
   // Screen y+ is down: left/up = -y, right/down = +y
   const r = LARGE_R;
   // Left/up (-y): center (xThroat, -r), a π/2 → π/2 − 45°
