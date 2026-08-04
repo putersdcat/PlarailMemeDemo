@@ -57,7 +57,7 @@ export const PIECE_META = {
   R17: {
     code: "R-17",
     name: "3-Way Point",
-    desc: "1 unit + R-02 stem, 1→3",
+    desc: "1 unit + R-02 on exit, 1→3",
   },
   R105: {
     code: "R-10.5",
@@ -392,23 +392,22 @@ function stopStraightTemplate(flip) {
 
 /**
  * R-17 3分岐ポイントレール.
- * Base through ≈ 1 unit, plus an extra R-02 (0.5 unit) of stem length so the
- * piece matches real proportions (as when an R-02 is connected on the input).
- * Total through length = 1.5 units.
+ * Base through ≈ 1 unit, plus an extra R-02 (0.5 unit) on the EXIT side
+ * (center / fan end — not the stem input). Total through = 1.5 units.
  *
- *   input ── long stem ── throat ─┬─ left
- *                                 ├─ center straight
- *                                 └─ right
+ *   input ── stem ── throat ─┬─ left
+ *                            ├─ center ── +R-02 length
+ *                            └─ right
  */
 function threeWayTemplate(flip) {
-  // 1 unit body + 0.5 unit stem (R-02 length) on the input side
+  // 1 unit body + 0.5 unit (R-02) on the exit end only
   const extra = HALF; // R-02
-  const xIn = -UNIT / 2 - extra;
-  const xOut = UNIT / 2;
+  const xIn = -UNIT / 2;
+  const xOut = UNIT / 2 + extra;
   const xThroat = -UNIT * 0.08;
 
   const cEnd = { x: xOut, y: 0 };
-  // Fan mouths: center full forward; L/R at ~40° like catalog trident
+  // Fan mouths sit at the forward (exit) end with the extra length
   const lEnd = { x: xOut - UNIT * 0.06, y: -UNIT * 0.4 };
   const rEnd = { x: xOut - UNIT * 0.06, y: UNIT * 0.4 };
 
