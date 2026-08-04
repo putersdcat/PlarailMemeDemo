@@ -77,11 +77,17 @@ export function drawScene(ctx, view, board, train, ghost, opts = {}) {
   const freeIds = new Set(
     board.connectors.filter((c) => !c.linked).map((c) => `${c.pieceId}:${c.id}`)
   );
+  const multi =
+    opts.selectedIds instanceof Set
+      ? opts.selectedIds
+      : new Set(opts.selectedIds || []);
 
   // Pieces (skip the one being dragged if ghost represents it)
   for (const piece of board.pieces) {
     if (opts.hidePieceId && piece.id === opts.hidePieceId) continue;
-    drawPiece(ctx, piece, piece.id === board.selectedId, {
+    const selected =
+      multi.has(piece.id) || piece.id === board.selectedId;
+    drawPiece(ctx, piece, selected, {
       freeConnectorIds: freeIds,
     });
   }
@@ -108,7 +114,48 @@ export function drawScene(ctx, view, board, train, ghost, opts = {}) {
     ctx.globalAlpha = 1;
   }
 
-  if (opts.trainVisible && train) {
+  // Marquee box-select
+  if (opts.marquee) {
+    const m = opts.marquee;
+    const x = Math.min(m.x0, m.x1);
+    const y = Math.min(m.y0, m.y1);
+    const rw = Math.abs(m.x1 - m.x0);
+    const rh = Math.abs(m.y1 - m.y0);
+    ctx.fillStyle = "rgba(58, 143, 214, 0.12)";
+    ctx.strokeStyle = "rgba(58, 143, 214, 0.85)";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.fillRect(x, y, rw, rh);
+    ctx.strokeRect(x, y, rw, rh);
+    ctx.setLineDash([]);
+  }
+
+  // Train ghost while placing
+  if (opts.trainGhost) {
+    const g = opts.trainGhost;
+    ctx.save();
+    ctx.globalAlpha = g.onRail ? 0.95 : 0.45;
+    const ghostTrain = {
+      x: g.x,
+      y: g.y,
+      ang: g.ang || 0,
+      mode: TrainMode.IDLE,
+    };
+    // Offset body so front axle sits on rail hit
+    if (g.onRail) {
+      ghostTrain.x = g.x - Math.cos(g.ang || 0) * FRONT_AXLE_OFFSET;
+      ghostTrain.y = g.y - Math.sin(g.ang || 0) * FRONT_AXLE_OFFSET;
+    }
+    drawTrain(ctx, ghostTrain);
+    if (g.onRail) {
+      ctx.strokeStyle = "rgba(80, 200, 120, 0.9)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(g.x, g.y, 14, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  } else if (opts.trainVisible && train) {
     drawTrain(ctx, train);
   }
 

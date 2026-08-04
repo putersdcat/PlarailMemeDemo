@@ -118,6 +118,23 @@ body {
   border-radius: 6px;
 }
 
+.piece-btn .train-icon {
+  width: 72px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  background: #1e2229;
+  border-radius: 6px;
+  line-height: 1;
+}
+
+.piece-btn.train-btn.active {
+  border-color: var(--accent-hot);
+  background: #3a3420;
+}
+
 .piece-btn .meta strong {
   display: block;
   font-size: 13px;

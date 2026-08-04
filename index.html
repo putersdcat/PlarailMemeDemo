@@ -3,14 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Plarail Meme Layout Simulator</title>
+    <title>Plarail Meme - Real-2-Sim</title>
     <link rel="stylesheet" href="css/styles.css" />
   </head>
   <body>
     <div id="app">
       <aside id="sidebar">
         <header>
-          <h1>Plarail Meme Sim</h1>
+          <h1>Plarail Meme - Real-2-Sim</h1>
           <p>
             Unit = R-01 = R-03 radius.<br />
             <strong>Left-drag</strong> place · <strong>Right-click</strong> train/rotate.
@@ -35,7 +35,7 @@
             hidden
           />
           <button type="button" class="ui primary" id="btn-meme">
-            Load meme-style layout
+            Load Real-2-Sim track
           </button>
           <div class="tool-row">
             <button type="button" class="ui" id="btn-walls">Wall debug</button>
@@ -135,14 +135,21 @@
             <strong>empty + palette select</strong> — stamp.
           </li>
           <li>
-            Bottom bar: ↻ rotate · <strong>🦄 gender</strong> (M↔F only) ·
-            <strong>⇋ mirror</strong> (L/R bend / turnout side, key M) · 🗑 delete · ✕ clear.
+            Bottom bar: ↻ rotate · <strong>🦄 gender</strong> · <strong>⇋ mirror</strong> ·
+            🗑 delete · ✕ clear. <strong>Ctrl+S</strong> save · <strong>Ctrl+A</strong> select all.
           </li>
           <li>
-            <strong>R-11 / R-12 / R-13</strong> ship as L/R (or A/B) pairs — use ⇋ after placing.
-            Curves: 🦄 = gender only; ⇋ = reverse bend.
+            <strong>🚂 Train</strong> in palette — drag onto a rail, then Start / Space.
+            Right-click a path also places the train.
           </li>
-          <li><strong>Save / Load JSON</strong> for layouts.</li>
+          <li>
+            <strong>Box-select:</strong> drag empty floor to multi-select, then drag any
+            selected piece to move the group. Shift-click to add/remove.
+          </li>
+          <li>
+            <strong>Save JSON</strong> downloads a file and autosaves to the browser
+            (restored on reload). Never loses the layout to a stuck save dialog.
+          </li>
         </ul>
         <h2>Units (critical)</h2>
         <p>
