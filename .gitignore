@@ -19,6 +19,8 @@ dist/
 # Local screenshots / temp media
 *.png
 !docs/**/*.png
+!docs/**/*.jpg
+!docs/**/*.jpeg
 
 # Recordings: keep stable demo MP4s in git; ignore intermediates / dated dumps
 recordings/*

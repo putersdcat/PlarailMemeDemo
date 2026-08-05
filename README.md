@@ -3,25 +3,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Play demo](https://img.shields.io/badge/demo-github.io-blue)](https://putersdcat.github.io/PlarailMemeDemo/)
 
-<!--
-  GitHub README video limit is small (~10MB, flaky above a few MB).
-  Embed the 480p / 12fps loop; link full 1080p separately.
-  autoplay usually needs muted; loop works.
--->
-<video
-  src="recordings/plarail-meme-demo-480p.mp4"
-  width="100%"
-  controls
-  loop
-  muted
-  autoplay
-  playsinline
->
-  <a href="recordings/plarail-meme-demo-480p.mp4">Watch the demo (480p MP4)</a>
-</video>
+[![Demo screenshot — on rails → derail → re-rail](docs/demo-screenshot.jpg)](https://putersdcat.github.io/PlarailMemeDemo/)
 
-*Demo loop (480p · 12 fps · ~330 KB): on rails → derail → wall glide → re-rail.*  
-Full quality: **[1080p MP4](recordings/plarail-meme-demo-1080p.mp4)** (~5 MB, framed to the track).
+**[▶ Play live demo](https://putersdcat.github.io/PlarailMemeDemo/)** ·
+**[1080p video](recordings/plarail-meme-demo-1080p.mp4)** ·
+**[480p video](recordings/plarail-meme-demo-480p.mp4)**
 
 ## Intro (synergistic rail-forward value proposition)
 
