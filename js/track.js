@@ -38,6 +38,7 @@ export const PIECE_COLORS = {
   blue: "#3a8fd6",
   green: "#3d9e5c",
   red: "#c94c4c",
+  yellow: "#e0b833",
   gray: "#7a828c",
 };
 

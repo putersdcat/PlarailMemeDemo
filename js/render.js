@@ -173,6 +173,7 @@ const PAINT = {
   blue: RAIL_BLUE,
   green: "#3d9e5c",
   red: "#c94c4c",
+  yellow: "#e0b833",
   gray: "#7a828c",
 };
 

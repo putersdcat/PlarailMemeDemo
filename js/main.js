@@ -1348,7 +1348,7 @@ onResize();
     );
   }
   // Visible build stamp so cache issues are obvious
-  console.info("[Plarail] build 20260805c — modules loaded");
+  console.info("[Plarail] build 20260805d — modules loaded");
 }
 
 function frame(t) {
@@ -1370,7 +1370,8 @@ function frame(t) {
     {
       running,
       mode: train.mode,
-      wallGlide: !!train.wallGlide,
+      wallHit: !!train.wallHit,
+      wallGlide: !!train.wallHit,
       speed: train.speed,
     },
     audioMem

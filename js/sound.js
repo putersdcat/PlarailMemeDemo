@@ -1,13 +1,13 @@
 /**
  * Library-free Web Audio synth (no samples, no npm).
- * Motor loop on rails · scrape off-rail · one-shot clacks.
+ * Motor = plastic gear grind · scrape off-rail · loud clacks on impact.
  */
 
 let ctx = null;
 let master = null;
 let unlocked = false;
 
-let motorNodes = null; // { osc, gain, filter, lfo, lfoG, pulse }
+let motorNodes = null;
 let scrapeNodes = null;
 
 function getCtx() {
@@ -16,7 +16,7 @@ function getCtx() {
   if (!AC) return null;
   ctx = new AC();
   master = ctx.createGain();
-  master.gain.value = 0.4;
+  master.gain.value = 0.55;
   master.connect(ctx.destination);
   return ctx;
 }
@@ -36,7 +36,7 @@ export function isAudioReady() {
   return !!(unlocked && ctx && ctx.state !== "closed");
 }
 
-function noiseBuffer(sec = 0.4) {
+function noiseBuffer(sec = 0.5) {
   const c = getCtx();
   const n = Math.max(1, Math.floor(c.sampleRate * sec));
   const buf = c.createBuffer(1, n, c.sampleRate);
@@ -45,7 +45,34 @@ function noiseBuffer(sec = 0.4) {
   return buf;
 }
 
-function beep({ freq = 200, dur = 0.12, type = "triangle", vol = 0.12, slideTo = null }) {
+/** Clicky / click-train of noise impulses for plastic gears. */
+function gearClickBuffer(sec = 1.0, clicksPerSec = 28) {
+  const c = getCtx();
+  const n = Math.max(1, Math.floor(c.sampleRate * sec));
+  const buf = c.createBuffer(1, n, c.sampleRate);
+  const d = buf.getChannelData(0);
+  const period = Math.max(8, Math.floor(c.sampleRate / clicksPerSec));
+  for (let i = 0; i < n; i++) {
+    const phase = i % period;
+    if (phase < 3) {
+      // sharp plastic tick
+      d[i] = (Math.random() * 2 - 1) * (1 - phase / 3) * 0.9;
+    } else if (phase < 12) {
+      d[i] = (Math.random() * 2 - 1) * 0.08 * Math.exp(-(phase - 3) / 4);
+    } else {
+      d[i] = (Math.random() * 2 - 1) * 0.015;
+    }
+  }
+  return buf;
+}
+
+function beep({
+  freq = 200,
+  dur = 0.12,
+  type = "triangle",
+  vol = 0.2,
+  slideTo = null,
+}) {
   const c = getCtx();
   if (!c || !unlocked) return;
   if (c.state === "suspended") c.resume().catch(() => {});
@@ -55,39 +82,42 @@ function beep({ freq = 200, dur = 0.12, type = "triangle", vol = 0.12, slideTo =
   osc.type = type;
   osc.frequency.setValueAtTime(freq, t);
   if (slideTo != null) {
-    osc.frequency.exponentialRampToValueAtTime(Math.max(20, slideTo), t + dur);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(30, slideTo), t + dur);
   }
   g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(vol, t + 0.008);
+  g.gain.exponentialRampToValueAtTime(vol, t + 0.006);
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   osc.connect(g);
   g.connect(master);
   osc.start(t);
-  osc.stop(t + dur + 0.02);
+  osc.stop(t + dur + 0.03);
 }
 
-function noiseBurst({ dur = 0.12, freq = 500, vol = 0.14, q = 0.8 }) {
+function noiseBurst({ dur = 0.12, freq = 500, vol = 0.22, q = 0.8 }) {
   const c = getCtx();
   if (!c || !unlocked) return;
   if (c.state === "suspended") c.resume().catch(() => {});
   const t = c.currentTime;
   const src = c.createBufferSource();
-  src.buffer = noiseBuffer(Math.max(0.05, dur + 0.05));
+  src.buffer = noiseBuffer(Math.max(0.08, dur + 0.05));
   const bp = c.createBiquadFilter();
   bp.type = "bandpass";
   bp.frequency.value = freq;
   bp.Q.value = q;
   const g = c.createGain();
   g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(vol, t + 0.005);
+  g.gain.exponentialRampToValueAtTime(vol, t + 0.004);
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   src.connect(bp);
   bp.connect(g);
   g.connect(master);
   src.start(t);
-  src.stop(t + dur + 0.02);
+  src.stop(t + dur + 0.03);
 }
 
+/**
+ * Plastic gear grind: mid/high band noise + periodic clicks, not a low saw hum.
+ */
 export function startMotor(speedNorm = 1) {
   const c = getCtx();
   if (!c || !unlocked) return;
@@ -98,58 +128,88 @@ export function startMotor(speedNorm = 1) {
     return;
   }
 
-  const n = Math.max(0.4, Math.min(2, speedNorm));
-  const osc = c.createOscillator();
-  osc.type = "sawtooth";
-  osc.frequency.value = 52 * n;
+  const n = Math.max(0.45, Math.min(2.2, speedNorm));
 
-  const pulse = c.createOscillator();
-  pulse.type = "square";
-  pulse.frequency.value = 8 * n;
-  const pulseG = c.createGain();
-  pulseG.gain.value = 0.0; // depth set via modulation path
+  // Layer 1: continuous plastic hiss (bandpass white noise)
+  const hiss = c.createBufferSource();
+  hiss.buffer = noiseBuffer(1.2);
+  hiss.loop = true;
+  const hissBp = c.createBiquadFilter();
+  hissBp.type = "bandpass";
+  hissBp.frequency.value = 1800;
+  hissBp.Q.value = 0.7;
+  const hissG = c.createGain();
+  hissG.gain.value = 0.09;
 
-  // Simple: dual osc through lowpass
-  const osc2 = c.createOscillator();
-  osc2.type = "triangle";
-  osc2.frequency.value = 104 * n;
-  const g2 = c.createGain();
-  g2.gain.value = 0.15;
+  // Layer 2: gear tooth clicks
+  const clicks = c.createBufferSource();
+  clicks.buffer = gearClickBuffer(1.0, 26 * n);
+  clicks.loop = true;
+  const clickBp = c.createBiquadFilter();
+  clickBp.type = "highpass";
+  clickBp.frequency.value = 900;
+  const clickG = c.createGain();
+  clickG.gain.value = 0.16;
 
-  const filter = c.createBiquadFilter();
-  filter.type = "lowpass";
-  filter.frequency.value = 320;
-  filter.Q.value = 0.8;
+  // Layer 3: faint higher mesh tone (not sub-bass)
+  const mesh = c.createOscillator();
+  mesh.type = "square";
+  mesh.frequency.value = 220 * n;
+  const meshG = c.createGain();
+  meshG.gain.value = 0.025;
+  const meshHp = c.createBiquadFilter();
+  meshHp.type = "highpass";
+  meshHp.frequency.value = 150;
 
-  const gain = c.createGain();
-  gain.gain.value = 0.0001;
+  const mix = c.createGain();
+  mix.gain.value = 0.0001;
 
-  osc.connect(filter);
-  osc2.connect(g2);
-  g2.connect(filter);
-  filter.connect(gain);
-  gain.connect(master);
+  hiss.connect(hissBp);
+  hissBp.connect(hissG);
+  hissG.connect(mix);
 
-  osc.start();
-  osc2.start();
-  pulse.start();
+  clicks.connect(clickBp);
+  clickBp.connect(clickG);
+  clickG.connect(mix);
+
+  mesh.connect(meshHp);
+  meshHp.connect(meshG);
+  meshG.connect(mix);
+
+  mix.connect(master);
+
+  hiss.start();
+  clicks.start();
+  mesh.start();
 
   const t = c.currentTime;
-  gain.gain.setValueAtTime(0.0001, t);
-  gain.gain.linearRampToValueAtTime(0.14, t + 0.15);
+  mix.gain.setValueAtTime(0.0001, t);
+  mix.gain.linearRampToValueAtTime(0.55, t + 0.12);
 
-  motorNodes = { osc, osc2, g2, filter, gain, pulse, pulseG };
+  motorNodes = {
+    hiss,
+    clicks,
+    mesh,
+    hissBp,
+    clickG,
+    meshG,
+    mix,
+    baseClickRate: 26,
+  };
   setMotorSpeed(speedNorm);
 }
 
 export function setMotorSpeed(speedNorm = 1) {
   if (!motorNodes || !ctx) return;
-  const n = Math.max(0.4, Math.min(2.2, speedNorm));
+  const n = Math.max(0.45, Math.min(2.2, speedNorm));
   const t = ctx.currentTime;
   try {
-    motorNodes.osc.frequency.setTargetAtTime(50 * n, t, 0.06);
-    motorNodes.osc2.frequency.setTargetAtTime(100 * n, t, 0.06);
-    motorNodes.filter.frequency.setTargetAtTime(240 + 140 * n, t, 0.08);
+    // PlaybackRate on buffer sources = gear speed
+    motorNodes.clicks.playbackRate.setTargetAtTime(n, t, 0.08);
+    motorNodes.hiss.playbackRate.setTargetAtTime(0.85 + 0.25 * n, t, 0.1);
+    motorNodes.mesh.frequency.setTargetAtTime(200 * n, t, 0.08);
+    motorNodes.hissBp.frequency.setTargetAtTime(1400 + 600 * n, t, 0.1);
+    motorNodes.clickG.gain.setTargetAtTime(0.12 + 0.08 * n, t, 0.1);
   } catch {
     /* ignore */
   }
@@ -157,18 +217,18 @@ export function setMotorSpeed(speedNorm = 1) {
 
 export function stopMotor() {
   if (!motorNodes || !ctx) return;
-  const { osc, osc2, gain, pulse } = motorNodes;
+  const nodes = motorNodes;
   const t = ctx.currentTime;
   try {
-    gain.gain.cancelScheduledValues(t);
-    gain.gain.setValueAtTime(Math.max(0.0001, gain.gain.value), t);
-    gain.gain.linearRampToValueAtTime(0.0001, t + 0.12);
+    nodes.mix.gain.cancelScheduledValues(t);
+    nodes.mix.gain.setValueAtTime(Math.max(0.0001, nodes.mix.gain.value), t);
+    nodes.mix.gain.linearRampToValueAtTime(0.0001, t + 0.1);
   } catch {
     /* ignore */
   }
   motorNodes = null;
   setTimeout(() => {
-    for (const n of [osc, osc2, pulse]) {
+    for (const n of [nodes.hiss, nodes.clicks, nodes.mesh]) {
       try {
         n.stop();
         n.disconnect();
@@ -177,11 +237,11 @@ export function stopMotor() {
       }
     }
     try {
-      gain.disconnect();
+      nodes.mix.disconnect();
     } catch {
       /* ignore */
     }
-  }, 180);
+  }, 160);
 }
 
 export function startScrape() {
@@ -195,8 +255,8 @@ export function startScrape() {
   src.loop = true;
   const bp = c.createBiquadFilter();
   bp.type = "bandpass";
-  bp.frequency.value = 850;
-  bp.Q.value = 0.5;
+  bp.frequency.value = 1400;
+  bp.Q.value = 0.55;
   const gain = c.createGain();
   gain.gain.value = 0.0001;
   src.connect(bp);
@@ -205,7 +265,7 @@ export function startScrape() {
   src.start();
   const t = c.currentTime;
   gain.gain.setValueAtTime(0.0001, t);
-  gain.gain.linearRampToValueAtTime(0.05, t + 0.1);
+  gain.gain.linearRampToValueAtTime(0.12, t + 0.08);
   scrapeNodes = { src, bp, gain };
 }
 
@@ -233,29 +293,35 @@ export function stopScrape() {
 }
 
 export function playCollision(kind = "derail") {
+  if (!unlocked) {
+    unlockAudio();
+  }
   if (!unlocked) return;
+
   if (kind === "edge") {
-    noiseBurst({ dur: 0.22, freq: 160, vol: 0.22, q: 1.1 });
-    beep({ freq: 95, dur: 0.2, type: "triangle", vol: 0.14, slideTo: 40 });
+    noiseBurst({ dur: 0.28, freq: 220, vol: 0.45, q: 0.9 });
+    beep({ freq: 140, dur: 0.22, type: "triangle", vol: 0.28, slideTo: 55 });
+    beep({ freq: 90, dur: 0.18, type: "sine", vol: 0.12, slideTo: 40 });
   } else if (kind === "wall") {
-    noiseBurst({ dur: 0.08, freq: 680, vol: 0.1, q: 0.7 });
-    beep({ freq: 240, dur: 0.07, type: "square", vol: 0.05, slideTo: 120 });
+    noiseBurst({ dur: 0.09, freq: 1100, vol: 0.28, q: 0.65 });
+    beep({ freq: 380, dur: 0.06, type: "square", vol: 0.12, slideTo: 180 });
   } else {
-    // derail
-    noiseBurst({ dur: 0.14, freq: 420, vol: 0.18, q: 0.85 });
-    beep({ freq: 170, dur: 0.12, type: "triangle", vol: 0.1, slideTo: 60 });
+    // derail — plastic clack (louder + brighter)
+    noiseBurst({ dur: 0.12, freq: 900, vol: 0.38, q: 0.7 });
+    noiseBurst({ dur: 0.08, freq: 1600, vol: 0.18, q: 1.1 });
+    beep({ freq: 280, dur: 0.1, type: "triangle", vol: 0.18, slideTo: 90 });
   }
 }
 
 export function playRerail() {
+  if (!unlocked) unlockAudio();
   if (!unlocked) return;
-  beep({ freq: 540, dur: 0.08, type: "sine", vol: 0.08, slideTo: 300 });
+  beep({ freq: 720, dur: 0.07, type: "sine", vol: 0.16, slideTo: 360 });
+  noiseBurst({ dur: 0.05, freq: 1200, vol: 0.12, q: 1.2 });
 }
 
 /**
  * Frame/state sync for loops + transition SFX.
- * @param {{ running: boolean, mode: string, wallGlide?: boolean, speed?: number }} state
- * @param {{ prevMode?: string, wasGliding?: boolean }} mem
  */
 export function syncTrainAudio(state, mem = {}) {
   if (!unlocked) return;
@@ -264,7 +330,7 @@ export function syncTrainAudio(state, mem = {}) {
   const prev = mem.prevMode;
 
   if (prev && prev !== mode) {
-    if (mode === "off_rail" && prev === "on_rail") {
+    if (mode === "off_rail" && (prev === "on_rail" || prev === "idle")) {
       playCollision("derail");
     } else if (mode === "stopped") {
       playCollision("edge");
@@ -275,10 +341,14 @@ export function syncTrainAudio(state, mem = {}) {
     }
   }
 
-  if (mode === "off_rail" && state.wallGlide && !mem.wasGliding) {
-    playCollision("wall");
+  // Wall impact ticks (throttled) — uses train.wallHit from physics
+  if (mode === "off_rail" && state.wallHit) {
+    const now = performance.now();
+    if (!mem.lastWallTick || now - mem.lastWallTick > 160) {
+      playCollision("wall");
+      mem.lastWallTick = now;
+    }
   }
-  mem.wasGliding = !!(mode === "off_rail" && state.wallGlide);
 
   const speedNorm = (state.speed || 140) / 140;
   if (running && mode === "on_rail") {
@@ -295,8 +365,7 @@ export function syncTrainAudio(state, mem = {}) {
   mem.prevMode = mode;
 }
 
-/** Immediate test chirp (debug / prove audio works). */
 export function playTestBlip() {
   unlockAudio();
-  beep({ freq: 660, dur: 0.1, type: "sine", vol: 0.12, slideTo: 440 });
+  beep({ freq: 880, dur: 0.08, type: "sine", vol: 0.15, slideTo: 660 });
 }

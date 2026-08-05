@@ -36,7 +36,8 @@ export const RE_RAIL_ANGLE = (70 * Math.PI) / 180;
 /** Geometric hop between path ends when graph link is missing. */
 export const PATH_HOP_DIST = 30;
 export const PATH_HOP_ANGLE = (40 * Math.PI) / 180;
-export const EDGE_RESTITUTION = 0.15;
+/** Near-zero bounce: walls mostly slide, not kick. */
+export const EDGE_RESTITUTION = 0.02;
 /** Hit radius for selecting / dragging the train body. */
 export const TRAIN_HIT_R = 28;
 
@@ -56,6 +57,8 @@ export function createTrain() {
     vy: 0,
     reRailCooldown: 0,
     selected: false,
+    /** Set true when walls were hit this simulation step (for SFX) */
+    wallHit: false,
   };
 }
 
@@ -404,18 +407,20 @@ function leaveRails(train) {
   train.pathRef = null;
   train.vx = Math.cos(train.ang) * train.speed;
   train.vy = Math.sin(train.ang) * train.speed;
-  // Longer ignore so we clear the mouth / don't instantly re-rail on wrong leg
+  train.wallHit = false;
+  // Clear the open mouth before re-rail attempts
   train.reRailCooldown = 0.45;
 }
 
 function stepOffRail(train, board, dt, bounds) {
+  train.wallHit = false;
   let x = train.x + train.vx * dt;
   let y = train.y + train.vy * dt;
   let ang = train.ang;
   let vx = train.vx;
   let vy = train.vy;
 
-  // Canvas edge ΓÇö stop
+  // Canvas edge — stop
   if (
     x < bounds.minX ||
     x > bounds.maxX ||
@@ -430,9 +435,9 @@ function stepOffRail(train, board, dt, bounds) {
     return;
   }
 
-  // Wall glide ΓÇö front axle primary, rear secondary
+  // Wall slide — soft seat + strong tangent lock (low bounce)
   let hitAny = false;
-  for (let iter = 0; iter < 6; iter++) {
+  for (let iter = 0; iter < 5; iter++) {
     let hit = false;
     const fa = {
       x: x + Math.cos(ang) * FRONT_AXLE_OFFSET,
@@ -457,32 +462,34 @@ function stepOffRail(train, board, dt, bounds) {
         if (!res) continue;
         hit = true;
         hitAny = true;
-        x += res.x - axle.x;
-        y += res.y - axle.y;
+        // Soft push-out (less pop)
+        const pushScale = isFront ? 0.7 : 0.45;
+        x += (res.x - axle.x) * pushScale;
+        y += (res.y - axle.y) * pushScale;
 
         const nx = res.nx;
         const ny = res.ny;
         const vn = vx * nx + vy * ny;
         if (vn < 0) {
-          // Slide along wall: kill normal component, keep tangent
+          // Kill into-wall velocity (almost no restitution)
           vx = vx - (1 + EDGE_RESTITUTION) * vn * nx;
           vy = vy - (1 + EDGE_RESTITUTION) * vn * ny;
-          // Prefer pure wall slide for toy feel
+          // Strong tangent lock — slide, don't bounce off
           const tx = -ny;
           const ty = nx;
           const along = vx * tx + vy * ty;
           const sign = along >= 0 ? 1 : -1;
-          // Blend: mostly slide, little bounce
           const sp = train.speed;
-          vx = vx * 0.25 + tx * sign * sp * 0.75;
-          vy = vy * 0.25 + ty * sign * sp * 0.75;
+          vx = vx * 0.12 + tx * sign * sp * 0.88;
+          vy = vy * 0.12 + ty * sign * sp * 0.88;
         }
 
         if (isFront) {
           const sp = Math.hypot(vx, vy);
           if (sp > 1e-3) {
             const vAng = Math.atan2(vy, vx);
-            ang = normalizeAngle(ang + 0.65 * normalizeAngle(vAng - ang));
+            // Gentle yaw — follows the wall, not a ricochet snap
+            ang = normalizeAngle(ang + 0.32 * normalizeAngle(vAng - ang));
           }
         }
       }
@@ -497,7 +504,7 @@ function stepOffRail(train, board, dt, bounds) {
     vx = (vx / sp) * target;
     vy = (vy / sp) * target;
     const vAng = Math.atan2(vy, vx);
-    ang = normalizeAngle(ang + 0.4 * normalizeAngle(vAng - ang));
+    ang = normalizeAngle(ang + 0.22 * normalizeAngle(vAng - ang));
   } else if (hitAny) {
     vx = Math.cos(ang) * train.speed;
     vy = Math.sin(ang) * train.speed;
@@ -508,6 +515,7 @@ function stepOffRail(train, board, dt, bounds) {
   train.ang = ang;
   train.vx = vx;
   train.vy = vy;
+  train.wallHit = hitAny;
 
   if (train.reRailCooldown <= 0) {
     tryRerail(train, board);
@@ -528,7 +536,8 @@ function resolveCircleSegment(cx, cy, radius, seg) {
   if (dist >= radius || dist < 1e-8) return null;
   nx /= dist;
   ny /= dist;
-  const push = radius - dist + 0.5;
+  // Slightly less than full seat — softer contact
+  const push = (radius - dist) * 0.85 + 0.15;
   return {
     x: cx + nx * push,
     y: cy + ny * push,
