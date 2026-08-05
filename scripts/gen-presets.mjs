@@ -7,30 +7,39 @@ const layout = JSON.parse(
 const body = {
   format: "plarail-meme-layout",
   version: 1,
-  name: "Real-2-Sim meme track",
+  name: layout.name || "Real-2-Sim meme track",
+  source: layout.source || undefined,
   pieces: layout.pieces,
+  train: layout.train || undefined,
 };
+
+const hint = layout.train
+  ? { x: layout.train.x, y: layout.train.y }
+  : { x: 528.73, y: 653 };
 
 const out = `/**
  * Built-in layouts.
- * Default: the real meme track extracted from the user's live build.
+ * Default: gold-standard WORKING meme track (plarail-layout-WORKING-*).
  */
 
 import { UNIT, PIECE_TYPES } from "./geometry.js";
 import { addPiece, clearBoard, rebuild, loadBoard } from "./track.js";
 
-/** Absolute layout captured from the Real-2-Sim browser session. */
+/** Absolute layout — functionally tested gold standard. */
 export const REAL_MEME_LAYOUT = ${JSON.stringify(body, null, 2)};
 
 /**
- * Load the captured real meme track (absolute coordinates as built).
+ * Load the gold-standard Real-2-Sim meme track.
  */
 export function loadRealMemeTrack(board) {
   const result = loadBoard(board, REAL_MEME_LAYOUT);
+  const th = REAL_MEME_LAYOUT.train
+    ? { x: REAL_MEME_LAYOUT.train.x, y: REAL_MEME_LAYOUT.train.y }
+    : ${JSON.stringify(hint)};
   return {
     ok: result.ok,
     pieceCount: result.pieceCount,
-    trainHint: { x: 521, y: 366 },
+    trainHint: th,
     note: \`Loaded Real-2-Sim meme track (\${result.pieceCount} pieces). Drag train onto a rail, then Start.\`,
   };
 }
@@ -60,4 +69,9 @@ export function loadOpenRun(board, cx, cy) {
 `;
 
 writeFileSync(new URL("../js/presets.js", import.meta.url), out);
-console.log("presets.js written with", layout.pieces.length, "pieces");
+console.log(
+  "presets.js written with",
+  layout.pieces.length,
+  "pieces, trainHint",
+  hint
+);

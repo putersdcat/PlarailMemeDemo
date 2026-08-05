@@ -86,7 +86,8 @@ let trainGhost = null;
 let showWalls = false;
 let lastT = performance.now();
 let hidePieceId = null;
-const LS_KEY = "plarail-real2sim-layout-v1";
+/** Bump when shipping a new gold-standard default so old autosaves don't win. */
+const LS_KEY = "plarail-real2sim-layout-v2-working";
 
 // ── Palette (catalog order; HTML may be sparse — we build buttons in JS) ──
 const paletteOrder = [
@@ -360,8 +361,8 @@ function applyLoadedLayout(data, label = "layout") {
   if (data.train && data.train.x != null) {
     tryPlaceTrainAt(data.train.x, data.train.y);
   } else {
-    // Auto-seat train on a sensible path so Start works immediately
-    placeTrainAtHint({ x: 521, y: 366 });
+    // Fallback seat (gold-standard train pose)
+    placeTrainAtHint({ x: 528.73, y: 653 });
   }
   persistLayout();
   setHint(`Loaded ${result.pieceCount} pieces from ${label}.`);

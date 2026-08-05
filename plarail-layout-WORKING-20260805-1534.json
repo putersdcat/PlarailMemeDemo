@@ -1,17 +1,6 @@
-/**
- * Built-in layouts.
- * Default: gold-standard WORKING meme track (plarail-layout-WORKING-*).
- */
-
-import { UNIT, PIECE_TYPES } from "./geometry.js";
-import { addPiece, clearBoard, rebuild, loadBoard } from "./track.js";
-
-/** Absolute layout — functionally tested gold standard. */
-export const REAL_MEME_LAYOUT = {
+{
   "format": "plarail-meme-layout",
   "version": 1,
-  "name": "Real-2-Sim meme track (WORKING)",
-  "source": "plarail-layout-WORKING-20260805-1534.json",
   "pieces": [
     {
       "id": "p1",
@@ -379,44 +368,6 @@ export const REAL_MEME_LAYOUT = {
     "y": 653,
     "ang": 0,
     "mode": "on_rail"
-  }
-};
-
-/**
- * Load the gold-standard Real-2-Sim meme track.
- */
-export function loadRealMemeTrack(board) {
-  const result = loadBoard(board, REAL_MEME_LAYOUT);
-  const th = REAL_MEME_LAYOUT.train
-    ? { x: REAL_MEME_LAYOUT.train.x, y: REAL_MEME_LAYOUT.train.y }
-    : {"x":528.728896703535,"y":653};
-  return {
-    ok: result.ok,
-    pieceCount: result.pieceCount,
-    trainHint: th,
-    note: `Loaded Real-2-Sim meme track (${result.pieceCount} pieces). Drag train onto a rail, then Start.`,
-  };
-}
-
-/** Alias used by the Load Real-2-Sim track button. */
-export function loadMemeStyle(board, _cx, _cy) {
-  return loadRealMemeTrack(board);
-}
-
-export function loadOval(board, cx, cy) {
-  clearBoard(board);
-  for (let i = 0; i < 8; i++) {
-    addPiece(board, PIECE_TYPES.R03, cx, cy, i, { flip: false });
-  }
-  rebuild(board);
-  return { trainHint: { x: cx + UNIT, y: cy }, note: "Oval loop (8x R-03)." };
-}
-
-export function loadOpenRun(board, cx, cy) {
-  clearBoard(board);
-  for (let i = 0; i < 4; i++) {
-    addPiece(board, PIECE_TYPES.R01, cx + i * UNIT, cy, 0);
-  }
-  rebuild(board);
-  return { trainHint: { x: cx - UNIT / 2 + 20, y: cy } };
+  },
+  "savedAt": "2026-08-05T13:34:20.189Z"
 }
