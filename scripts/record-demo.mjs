@@ -192,12 +192,12 @@ async function main() {
     raw1080,
   ]);
 
-  // Crop to blue-box region and letterbox/fill to 1920x1080
+  // Crop to blue-box region; letterbox to 1920x1080 (keep full footprint in frame)
   runFfmpeg([
     "-i",
     raw1080,
     "-vf",
-    `crop=${cw}:${ch}:${cx}:${cy},scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,setsar=1`,
+    `crop=${cw}:${ch}:${cx}:${cy},scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=0xe8e4dc,setsar=1`,
     "-c:v",
     "libx264",
     "-preset",
