@@ -549,9 +549,9 @@ export function closestPathPoint(board, x, y, maxDist = 48, opts = {}) {
           angleDiff(preferAng, ang + Math.PI)
         );
       }
-      // Distance primary when no prefer; with prefer, heading dominates ties
-      const score =
-        preferAng != null ? angErr * angW + res.d * 0.35 : res.d;
+      // Both matter: among nearby paths, better heading wins (switch forks).
+      // Still distance-gated by maxDist so we never grab a far "aligned" rail.
+      const score = preferAng != null ? res.d + angErr * angW : res.d;
 
       if (score < bestScore) {
         bestScore = score;
