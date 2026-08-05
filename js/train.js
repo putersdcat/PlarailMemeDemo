@@ -36,8 +36,8 @@ export const RE_RAIL_ANGLE = (70 * Math.PI) / 180;
 /** Geometric hop between path ends when graph link is missing. */
 export const PATH_HOP_DIST = 30;
 export const PATH_HOP_ANGLE = (40 * Math.PI) / 180;
-/** Near-zero bounce: walls mostly slide, not kick. */
-export const EDGE_RESTITUTION = 0.02;
+/** Zero bounce: walls kill normal velocity and slide only. */
+export const EDGE_RESTITUTION = 0;
 /** Hit radius for selecting / dragging the train body. */
 export const TRAIN_HIT_R = 28;
 
@@ -435,8 +435,10 @@ function stepOffRail(train, board, dt, bounds) {
     return;
   }
 
-  // Wall slide — soft seat + strong tangent lock (low bounce)
+  // Wall slide — soft seat, pure tangent glide (no bounce kick)
   let hitAny = false;
+  let lastNx = 0;
+  let lastNy = 0;
   for (let iter = 0; iter < 5; iter++) {
     let hit = false;
     const fa = {
@@ -462,34 +464,43 @@ function stepOffRail(train, board, dt, bounds) {
         if (!res) continue;
         hit = true;
         hitAny = true;
-        // Soft push-out (less pop)
-        const pushScale = isFront ? 0.7 : 0.45;
+        lastNx = res.nx;
+        lastNy = res.ny;
+        // Gentle push-out (avoid popping off the wall)
+        const pushScale = isFront ? 0.42 : 0.28;
         x += (res.x - axle.x) * pushScale;
         y += (res.y - axle.y) * pushScale;
 
         const nx = res.nx;
         const ny = res.ny;
         const vn = vx * nx + vy * ny;
+        // Kill all into-wall velocity (no restitution bounce)
         if (vn < 0) {
-          // Kill into-wall velocity (almost no restitution)
-          vx = vx - (1 + EDGE_RESTITUTION) * vn * nx;
-          vy = vy - (1 + EDGE_RESTITUTION) * vn * ny;
-          // Strong tangent lock — slide, don't bounce off
-          const tx = -ny;
-          const ty = nx;
-          const along = vx * tx + vy * ty;
-          const sign = along >= 0 ? 1 : -1;
-          const sp = train.speed;
-          vx = vx * 0.12 + tx * sign * sp * 0.88;
-          vy = vy * 0.12 + ty * sign * sp * 0.88;
+          vx -= (1 + EDGE_RESTITUTION) * vn * nx;
+          vy -= (1 + EDGE_RESTITUTION) * vn * ny;
         }
+        // Also strip any residual outward normal so speed-normalize
+        // cannot re-amplify a bounce-off kick
+        const vn2 = vx * nx + vy * ny;
+        if (vn2 > 0) {
+          vx -= vn2 * nx;
+          vy -= vn2 * ny;
+        }
+        // Pure tangent glide along the wall
+        const tx = -ny;
+        const ty = nx;
+        const along = vx * tx + vy * ty;
+        const sign = along >= 0 ? 1 : -1;
+        const sp = train.speed;
+        vx = tx * sign * sp * 0.96 + vx * 0.04;
+        vy = ty * sign * sp * 0.96 + vy * 0.04;
 
         if (isFront) {
-          const sp = Math.hypot(vx, vy);
-          if (sp > 1e-3) {
+          const vSp = Math.hypot(vx, vy);
+          if (vSp > 1e-3) {
             const vAng = Math.atan2(vy, vx);
-            // Gentle yaw — follows the wall, not a ricochet snap
-            ang = normalizeAngle(ang + 0.32 * normalizeAngle(vAng - ang));
+            // Very gentle yaw — follow wall, no ricochet snap
+            ang = normalizeAngle(ang + 0.18 * normalizeAngle(vAng - ang));
           }
         }
       }
@@ -497,14 +508,23 @@ function stepOffRail(train, board, dt, bounds) {
     if (!hit) break;
   }
 
-  // Cruise speed
+  // Cruise speed — if we hit a wall, keep velocity purely tangential
   let sp = Math.hypot(vx, vy);
-  if (sp > 1e-3) {
+  if (hitAny && (lastNx || lastNy)) {
+    const tx = -lastNy;
+    const ty = lastNx;
+    const along = vx * tx + vy * ty;
+    const sign = along >= 0 ? 1 : -1;
+    vx = tx * sign * train.speed;
+    vy = ty * sign * train.speed;
+    const vAng = Math.atan2(vy, vx);
+    ang = normalizeAngle(ang + 0.14 * normalizeAngle(vAng - ang));
+  } else if (sp > 1e-3) {
     const target = train.speed;
     vx = (vx / sp) * target;
     vy = (vy / sp) * target;
     const vAng = Math.atan2(vy, vx);
-    ang = normalizeAngle(ang + 0.22 * normalizeAngle(vAng - ang));
+    ang = normalizeAngle(ang + 0.18 * normalizeAngle(vAng - ang));
   } else if (hitAny) {
     vx = Math.cos(ang) * train.speed;
     vy = Math.sin(ang) * train.speed;
