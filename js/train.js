@@ -462,11 +462,9 @@ function leaveRails(train) {
 }
 
 /**
- * Off-rail motion that is speed-invariant in geometry:
- *  - advance only in fixed OFF_RAIL_DS steps (from total distance traveled)
- *  - wall slide direction from locked derail heading (not velocity sign)
- *  - front axle steers; rear only pushes out (no reverse-steer fights)
- *  - body ang always = travel direction (no lag / "drift")
+ * Off-rail: fixed-distance steps (speed-invariant geometry).
+ * Curve flip-flop fix: only the *deepest* front wall steers, and travel
+ * never reverses more than 90° in one step (inner/outer rail thrashing).
  */
 function stepOffRail(train, board, dt, bounds) {
   train.wallHit = false;
@@ -498,7 +496,6 @@ function stepOffRail(train, board, dt, bounds) {
       train.reRailDistLeft = Math.max(0, train.reRailDistLeft - OFF_RAIL_DS);
     }
 
-    // Free advance one fixed step
     x += ux * OFF_RAIL_DS;
     y += uy * OFF_RAIL_DS;
 
@@ -517,9 +514,8 @@ function stepOffRail(train, board, dt, bounds) {
       return;
     }
 
-    // Resolve wall contacts (repeat for corner stacking)
-    for (let iter = 0; iter < 6; iter++) {
-      let hit = false;
+    // A few settle passes — each pass uses only deepest contact per axle
+    for (let iter = 0; iter < 4; iter++) {
       const fa = {
         x: x + Math.cos(ang) * FRONT_AXLE_OFFSET,
         y: y + Math.sin(ang) * FRONT_AXLE_OFFSET,
@@ -529,36 +525,36 @@ function stepOffRail(train, board, dt, bounds) {
         y: y + Math.sin(ang) * REAR_AXLE_OFFSET,
       };
 
-      // Rear: push only (never steers — rear steering flipped corners by speed)
-      for (const w of board.walls) {
-        const res = resolveCircleSegment(ra.x, ra.y, WHEEL_RADIUS, w);
-        if (!res) continue;
-        hit = true;
+      const rearHit = deepestWallHit(ra.x, ra.y, board.walls);
+      if (rearHit) {
         hitAny = true;
-        x += (res.x - ra.x) * 0.5;
-        y += (res.y - ra.y) * 0.5;
+        x += (rearHit.x - ra.x) * 0.55;
+        y += (rearHit.y - ra.y) * 0.55;
       }
 
-      // Front: push + set travel along wall using locked prefer heading
-      for (const w of board.walls) {
-        const res = resolveCircleSegment(fa.x, fa.y, WHEEL_RADIUS, w);
-        if (!res) continue;
-        hit = true;
+      const frontHit = deepestWallHit(fa.x, fa.y, board.walls);
+      if (frontHit) {
         hitAny = true;
-        x += (res.x - fa.x) * 0.7;
-        y += (res.y - fa.y) * 0.7;
+        x += (frontHit.x - fa.x) * 0.75;
+        y += (frontHit.y - fa.y) * 0.75;
 
-        const { tx, ty } = wallTangentFromPrefer(res.nx, res.ny, preferAng);
+        // Continue *current* travel along this wall — never reverse in-place
+        // (prefer only breaks ties when travel is nearly zero)
+        const { tx, ty } = wallSlideDir(
+          frontHit.nx,
+          frontHit.ny,
+          ux,
+          uy,
+          preferAng
+        );
         ux = tx;
         uy = ty;
         ang = Math.atan2(uy, ux);
       }
 
-      if (!hit) break;
-      // refresh axle poses after push for next iter
+      if (!rearHit && !frontHit) break;
     }
 
-    // Normalize direction
     const len = Math.hypot(ux, uy);
     if (len > 1e-6) {
       ux /= len;
@@ -569,7 +565,6 @@ function stepOffRail(train, board, dt, bounds) {
       ang = preferAng;
     }
 
-    // Write pose so re-rail sees consistent state after each geometry step
     train.x = x;
     train.y = y;
     train.ang = ang;
@@ -593,18 +588,40 @@ function stepOffRail(train, board, dt, bounds) {
   }
 }
 
+/** Deepest wall penetration for a circle (avoids inner/outer thrashing). */
+function deepestWallHit(cx, cy, walls) {
+  let best = null;
+  for (const w of walls) {
+    const res = resolveCircleSegment(cx, cy, WHEEL_RADIUS, w);
+    if (!res) continue;
+    if (!best || res.pen > best.pen) best = res;
+  }
+  return best;
+}
+
 /**
- * Wall tangent that continues the locked derail heading.
- * NO velocity input — velocity magnitude/sign is what made corners flip with speed.
+ * Slide direction on a wall:
+ * 1) keep going the way we were already traveling (stops mid-curve flip-flops)
+ * 2) if almost stopped / ambiguous, fall back to locked derail heading
  */
-function wallTangentFromPrefer(nx, ny, preferAng) {
+function wallSlideDir(nx, ny, ux, uy, preferAng) {
   let tx = -ny;
   let ty = nx;
-  const hx = Math.cos(preferAng);
-  const hy = Math.sin(preferAng);
-  if (hx * tx + hy * ty < 0) {
-    tx = -tx;
-    ty = -ty;
+  const along = ux * tx + uy * ty;
+  if (Math.abs(along) > 0.05) {
+    // Continue current travel along the wall — never reverse
+    if (along < 0) {
+      tx = -tx;
+      ty = -ty;
+    }
+  } else {
+    // Ambiguous: use derail prefer
+    const hx = Math.cos(preferAng);
+    const hy = Math.sin(preferAng);
+    if (hx * tx + hy * ty < 0) {
+      tx = -tx;
+      ty = -ty;
+    }
   }
   return { tx, ty };
 }
@@ -623,13 +640,15 @@ function resolveCircleSegment(cx, cy, radius, seg) {
   if (dist >= radius || dist < 1e-8) return null;
   nx /= dist;
   ny /= dist;
-  // Slightly less than full seat — softer contact
-  const push = (radius - dist) * 0.85 + 0.15;
+  const pen = radius - dist;
+  // Full seat on the deepest wall — no residual penetration thrash
+  const push = pen + 0.05;
   return {
     x: cx + nx * push,
     y: cy + ny * push,
     nx,
     ny,
+    pen,
   };
 }
 

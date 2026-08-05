@@ -1477,7 +1477,7 @@ window.__plarailDemo = {
     );
   }
   // Visible build stamp so cache issues are obvious
-  console.info("[Plarail] build 20260806a — modules loaded");
+  console.info("[Plarail] build 20260806b — modules loaded");
 }
 
 function frame(t) {
