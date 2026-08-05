@@ -49,9 +49,16 @@ export const EDGE_FOLLOW_LAT = HALF_W + WHEEL_RADIUS; // ~29px from centerline
 /** How far from a path centerline still counts as “on the plastic contour”. */
 export const EDGE_FOLLOW_CATCH = EDGE_FOLLOW_LAT + 28;
 /** Substeps per frame while free-flying between contour catches. */
-export const OFF_RAIL_SUBSTEPS = 3;
+export const OFF_RAIL_SUBSTEPS = 4;
 /** How strongly body yaw locks to travel direction while on a contour. */
 export const CONTOUR_YAW_BLEND = 0.9;
+/**
+ * Shallow glance: if into-wall fraction of velocity is below this, treat as
+ * pure edge slide (no heading kick). Higher = stickier on inside curves.
+ */
+export const SHALLOW_GLANCE = 0.62;
+/** Soft push fraction for shallow penetrations (less “pop” off the wall). */
+export const SHALLOW_PUSH = 0.45;
 
 export function createTrain() {
   return {
@@ -525,9 +532,12 @@ function stepOffRail(train, board, dt, bounds) {
       const body = bodyFromFrontAxle(ep.x, ep.y, ep.ang);
       x = body.x;
       y = body.y;
-      ang = ep.ang;
-      vx = Math.cos(ang) * speed;
-      vy = Math.sin(ang) * speed;
+      // Smooth yaw onto the contour (less snap on tight inner curves)
+      ang = normalizeAngle(
+        ang + CONTOUR_YAW_BLEND * normalizeAngle(ep.ang - ang)
+      );
+      vx = Math.cos(ep.ang) * speed;
+      vy = Math.sin(ep.ang) * speed;
       gliding = true;
       train.dir = dirSense;
       train.edgeRef = {
@@ -540,7 +550,7 @@ function stepOffRail(train, board, dt, bounds) {
     }
   }
 
-  // Free flight if no edge ref
+  // Free flight if no edge ref — soft wall slide, then re-catch contour
   if (!train.edgeRef) {
     if (Math.hypot(vx, vy) < 1e-3) {
       vx = Math.cos(ang) * speed;
@@ -548,48 +558,147 @@ function stepOffRail(train, board, dt, bounds) {
     }
     const nSub = OFF_RAIL_SUBSTEPS;
     const sdt = dt / nSub;
+    let preferX = train.glideTx || Math.cos(ang);
+    let preferY = train.glideTy || Math.sin(ang);
+    let slid = false;
+
     for (let i = 0; i < nSub; i++) {
       x += vx * sdt;
       y += vy * sdt;
+
       const fa = {
         x: x + Math.cos(ang) * FRONT_AXLE_OFFSET,
         y: y + Math.sin(ang) * FRONT_AXLE_OFFSET,
       };
-      for (const h of collectWallHits(
+      // Slight stick range so shallow inside-curve glances "catch" the plastic
+      const hits = collectWallHits(
         fa.x,
         fa.y,
         WHEEL_RADIUS,
-        0,
-        board.walls
-      )) {
+        5,
+        board.walls || []
+      );
+      if (hits.length) {
+        // Prefer deepest / closest contact
+        hits.sort((a, b) => b.pen - a.pen);
+        const h = hits[0];
+        const sp0 = Math.hypot(vx, vy) || speed;
+        const vn = (vx * h.nx + vy * h.ny) / sp0; // <0 into wall
+        const into = Math.max(0, -vn); // 0 glancing … 1 head-on
+        const shallow = into < SHALLOW_GLANCE;
+
+        // Soft seat onto surface (shallow = less pop)
         if (h.pen > 0) {
-          x += h.nx * h.pen;
-          y += h.ny * h.pen;
-          const vn = vx * h.nx + vy * h.ny;
-          if (vn < 0) {
-            vx -= vn * h.nx;
-            vy -= vn * h.ny;
+          const push = shallow ? h.pen * SHALLOW_PUSH : h.pen * 0.85;
+          x += h.nx * push;
+          y += h.ny * push;
+        } else if (h.dist < WHEEL_RADIUS + 4 && shallow) {
+          // Hug: close tiny air gap on a glance without bouncing away
+          const want = WHEEL_RADIUS + 0.4;
+          const gap = h.dist - want;
+          if (gap > 0) {
+            x -= h.nx * Math.min(gap, 1.8) * 0.5;
+            y -= h.ny * Math.min(gap, 1.8) * 0.5;
           }
         }
-      }
-      const sp = Math.hypot(vx, vy);
-      if (sp > 1e-3) {
-        vx = (vx / sp) * speed;
-        vy = (vy / sp) * speed;
+
+        // Pure tangent drive — no restitution bounce
+        let tx = h.tx;
+        let ty = h.ty;
+        // Keep travel sense (prefer residual v, then sticky glide memory)
+        const alongV = vx * tx + vy * ty;
+        const alongP = preferX * tx + preferY * ty;
+        if (alongV < -1e-3 || (Math.abs(alongV) < 1e-3 && alongP < 0)) {
+          tx = -tx;
+          ty = -ty;
+        }
+
+        if (shallow) {
+          // Glancing: lock fully to wall tangent (smooth inside-curve slide)
+          vx = tx * speed;
+          vy = ty * speed;
+          // Slow yaw turn so it looks like it follows the curve, not ricochets
+          const vAng = Math.atan2(vy, vx);
+          ang = normalizeAngle(
+            ang + 0.55 * normalizeAngle(vAng - ang)
+          );
+          preferX = tx;
+          preferY = ty;
+          slid = true;
+        } else {
+          // Steeper hit: still no bounce — project then re-normalize
+          let nvx = vx;
+          let nvy = vy;
+          const rawVn = nvx * h.nx + nvy * h.ny;
+          if (rawVn < 0) {
+            nvx -= rawVn * h.nx;
+            nvy -= rawVn * h.ny;
+          }
+          // Blend toward tangent so even steep hits settle into a slide
+          nvx = nvx * 0.35 + tx * speed * 0.65;
+          nvy = nvy * 0.35 + ty * speed * 0.65;
+          const sp = Math.hypot(nvx, nvy) || 1;
+          vx = (nvx / sp) * speed;
+          vy = (nvy / sp) * speed;
+          const vAng = Math.atan2(vy, vx);
+          ang = normalizeAngle(
+            ang + 0.4 * normalizeAngle(vAng - ang)
+          );
+          preferX = vx / speed;
+          preferY = vy / speed;
+          slid = true;
+        }
+
+        // Secondary hits: only depenetrate, don't re-aim
+        for (let j = 1; j < hits.length; j++) {
+          const h2 = hits[j];
+          if (h2.pen > 0) {
+            x += h2.nx * h2.pen * 0.5;
+            y += h2.ny * h2.pen * 0.5;
+          }
+        }
       } else {
-        vx = Math.cos(ang) * speed;
-        vy = Math.sin(ang) * speed;
+        const sp = Math.hypot(vx, vy);
+        if (sp > 1e-3) {
+          vx = (vx / sp) * speed;
+          vy = (vy / sp) * speed;
+        } else {
+          vx = preferX * speed;
+          vy = preferY * speed;
+        }
+        ang = normalizeAngle(
+          ang + 0.28 * normalizeAngle(Math.atan2(vy, vx) - ang)
+        );
       }
-      ang = normalizeAngle(
-        ang + 0.4 * normalizeAngle(Math.atan2(vy, vx) - ang)
-      );
     }
-    // Try to re-catch a contour while free-flying
+
+    train.glideTx = preferX;
+    train.glideTy = preferY;
+
+    // After a wall slide, prefer catching the rail-edge contour (inner curves)
     const recap = captureEdgeRef(
       { x, y, ang, dir: train.dir },
-      board
+      board,
+      slid ? EDGE_FOLLOW_CATCH + 12 : EDGE_FOLLOW_CATCH
     );
     if (recap) {
+      // Keep travel sense continuous when snapping onto the edge
+      if (slid) {
+        const live = board.pathIndex.find(
+          (p) =>
+            p.pieceId === recap.pieceId &&
+            p.id === recap.pathId &&
+            p.active
+        );
+        if (live) {
+          const pose = pointOnPolyline(live.points, recap.s);
+          const along =
+            preferX * Math.cos(pose.ang) + preferY * Math.sin(pose.ang);
+          recap.dir = along >= 0 ? 1 : -1;
+          if (recap.s < 0.08) recap.dir = 1;
+          if (recap.s > 0.92) recap.dir = -1;
+        }
+      }
       train.edgeRef = recap;
       gliding = true;
     }
@@ -627,12 +736,12 @@ function stepOffRail(train, board, dt, bounds) {
 }
 
 /** Build edgeRef from train pose + nearest path. */
-function captureEdgeRef(train, board) {
+function captureEdgeRef(train, board, catchDist = EDGE_FOLLOW_CATCH) {
   const fa = {
     x: train.x + Math.cos(train.ang) * FRONT_AXLE_OFFSET,
     y: train.y + Math.sin(train.ang) * FRONT_AXLE_OFFSET,
   };
-  const near = closestPathPoint(board, fa.x, fa.y, EDGE_FOLLOW_CATCH);
+  const near = closestPathPoint(board, fa.x, fa.y, catchDist);
   if (!near) return null;
 
   const pathAng = near.ang;
