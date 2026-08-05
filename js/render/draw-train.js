@@ -23,8 +23,9 @@ export function drawTrain(ctx, train) {
   ctx.translate(x, y);
   ctx.rotate(ang);
 
-  const L = TRAIN_LENGTH * 1.12;
-  const R = TRAIN_RADIUS * 0.92;
+  // Body width matches TRAIN_RADIUS (≈ track width / slightly over)
+  const L = TRAIN_LENGTH * 1.08;
+  const R = TRAIN_RADIUS;
   const nose = L * 0.52;
   const tail = -L * 0.48;
 

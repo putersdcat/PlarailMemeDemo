@@ -13,6 +13,8 @@ import {
   pointOnPolyline,
   angleDiff,
   normalizeAngle,
+  HALF_W,
+  TRACK_W,
 } from "./geometry.js";
 import { closestPathPoint } from "./track.js";
 
@@ -23,12 +25,17 @@ export const TrainMode = {
   STOPPED: "stopped",
 };
 
-export const TRAIN_RADIUS = 10;
-export const TRAIN_LENGTH = 48;
+/**
+ * Body half-width ≈ track half-width (+ a hair so it fills the rails).
+ * TRACK_W is the plastic bed width; train should read as track-width or slightly more.
+ */
+export const TRAIN_RADIUS = HALF_W + 2; // 22 when TRACK_W=40
+export const TRAIN_LENGTH = Math.round(TRACK_W * 2.15); // ~86
 export const FRONT_AXLE_FROM_NOSE = TRAIN_LENGTH / 3;
 export const FRONT_AXLE_OFFSET = TRAIN_LENGTH / 2 - FRONT_AXLE_FROM_NOSE;
 export const REAR_AXLE_OFFSET = -TRAIN_LENGTH * 0.28;
-export const WHEEL_RADIUS = 9;
+/** Axle contact radius — just under body half so walls meet the silhouette. */
+export const WHEEL_RADIUS = HALF_W - 1;
 
 /**
  * Re-rail snap window — intentionally tight so drive-bys past
@@ -43,7 +50,7 @@ export const PATH_HOP_ANGLE = (40 * Math.PI) / 180;
 /** Zero bounce: walls kill normal velocity and slide only. */
 export const EDGE_RESTITUTION = 0;
 /** Hit radius for selecting / dragging the train body. */
-export const TRAIN_HIT_R = 28;
+export const TRAIN_HIT_R = Math.round(TRAIN_LENGTH * 0.55);
 
 export function createTrain() {
   return {
