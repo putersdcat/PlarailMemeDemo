@@ -9,13 +9,26 @@
     />
     <meta name="theme-color" content="#1a2332" />
     <title>Plarail Meme - Real-2-Sim</title>
-    <link rel="stylesheet" href="css/styles.css?v=20260805m" />
+    <link rel="stylesheet" href="css/styles.css?v=20260805n" />
   </head>
   <body>
     <div id="app">
-      <aside id="sidebar">
+      <aside id="sidebar" aria-label="Track palette and tools">
         <header>
-          <h1>Plarail Meme - Real-2-Sim</h1>
+          <div class="sidebar-header-row">
+            <h1>Plarail Meme - Real-2-Sim</h1>
+            <button
+              type="button"
+              class="sidebar-toggle"
+              id="btn-sidebar-toggle"
+              title="Collapse sidebar"
+              aria-label="Collapse sidebar"
+              aria-expanded="true"
+              aria-controls="sidebar"
+            >
+              ‹
+            </button>
+          </div>
           <p>
             Unit = R-01 = R-03 radius.<br />
             <strong>Left-drag</strong> place · <strong>Right-click</strong> train/rotate.
@@ -50,6 +63,18 @@
       </aside>
 
       <div id="stage-wrap">
+        <button
+          type="button"
+          class="sidebar-toggle sidebar-toggle-open"
+          id="btn-sidebar-open"
+          title="Show sidebar"
+          aria-label="Show sidebar"
+          aria-expanded="false"
+          aria-controls="sidebar"
+          hidden
+        >
+          ›
+        </button>
         <canvas id="stage"></canvas>
         <div id="hud">
           <div id="mode-badge" class="badge">Mode: <strong>Build</strong></div>
@@ -228,6 +253,6 @@
       </div>
     </div>
 
-    <script type="module" src="js/main.js?v=20260805m"></script>
+    <script type="module" src="js/main.js?v=20260805n"></script>
   </body>
 </html>

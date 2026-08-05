@@ -1320,6 +1320,54 @@ function onResize() {
 window.addEventListener("resize", onResize);
 onResize();
 
+// ── Collapsible left sidebar ──
+const SIDEBAR_LS = "plarail-sidebar-collapsed";
+const appEl = document.getElementById("app");
+const btnSidebarToggle = document.getElementById("btn-sidebar-toggle");
+const btnSidebarOpen = document.getElementById("btn-sidebar-open");
+
+function setSidebarCollapsed(collapsed) {
+  if (!appEl) return;
+  appEl.classList.toggle("sidebar-collapsed", !!collapsed);
+  if (btnSidebarToggle) {
+    btnSidebarToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    btnSidebarToggle.title = collapsed ? "Show sidebar" : "Collapse sidebar";
+    btnSidebarToggle.setAttribute(
+      "aria-label",
+      collapsed ? "Show sidebar" : "Collapse sidebar"
+    );
+  }
+  if (btnSidebarOpen) {
+    btnSidebarOpen.hidden = !collapsed;
+    btnSidebarOpen.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  }
+  try {
+    localStorage.setItem(SIDEBAR_LS, collapsed ? "1" : "0");
+  } catch {
+    /* ignore */
+  }
+  // Let the CSS width transition finish, then refit the canvas
+  requestAnimationFrame(() => {
+    onResize();
+    setTimeout(onResize, 300);
+  });
+}
+
+function toggleSidebar() {
+  setSidebarCollapsed(!appEl?.classList.contains("sidebar-collapsed"));
+}
+
+btnSidebarToggle?.addEventListener("click", toggleSidebar);
+btnSidebarOpen?.addEventListener("click", () => setSidebarCollapsed(false));
+
+try {
+  if (localStorage.getItem(SIDEBAR_LS) === "1") {
+    setSidebarCollapsed(true);
+  }
+} catch {
+  /* ignore */
+}
+
 // Startup: localStorage autosave → else real meme track (never the circle)
 {
   let loaded = false;
@@ -1348,7 +1396,7 @@ onResize();
     );
   }
   // Visible build stamp so cache issues are obvious
-  console.info("[Plarail] build 20260805m — modules loaded");
+  console.info("[Plarail] build 20260805n — modules loaded");
 }
 
 function frame(t) {
