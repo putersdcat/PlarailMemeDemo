@@ -7,8 +7,8 @@
  * so visually joined track stays continuous even if a gender link is missing.
  *
  * Wheelbase (body local, +x = nose):
- *   front axle inset 2/6 of length from nose
- *   rear  axle inset 1/6 of length from tail
+ *   front axle: classic ~1/3 of length back from nose
+ *   rear  axle: inset 1/6 of length from tail
  */
 
 import {
@@ -33,9 +33,9 @@ export const TrainMode = {
  */
 export const TRAIN_RADIUS = HALF_W - 2; // 18 — slightly under track width
 export const TRAIN_LENGTH = Math.round(TRACK_W * 2.15 * (4 / 3)); // ~115
-/** Inset from nose (fraction of length) → front virtual axle. */
-export const FRONT_AXLE_FROM_NOSE = TRAIN_LENGTH * (2 / 6);
-/** Center → front axle (+x). From center: L/2 − 2L/6 = L/6. */
+/** Inset from nose → front virtual axle (reverted classic). */
+export const FRONT_AXLE_FROM_NOSE = TRAIN_LENGTH / 3;
+/** Center → front axle (+x). */
 export const FRONT_AXLE_OFFSET = TRAIN_LENGTH / 2 - FRONT_AXLE_FROM_NOSE;
 /** Center → rear axle (−x). Inset 1/6 from tail → −L/2 + L/6 = −L/3. */
 export const REAR_AXLE_OFFSET = -TRAIN_LENGTH / 2 + TRAIN_LENGTH / 6;

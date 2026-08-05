@@ -8,7 +8,7 @@ let master = null;
 let unlocked = false;
 
 let motorNodes = null;
-/** 1 = on-rail, ~0.42 = carpet / off-rail */
+/** 1 = on-rail, ~0.45 = carpet / off-rail */
 let motorLevel = 1;
 
 function getCtx() {
@@ -17,7 +17,7 @@ function getCtx() {
   if (!AC) return null;
   ctx = new AC();
   master = ctx.createGain();
-  master.gain.value = 0.62;
+  master.gain.value = 0.72;
   master.connect(ctx.destination);
   return ctx;
 }
@@ -47,60 +47,54 @@ function noiseBuffer(sec = 0.5) {
 }
 
 /**
- * Uneven plastic gear teeth — soft mid ticks + grit, no bright sizzle.
- * clicksPerSec ~ gear mesh rate.
+ * Irregular plastic gear teeth: uneven spacing + gritty decay.
+ * Mid-band energy, not a steady vacuum hiss.
  */
-function gearClickBuffer(sec = 1.4, clicksPerSec = 18) {
+function gearClickBuffer(sec = 1.2, clicksPerSec = 22) {
   const c = getCtx();
   const n = Math.max(1, Math.floor(c.sampleRate * sec));
   const buf = c.createBuffer(1, n, c.sampleRate);
   const d = buf.getChannelData(0);
-  const basePeriod = Math.max(12, Math.floor(c.sampleRate / clicksPerSec));
+  const basePeriod = Math.max(10, Math.floor(c.sampleRate / clicksPerSec));
   let next = 0;
-  while (next < n) {
-    // Heavy period jitter → living plastic mesh, not a metronome
-    const period = Math.floor(basePeriod * (0.62 + Math.random() * 0.75));
-    // Occasional double-tooth skip
-    const skip = Math.random() < 0.08 ? Math.floor(period * 0.4) : 0;
+  let i = 0;
+  while (i < n) {
+    // jittered tooth period (dynamic mesh, not metronome)
+    const jitter = 0.72 + Math.random() * 0.56;
+    const period = Math.floor(basePeriod * jitter);
     for (let p = 0; p < period && next + p < n; p++) {
       const idx = next + p;
-      if (p < skip) {
-        d[idx] = (Math.random() * 2 - 1) * 0.02;
-      } else if (p - skip < 3) {
-        const t = p - skip;
-        // dull plastic knock (not a click-hihat)
-        d[idx] = (Math.random() * 2 - 1) * (0.85 - t * 0.2);
-      } else if (p - skip < 28) {
-        const t = p - skip - 3;
-        // grinding residue after each tooth
+      if (p < 2) {
+        // plastic tooth impact
+        d[idx] = (Math.random() * 2 - 1) * (1 - p / 2) * 0.95;
+      } else if (p < 18) {
+        // grinding grit after each tooth
         d[idx] =
-          (Math.random() * 2 - 1) * 0.22 * Math.exp(-t / 10) +
-          (Math.random() * 2 - 1) * 0.03;
+          (Math.random() * 2 - 1) * 0.28 * Math.exp(-(p - 2) / 7) +
+          (Math.random() * 2 - 1) * 0.04;
       } else {
-        d[idx] = (Math.random() * 2 - 1) * 0.025;
+        // quiet mesh between teeth
+        d[idx] = (Math.random() * 2 - 1) * 0.03;
       }
     }
     next += period;
+    i = next;
   }
   return buf;
 }
 
-/** Slow plastic-on-plastic scuff under the gear teeth. */
-function plasticScuffBuffer(sec = 1.2) {
+/** Coarser slow grind layer under the clicks */
+function gearGritBuffer(sec = 1.0) {
   const c = getCtx();
   const n = Math.max(1, Math.floor(c.sampleRate * sec));
   const buf = c.createBuffer(1, n, c.sampleRate);
   const d = buf.getChannelData(0);
-  let b1 = 0;
-  let b2 = 0;
+  let acc = 0;
   for (let i = 0; i < n; i++) {
-    const white = Math.random() * 2 - 1;
-    // double-integrated → darker body
-    b1 = b1 * 0.97 + white * 0.03;
-    b2 = b2 * 0.94 + b1 * 0.06;
-    // sparse micro-clacks in the scuff bed
-    const tick = i % 73 < 2 ? white * 0.4 : 0;
-    d[i] = b2 * 1.4 + tick * 0.35 + white * 0.02;
+    // brown-ish noise (more low-mid body, less white hiss)
+    acc = acc * 0.92 + (Math.random() * 2 - 1) * 0.08;
+    const click = i % 47 < 3 ? (Math.random() * 2 - 1) * 0.35 : 0;
+    d[i] = acc * 0.85 + click + (Math.random() * 2 - 1) * 0.04;
   }
   return buf;
 }
@@ -169,8 +163,8 @@ function noiseBurst({ dur = 0.12, freq = 500, vol = 0.22, q = 0.8 }) {
 }
 
 /**
- * On-track motor: dual irregular plastic gears + dark scuff.
- * No oscillators / no high hiss (those read as vacuum whine).
+ * Plastic gear grind: irregular clicks + mid grit.
+ * Avoid high bandpass hiss (reads as vacuum whine).
  */
 export function startMotor(speedNorm = 1, level = 1) {
   const c = ensureReady();
@@ -186,108 +180,136 @@ export function startMotor(speedNorm = 1, level = 1) {
 
   const n = Math.max(0.5, Math.min(2.2, speedNorm));
 
-  // --- Layer 1: dark plastic scuff bed ---
-  const scuff = c.createBufferSource();
-  scuff.buffer = plasticScuffBuffer(1.2);
-  scuff.loop = true;
-  const scuffBp = c.createBiquadFilter();
-  scuffBp.type = "bandpass";
-  scuffBp.frequency.value = 520;
-  scuffBp.Q.value = 0.7;
-  const scuffLp = c.createBiquadFilter();
-  scuffLp.type = "lowpass";
-  scuffLp.frequency.value = 1600;
-  const scuffG = c.createGain();
-  scuffG.gain.value = 0.2;
+  // Layer 1: mid plastic grit (body of the grind — not airy hiss)
+  const grit = c.createBufferSource();
+  grit.buffer = gearGritBuffer(1.0);
+  grit.loop = true;
+  const gritBp = c.createBiquadFilter();
+  gritBp.type = "bandpass";
+  gritBp.frequency.value = 780;
+  gritBp.Q.value = 0.55;
+  const gritLp = c.createBiquadFilter();
+  gritLp.type = "lowpass";
+  gritLp.frequency.value = 2400;
+  const gritG = c.createGain();
+  gritG.gain.value = 0.16;
 
-  // --- Layer 2: primary gear teeth ---
-  const gearsA = c.createBufferSource();
-  gearsA.buffer = gearClickBuffer(1.4, 16 * n);
-  gearsA.loop = true;
-  const gearsABp = c.createBiquadFilter();
-  gearsABp.type = "bandpass";
-  gearsABp.frequency.value = 780;
-  gearsABp.Q.value = 0.55;
-  const gearsALp = c.createBiquadFilter();
-  gearsALp.type = "lowpass";
-  gearsALp.frequency.value = 2200;
-  const gearsAG = c.createGain();
-  gearsAG.gain.value = 0.32;
+  // Layer 2: irregular gear tooth clicks
+  const clicks = c.createBufferSource();
+  clicks.buffer = gearClickBuffer(1.2, 20 * n);
+  clicks.loop = true;
+  const clickBp = c.createBiquadFilter();
+  clickBp.type = "bandpass";
+  clickBp.frequency.value = 1100;
+  clickBp.Q.value = 0.45;
+  const clickLp = c.createBiquadFilter();
+  clickLp.type = "lowpass";
+  clickLp.frequency.value = 3200;
+  const clickG = c.createGain();
+  clickG.gain.value = 0.28;
 
-  // --- Layer 3: second gear (different rate → phasing grind) ---
-  const gearsB = c.createBufferSource();
-  gearsB.buffer = gearClickBuffer(1.5, 23 * n);
-  gearsB.loop = true;
-  const gearsBBp = c.createBiquadFilter();
-  gearsBBp.type = "bandpass";
-  gearsBBp.frequency.value = 980;
-  gearsBBp.Q.value = 0.5;
-  const gearsBLp = c.createBiquadFilter();
-  gearsBLp.type = "lowpass";
-  gearsBLp.frequency.value = 2400;
-  const gearsBG = c.createGain();
-  gearsBG.gain.value = 0.2;
+  // Layer 3: faint mid mesh (triangle)
+  const mesh = c.createOscillator();
+  mesh.type = "triangle";
+  mesh.frequency.value = 180 * n;
+  const meshLp = c.createBiquadFilter();
+  meshLp.type = "lowpass";
+  meshLp.frequency.value = 900;
+  const meshHp = c.createBiquadFilter();
+  meshHp.type = "highpass";
+  meshHp.frequency.value = 120;
+  const meshG = c.createGain();
+  meshG.gain.value = 0.02;
 
-  // Master tone control — kill airy top, keep plastic mid
+  // Layer 4: extra saw body (user-requested presence)
+  const saw = c.createOscillator();
+  saw.type = "sawtooth";
+  saw.frequency.value = 95 * n;
+  const sawLp = c.createBiquadFilter();
+  sawLp.type = "lowpass";
+  sawLp.frequency.value = 700;
+  const sawHp = c.createBiquadFilter();
+  sawHp.type = "highpass";
+  sawHp.frequency.value = 70;
+  const sawG = c.createGain();
+  sawG.gain.value = 0.085;
+
+  // Second saw an octave up, quieter — grit harmonic
+  const saw2 = c.createOscillator();
+  saw2.type = "sawtooth";
+  saw2.frequency.value = 190 * n;
+  const saw2Lp = c.createBiquadFilter();
+  saw2Lp.type = "lowpass";
+  saw2Lp.frequency.value = 1200;
+  const saw2G = c.createGain();
+  saw2G.gain.value = 0.035;
+
+  // Cut ultra-high vacuum air, keep a little low-mid body
   const motorHp = c.createBiquadFilter();
   motorHp.type = "highpass";
-  motorHp.frequency.value = 140;
+  motorHp.frequency.value = 90;
+  motorHp.Q.value = 0.5;
   const motorLp = c.createBiquadFilter();
   motorLp.type = "lowpass";
-  motorLp.frequency.value = 2400;
-  motorLp.Q.value = 0.6;
+  motorLp.frequency.value = 3800;
+  motorLp.Q.value = 0.5;
 
-  // Slow gain wobble so it feels mechanical, not a flat loop
-  const lfo = c.createOscillator();
-  lfo.type = "sine";
-  lfo.frequency.value = 3.2;
-  const lfoG = c.createGain();
-  lfoG.gain.value = 0.04;
   const mix = c.createGain();
   mix.gain.value = 0.0001;
-  lfo.connect(lfoG);
-  lfoG.connect(mix.gain);
 
-  scuff.connect(scuffBp);
-  scuffBp.connect(scuffLp);
-  scuffLp.connect(scuffG);
-  scuffG.connect(motorHp);
+  grit.connect(gritBp);
+  gritBp.connect(gritLp);
+  gritLp.connect(gritG);
+  gritG.connect(motorHp);
 
-  gearsA.connect(gearsABp);
-  gearsABp.connect(gearsALp);
-  gearsALp.connect(gearsAG);
-  gearsAG.connect(motorHp);
+  clicks.connect(clickBp);
+  clickBp.connect(clickLp);
+  clickLp.connect(clickG);
+  clickG.connect(motorHp);
 
-  gearsB.connect(gearsBBp);
-  gearsBBp.connect(gearsBLp);
-  gearsBLp.connect(gearsBG);
-  gearsBG.connect(motorHp);
+  mesh.connect(meshHp);
+  meshHp.connect(meshLp);
+  meshLp.connect(meshG);
+  meshG.connect(motorHp);
+
+  saw.connect(sawHp);
+  sawHp.connect(sawLp);
+  sawLp.connect(sawG);
+  sawG.connect(motorHp);
+
+  saw2.connect(saw2Lp);
+  saw2Lp.connect(saw2G);
+  saw2G.connect(motorHp);
 
   motorHp.connect(motorLp);
   motorLp.connect(mix);
   mix.connect(master);
 
-  scuff.start();
-  gearsA.start();
-  gearsB.start();
-  lfo.start();
+  grit.start();
+  clicks.start();
+  mesh.start();
+  saw.start();
+  saw2.start();
 
   const t = c.currentTime;
-  const target = 0.72 * motorLevel;
+  const target = 0.75 * motorLevel;
   mix.gain.setValueAtTime(0.0001, t);
-  mix.gain.linearRampToValueAtTime(target, t + 0.12);
+  mix.gain.linearRampToValueAtTime(target, t + 0.1);
 
   motorNodes = {
-    scuff,
-    gearsA,
-    gearsB,
-    lfo,
-    scuffBp,
-    scuffG,
-    gearsAG,
-    gearsBG,
+    grit,
+    clicks,
+    mesh,
+    saw,
+    saw2,
+    gritBp,
+    gritG,
+    clickG,
+    meshG,
+    sawG,
+    saw2G,
     mix,
-    lfoG,
+    baseClickRate: 20,
   };
   setMotorSpeed(speedNorm);
   setMotorLevel(motorLevel);
@@ -298,12 +320,10 @@ export function setMotorLevel(level = 1) {
   motorLevel = Math.max(0.12, Math.min(1, level));
   if (!motorNodes || !ctx) return;
   const t = ctx.currentTime;
-  const target = 0.72 * motorLevel;
+  const target = 0.75 * motorLevel;
   try {
     motorNodes.mix.gain.cancelScheduledValues(t);
-    // Keep LFO offset — set base then LFO continues into gain
-    motorNodes.mix.gain.setTargetAtTime(target, t, 0.07);
-    motorNodes.lfoG.gain.setTargetAtTime(0.035 * motorLevel, t, 0.08);
+    motorNodes.mix.gain.setTargetAtTime(target, t, 0.06);
   } catch {
     /* ignore */
   }
@@ -314,16 +334,16 @@ export function setMotorSpeed(speedNorm = 1) {
   const n = Math.max(0.5, Math.min(2.2, speedNorm));
   const t = ctx.currentTime;
   try {
-    // Gear mesh speeds up with train; keep grit a bit slower
-    motorNodes.gearsA.playbackRate.setTargetAtTime(0.75 + 0.45 * n, t, 0.1);
-    motorNodes.gearsB.playbackRate.setTargetAtTime(0.9 + 0.5 * n, t, 0.1);
-    motorNodes.scuff.playbackRate.setTargetAtTime(0.7 + 0.35 * n, t, 0.12);
-    motorNodes.scuffBp.frequency.setTargetAtTime(420 + 200 * n, t, 0.12);
-    motorNodes.gearsAG.gain.setTargetAtTime(0.24 + 0.14 * n, t, 0.1);
-    motorNodes.gearsBG.gain.setTargetAtTime(0.14 + 0.1 * n, t, 0.1);
-    motorNodes.scuffG.gain.setTargetAtTime(0.14 + 0.1 * n, t, 0.1);
-    // Faster LFO at speed = busier plastic rattle
-    motorNodes.lfo.frequency.setTargetAtTime(2.4 + 2.2 * n, t, 0.15);
+    motorNodes.clicks.playbackRate.setTargetAtTime(0.85 + 0.35 * n, t, 0.08);
+    motorNodes.grit.playbackRate.setTargetAtTime(0.75 + 0.4 * n, t, 0.1);
+    motorNodes.mesh.frequency.setTargetAtTime(140 + 80 * n, t, 0.08);
+    motorNodes.saw.frequency.setTargetAtTime(80 + 50 * n, t, 0.08);
+    motorNodes.saw2.frequency.setTargetAtTime(160 + 100 * n, t, 0.08);
+    motorNodes.gritBp.frequency.setTargetAtTime(620 + 280 * n, t, 0.1);
+    motorNodes.clickG.gain.setTargetAtTime(0.2 + 0.12 * n, t, 0.1);
+    motorNodes.gritG.gain.setTargetAtTime(0.12 + 0.08 * n, t, 0.1);
+    motorNodes.sawG.gain.setTargetAtTime(0.06 + 0.04 * n, t, 0.1);
+    motorNodes.saw2G.gain.setTargetAtTime(0.025 + 0.02 * n, t, 0.1);
   } catch {
     /* ignore */
   }
@@ -342,7 +362,7 @@ export function stopMotor() {
   }
   motorNodes = null;
   setTimeout(() => {
-    for (const n of [nodes.scuff, nodes.gearsA, nodes.gearsB, nodes.lfo]) {
+    for (const n of [nodes.grit, nodes.clicks, nodes.mesh, nodes.saw, nodes.saw2]) {
       try {
         n.stop();
         n.disconnect();
@@ -360,7 +380,7 @@ export function stopMotor() {
 
 /** @deprecated carpet uses quieter motor now */
 export function startScrape() {
-  /* no-op */
+  /* no-op — carpet uses startMotor(..., quieter) */
 }
 
 export function stopScrape() {
@@ -372,25 +392,25 @@ export function playCollision(kind = "derail") {
   if (!unlocked) return;
 
   if (kind === "edge") {
-    noiseBurst({ dur: 0.32, freq: 280, vol: 0.6, q: 0.85 });
-    noiseBurst({ dur: 0.18, freq: 700, vol: 0.28, q: 0.7 });
-    beep({ freq: 180, dur: 0.24, type: "triangle", vol: 0.32, slideTo: 70 });
+    noiseBurst({ dur: 0.32, freq: 280, vol: 0.65, q: 0.85 });
+    noiseBurst({ dur: 0.18, freq: 700, vol: 0.3, q: 0.7 });
+    beep({ freq: 180, dur: 0.24, type: "triangle", vol: 0.35, slideTo: 70 });
   } else if (kind === "wall") {
-    noiseBurst({ dur: 0.07, freq: 1100, vol: 0.42, q: 0.75 });
-    noiseBurst({ dur: 0.05, freq: 1800, vol: 0.18, q: 0.9 });
-    beep({ freq: 460, dur: 0.05, type: "triangle", vol: 0.12, slideTo: 220 });
+    noiseBurst({ dur: 0.07, freq: 1200, vol: 0.48, q: 0.75 });
+    noiseBurst({ dur: 0.05, freq: 2000, vol: 0.22, q: 0.9 });
+    beep({ freq: 480, dur: 0.05, type: "triangle", vol: 0.14, slideTo: 240 });
   } else {
-    noiseBurst({ dur: 0.14, freq: 900, vol: 0.52, q: 0.7 });
-    noiseBurst({ dur: 0.1, freq: 1500, vol: 0.24, q: 0.95 });
-    beep({ freq: 300, dur: 0.12, type: "triangle", vol: 0.24, slideTo: 100 });
+    noiseBurst({ dur: 0.14, freq: 950, vol: 0.58, q: 0.7 });
+    noiseBurst({ dur: 0.1, freq: 1600, vol: 0.28, q: 0.95 });
+    beep({ freq: 320, dur: 0.12, type: "triangle", vol: 0.28, slideTo: 100 });
   }
 }
 
 export function playRerail() {
   ensureReady();
   if (!unlocked) return;
-  beep({ freq: 680, dur: 0.07, type: "sine", vol: 0.2, slideTo: 360 });
-  noiseBurst({ dur: 0.05, freq: 1100, vol: 0.14, q: 1.1 });
+  beep({ freq: 720, dur: 0.07, type: "sine", vol: 0.22, slideTo: 380 });
+  noiseBurst({ dur: 0.05, freq: 1200, vol: 0.16, q: 1.1 });
 }
 
 /**
@@ -433,6 +453,7 @@ export function syncTrainAudio(state, mem = {}) {
   if (running && mode === "on_rail") {
     startMotor(speedNorm, 1);
   } else if (running && mode === "off_rail") {
+    // Same plastic grind, quieter on carpet
     startMotor(speedNorm, 0.42);
   } else {
     stopMotor();

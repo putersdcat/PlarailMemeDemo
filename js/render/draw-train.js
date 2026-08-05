@@ -1,7 +1,13 @@
 /**
  * Top-down white bullet / Shinkansen train drawing.
  */
-import { TRAIN_LENGTH, TRAIN_RADIUS, TrainMode } from "../train.js";
+import {
+  TRAIN_LENGTH,
+  TRAIN_RADIUS,
+  FRONT_AXLE_OFFSET,
+  REAR_AXLE_OFFSET,
+  TrainMode,
+} from "../train.js";
 
 function roundRect(ctx, x, y, w, h, r) {
   const rr = Math.min(r, w / 2, h / 2);
@@ -15,7 +21,7 @@ function roundRect(ctx, x, y, w, h, r) {
 }
 
 /**
- * Top-down white bullet train: pointed nose = front (+x), black cockpit.
+ * Top-down white bullet train: blunt rounded nose = front (+x), black cockpit.
  */
 export function drawTrain(ctx, train) {
   const { x, y, ang, mode } = train;
@@ -28,6 +34,8 @@ export function drawTrain(ctx, train) {
   const R = TRAIN_RADIUS;
   const nose = L * 0.5;
   const tail = -L * 0.5;
+  // Rounded tip radius at the nose vertex
+  const tipR = Math.min(R * 0.55, L * 0.08);
 
   ctx.fillStyle = "rgba(0,0,0,0.16)";
   ctx.beginPath();
@@ -35,13 +43,17 @@ export function drawTrain(ctx, train) {
   ctx.fill();
 
   const bodyPath = () => {
+    // Soft bullet: sides taper, tip is a rounded cap (not a sharp point)
     ctx.beginPath();
     ctx.moveTo(tail + 6, -R);
-    ctx.lineTo(L * 0.12, -R);
-    ctx.quadraticCurveTo(L * 0.28, -R * 0.95, L * 0.38, -R * 0.55);
-    ctx.quadraticCurveTo(L * 0.46, -R * 0.2, nose, 0);
-    ctx.quadraticCurveTo(L * 0.46, R * 0.2, L * 0.38, R * 0.55);
-    ctx.quadraticCurveTo(L * 0.28, R * 0.95, L * 0.12, R);
+    ctx.lineTo(L * 0.1, -R);
+    ctx.quadraticCurveTo(L * 0.26, -R * 0.98, L * 0.36, -R * 0.72);
+    ctx.quadraticCurveTo(L * 0.44, -R * 0.42, nose - tipR * 0.35, -tipR * 0.85);
+    // Rounded vertex through the nose tip
+    ctx.quadraticCurveTo(nose + tipR * 0.15, -tipR * 0.35, nose + tipR * 0.25, 0);
+    ctx.quadraticCurveTo(nose + tipR * 0.15, tipR * 0.35, nose - tipR * 0.35, tipR * 0.85);
+    ctx.quadraticCurveTo(L * 0.44, R * 0.42, L * 0.36, R * 0.72);
+    ctx.quadraticCurveTo(L * 0.26, R * 0.98, L * 0.1, R);
     ctx.lineTo(tail + 6, R);
     ctx.quadraticCurveTo(tail - 1, R * 0.7, tail - 1, 0);
     ctx.quadraticCurveTo(tail - 1, -R * 0.7, tail + 6, -R);
@@ -79,35 +91,36 @@ export function drawTrain(ctx, train) {
 
   ctx.fillStyle = "#2a6cb0";
   ctx.beginPath();
-  ctx.moveTo(L * 0.22, R * 0.55);
-  ctx.quadraticCurveTo(L * 0.36, R * 0.75, L * 0.42, R * 0.35);
-  ctx.quadraticCurveTo(L * 0.48, R * 0.1, nose - 1, 0);
-  ctx.quadraticCurveTo(L * 0.44, R * 0.15, L * 0.34, R * 0.62);
-  ctx.quadraticCurveTo(L * 0.26, R * 0.72, L * 0.22, R * 0.55);
+  ctx.moveTo(L * 0.2, R * 0.52);
+  ctx.quadraticCurveTo(L * 0.34, R * 0.7, L * 0.4, R * 0.32);
+  ctx.quadraticCurveTo(L * 0.46, R * 0.12, nose - tipR * 0.4, R * 0.08);
+  ctx.quadraticCurveTo(L * 0.42, R * 0.18, L * 0.32, R * 0.58);
+  ctx.quadraticCurveTo(L * 0.24, R * 0.68, L * 0.2, R * 0.52);
   ctx.closePath();
   ctx.fill();
   ctx.strokeStyle = "#3a7ec4";
   ctx.lineWidth = 1.4;
   ctx.beginPath();
-  ctx.moveTo(L * 0.18, -R * 0.75);
-  ctx.quadraticCurveTo(L * 0.32, -R * 0.9, L * 0.4, -R * 0.35);
+  ctx.moveTo(L * 0.16, -R * 0.72);
+  ctx.quadraticCurveTo(L * 0.3, -R * 0.88, L * 0.38, -R * 0.32);
   ctx.stroke();
   ctx.beginPath();
-  ctx.moveTo(L * 0.18, R * 0.75);
-  ctx.quadraticCurveTo(L * 0.32, R * 0.9, L * 0.4, R * 0.35);
+  ctx.moveTo(L * 0.16, R * 0.72);
+  ctx.quadraticCurveTo(L * 0.3, R * 0.88, L * 0.38, R * 0.32);
   ctx.stroke();
 
+  // Cockpit glass — follows rounded nose
   ctx.fillStyle = "#1a1e24";
   ctx.beginPath();
-  ctx.moveTo(L * 0.16, -R * 0.42);
-  ctx.lineTo(L * 0.3, -R * 0.5);
-  ctx.quadraticCurveTo(L * 0.38, -R * 0.15, L * 0.4, 0);
-  ctx.quadraticCurveTo(L * 0.38, R * 0.15, L * 0.3, R * 0.5);
-  ctx.lineTo(L * 0.16, R * 0.42);
-  ctx.quadraticCurveTo(L * 0.14, 0, L * 0.16, -R * 0.42);
+  ctx.moveTo(L * 0.14, -R * 0.4);
+  ctx.lineTo(L * 0.28, -R * 0.48);
+  ctx.quadraticCurveTo(L * 0.36, -R * 0.18, L * 0.38, 0);
+  ctx.quadraticCurveTo(L * 0.36, R * 0.18, L * 0.28, R * 0.48);
+  ctx.lineTo(L * 0.14, R * 0.4);
+  ctx.quadraticCurveTo(L * 0.12, 0, L * 0.14, -R * 0.4);
   ctx.closePath();
   ctx.fill();
-  const glassG = ctx.createLinearGradient(L * 0.18, -R * 0.3, L * 0.36, R * 0.3);
+  const glassG = ctx.createLinearGradient(L * 0.16, -R * 0.3, L * 0.34, R * 0.3);
   glassG.addColorStop(0, "rgba(90, 140, 180, 0.35)");
   glassG.addColorStop(0.5, "rgba(40, 50, 60, 0.1)");
   glassG.addColorStop(1, "rgba(20, 25, 30, 0.4)");
@@ -119,18 +132,18 @@ export function drawTrain(ctx, train) {
 
   ctx.fillStyle = "#f0f4f8";
   ctx.beginPath();
-  ctx.arc(nose - 3.5, -2.2, 1.3, 0, Math.PI * 2);
-  ctx.arc(nose - 3.5, 2.2, 1.3, 0, Math.PI * 2);
+  ctx.arc(nose - tipR * 0.6, -2.4, 1.3, 0, Math.PI * 2);
+  ctx.arc(nose - tipR * 0.6, 2.4, 1.3, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = "rgba(255, 230, 120, 0.85)";
   ctx.beginPath();
-  ctx.arc(nose - 3.2, -2.2, 0.7, 0, Math.PI * 2);
-  ctx.arc(nose - 3.2, 2.2, 0.7, 0, Math.PI * 2);
+  ctx.arc(nose - tipR * 0.55, -2.4, 0.7, 0, Math.PI * 2);
+  ctx.arc(nose - tipR * 0.55, 2.4, 0.7, 0, Math.PI * 2);
   ctx.fill();
 
-  // Bogie shadows near virtual axles (front 2/6 from nose, rear 1/6 from tail)
+  // Bogie shadows at virtual axle positions
   ctx.fillStyle = "rgba(55, 70, 85, 0.32)";
-  const bogieXs = [nose - L * (2 / 6), tail + L * (1 / 6)];
+  const bogieXs = [FRONT_AXLE_OFFSET, REAR_AXLE_OFFSET];
   for (const wx of bogieXs) {
     for (const side of [-1, 1]) {
       ctx.beginPath();
