@@ -689,19 +689,19 @@ function resolveCircleSegment(cx, cy, radius, seg) {
 
 function tryRerail(train, board) {
   const fa = frontAxlePos(train);
-  // Prefer heading (derail lock or nose) over pure distance — at switch
-  // throats two paths are often equidistant; distance-only = speed lottery
-  const preferAng =
-    train.offRailPreferAng != null ? train.offRailPreferAng : train.ang;
+  // Use *current* travel heading for which rail to join (not derail lock).
+  // Derail lock is only for wall-tangent signs. At switch throats, rank by
+  // nose heading so equidistant up/down paths don't flip with speed noise.
+  const travelAng = train.ang;
   const hit = closestPathPoint(board, fa.x, fa.y, RE_RAIL_LATERAL + 4, {
-    preferAng,
-    angWeight: 28,
+    preferAng: travelAng,
+    angWeight: 22,
   });
   if (!hit) return;
 
   const pathAng = hit.ang;
-  const d1 = angleDiff(preferAng, pathAng);
-  const d2 = angleDiff(preferAng, pathAng + Math.PI);
+  const d1 = angleDiff(travelAng, pathAng);
+  const d2 = angleDiff(travelAng, pathAng + Math.PI);
   const best = Math.min(d1, d2);
 
   // Mouth re-entry is looser; mid-path re-rail stays strict
