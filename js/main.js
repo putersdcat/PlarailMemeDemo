@@ -52,6 +52,7 @@ import {
 } from "./train.js";
 import { resizeCanvas, drawScene, drawPaletteIcon } from "./render.js";
 import { loadMemeStyle, loadRealMemeTrack } from "./presets.js";
+import { unlockAudio, syncTrainAudio, setMotorSpeed } from "./sound.js";
 
 const canvas = document.getElementById("stage");
 const badgeEl = document.getElementById("mode-badge");
@@ -89,6 +90,8 @@ let paintColor = null;
 let showWalls = false;
 let lastT = performance.now();
 let hidePieceId = null;
+/** Mutable audio transition memory for syncTrainAudio */
+const audioMem = { prevMode: null, lastWallTick: 0 };
 /** Bump when shipping a new gold-standard default so old autosaves don't win. */
 const LS_KEY = "plarail-real2sim-layout-v2-working";
 
@@ -465,6 +468,7 @@ function dateStamp() {
 }
 
 btnStart.addEventListener("click", () => {
+  unlockAudio();
   if (!trainPlaced) {
     const cx = view.camX + view.w / 2;
     const cy = view.camY + view.h / 2;
@@ -492,6 +496,7 @@ btnStart.addEventListener("click", () => {
   }
 });
 btnStop.addEventListener("click", () => {
+  unlockAudio();
   running = false;
   stopTrain(train);
 });
@@ -505,7 +510,17 @@ btnResetTrain.addEventListener("click", () => {
 
 speedSlider.addEventListener("input", () => {
   train.speed = Number(speedSlider.value);
+  setMotorSpeed(train.speed / 140);
 });
+
+// Unlock Web Audio on first pointer / key (browser autoplay policy)
+function armAudioUnlock() {
+  unlockAudio();
+  window.removeEventListener("pointerdown", armAudioUnlock, true);
+  window.removeEventListener("keydown", armAudioUnlock, true);
+}
+window.addEventListener("pointerdown", armAudioUnlock, true);
+window.addEventListener("keydown", armAudioUnlock, true);
 
 // ── Stage pointer ──
 canvas.addEventListener("pointerdown", onPointerDown);
@@ -1368,6 +1383,17 @@ function frame(t) {
       );
     }
   }
+
+  // Synthesized train audio (Web Audio — no external libs)
+  syncTrainAudio(
+    {
+      running,
+      mode: train.mode,
+      wallGlide: !!train.wallGlide,
+      speed: train.speed,
+    },
+    audioMem
+  );
 
   updateBounds();
   updateStatus();
