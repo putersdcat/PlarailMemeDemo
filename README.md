@@ -121,6 +121,23 @@ npm run serve     # python -m http.server 8765
 
 Hard-refresh after JS changes (cache-busted `?v=` on entry assets).
 
+## Thanks
+
+Endless thanks to my wife **Denise** — for patience, floor space, and not declaring the living room a staging environment.
+
+Thank you, **Japan**, for inventing (and endlessly iterating) the plastic rail universe that made childhood and this repo possible.
+
+Dimensional and structural reality checks were made possible by the excellent community references at Parlorfleur:
+
+- [Normal Rail](https://parlorfleur-pm.com/Normal_Rail.html)
+- [Rail Structure List](https://parlorfleur-pm.com/Rail_Structure_List.html)
+
+And by the internet’s long memory — the Internet Archive’s Plarail catalog scan:
+
+- [Plarail Catalogue 2014 (archive.org)](https://archive.org/details/catalogue-plarail-catalogue-2014_202208/%5Bcatalogue%5D_plarail_catalogue_2014/page/n9/mode/2up)
+
+If you measured a curve with a ruler at 1 a.m. so a stranger on the web wouldn’t have to: you’re the real unit of track.
+
 ## License
 
 [MIT](LICENSE) © 2026 Eric Anderson
