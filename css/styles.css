@@ -138,6 +138,17 @@ body {
   display: inline-flex;
 }
 
+/* Clean capture: hide chrome, full-bleed stage */
+#app.demo-record #toolbar,
+#app.demo-record #hint,
+#app.demo-record #hud,
+#app.demo-record .sidebar-toggle-open {
+  display: none !important;
+}
+#app.demo-record {
+  grid-template-rows: 1fr 0;
+}
+
 #sidebar header p {
   margin: 6px 0 0;
   font-size: 11px;

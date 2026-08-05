@@ -25,28 +25,6 @@
       "color": "blue"
     },
     {
-      "id": "p3",
-      "type": "R13",
-      "x": -124,
-      "y": 407.91555555555556,
-      "rotSteps": 0,
-      "flip": false,
-      "branchSide": "R",
-      "switchState": 0,
-      "color": "blue"
-    },
-    {
-      "id": "p4",
-      "type": "R12",
-      "x": -137.96115214639164,
-      "y": 375,
-      "rotSteps": 0,
-      "flip": false,
-      "branchSide": "R",
-      "switchState": 0,
-      "color": "blue"
-    },
-    {
       "id": "p5",
       "type": "R01",
       "x": 446,
@@ -118,28 +96,6 @@
       "x": 265.0237231115737,
       "y": 239.28277092497484,
       "rotSteps": 3,
-      "flip": false,
-      "branchSide": "R",
-      "switchState": 0,
-      "color": "blue"
-    },
-    {
-      "id": "p12",
-      "type": "R02",
-      "x": -70,
-      "y": 322,
-      "rotSteps": 0,
-      "flip": false,
-      "branchSide": "R",
-      "switchState": 0,
-      "color": "blue"
-    },
-    {
-      "id": "p13",
-      "type": "R22",
-      "x": -143,
-      "y": 595.3951521042545,
-      "rotSteps": 2,
       "flip": false,
       "branchSide": "R",
       "switchState": 0,
@@ -311,17 +267,6 @@
       "color": "red"
     },
     {
-      "id": "p29",
-      "type": "R04",
-      "x": -269.9896929200715,
-      "y": 302.2986418475234,
-      "rotSteps": 0,
-      "flip": false,
-      "branchSide": "R",
-      "switchState": 0,
-      "color": "blue"
-    },
-    {
       "id": "p30",
       "type": "R20",
       "x": 790.8470996024366,
@@ -406,6 +351,12 @@
     "mode": "idle"
   },
   "savedAt": "2026-08-05T14:49:04.000Z",
-  "name": "Real-2-Sim meme track (WORKING colored)",
-  "source": "plarail-layout-working-colored-20260805-1649.json"
+  "name": "Real-2-Sim meme track (WORKING colored, cleaned)",
+  "source": "plarail-layout-working-colored-20260805-1649.json",
+  "demoCrop": {
+    "minX": 67.08259761461943,
+    "minY": 14.3064940365486,
+    "maxX": 994,
+    "maxY": 797.8723877473067
+  }
 }

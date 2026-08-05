@@ -1,15 +1,17 @@
 /**
  * Built-in layouts.
- * Default: gold-standard WORKING meme track with paint colors.
+ * Default: gold-standard WORKING meme track (plarail-layout-WORKING-*).
  */
 
 import { UNIT, PIECE_TYPES } from "./geometry.js";
 import { addPiece, clearBoard, rebuild, loadBoard } from "./track.js";
 
-/** Absolute layout — functionally tested gold standard (with paint). */
+/** Absolute layout — functionally tested gold standard. */
 export const REAL_MEME_LAYOUT = {
   "format": "plarail-meme-layout",
   "version": 1,
+  "name": "Real-2-Sim meme track (WORKING colored, cleaned)",
+  "source": "plarail-layout-working-colored-20260805-1649.json",
   "pieces": [
     {
       "id": "p1",
@@ -29,28 +31,6 @@ export const REAL_MEME_LAYOUT = {
       "y": 495.9059741054823,
       "rotSteps": 5,
       "flip": true,
-      "branchSide": "R",
-      "switchState": 0,
-      "color": "blue"
-    },
-    {
-      "id": "p3",
-      "type": "R13",
-      "x": -124,
-      "y": 407.91555555555556,
-      "rotSteps": 0,
-      "flip": false,
-      "branchSide": "R",
-      "switchState": 0,
-      "color": "blue"
-    },
-    {
-      "id": "p4",
-      "type": "R12",
-      "x": -137.96115214639164,
-      "y": 375,
-      "rotSteps": 0,
-      "flip": false,
       "branchSide": "R",
       "switchState": 0,
       "color": "blue"
@@ -127,28 +107,6 @@ export const REAL_MEME_LAYOUT = {
       "x": 265.0237231115737,
       "y": 239.28277092497484,
       "rotSteps": 3,
-      "flip": false,
-      "branchSide": "R",
-      "switchState": 0,
-      "color": "blue"
-    },
-    {
-      "id": "p12",
-      "type": "R02",
-      "x": -70,
-      "y": 322,
-      "rotSteps": 0,
-      "flip": false,
-      "branchSide": "R",
-      "switchState": 0,
-      "color": "blue"
-    },
-    {
-      "id": "p13",
-      "type": "R22",
-      "x": -143,
-      "y": 595.3951521042545,
-      "rotSteps": 2,
       "flip": false,
       "branchSide": "R",
       "switchState": 0,
@@ -320,17 +278,6 @@ export const REAL_MEME_LAYOUT = {
       "color": "red"
     },
     {
-      "id": "p29",
-      "type": "R04",
-      "x": -269.9896929200715,
-      "y": 302.2986418475234,
-      "rotSteps": 0,
-      "flip": false,
-      "branchSide": "R",
-      "switchState": 0,
-      "color": "blue"
-    },
-    {
       "id": "p30",
       "type": "R20",
       "x": 790.8470996024366,
@@ -413,10 +360,7 @@ export const REAL_MEME_LAYOUT = {
     "y": 424.0490664793312,
     "ang": -2.0371264863121463,
     "mode": "idle"
-  },
-  "savedAt": "2026-08-05T14:49:04.000Z",
-  "name": "Real-2-Sim meme track (WORKING colored)",
-  "source": "plarail-layout-working-colored-20260805-1649.json"
+  }
 };
 
 /**
@@ -426,7 +370,7 @@ export function loadRealMemeTrack(board) {
   const result = loadBoard(board, REAL_MEME_LAYOUT);
   const th = REAL_MEME_LAYOUT.train
     ? { x: REAL_MEME_LAYOUT.train.x, y: REAL_MEME_LAYOUT.train.y }
-    : { x: 528.728896703535, y: 653 };
+    : {"x":918.8438974806379,"y":424.0490664793312};
   return {
     ok: result.ok,
     pieceCount: result.pieceCount,

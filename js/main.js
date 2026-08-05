@@ -98,7 +98,7 @@ let hidePieceId = null;
 /** Mutable audio transition memory for syncTrainAudio */
 const audioMem = { prevMode: null, lastWallTick: 0 };
 /** Bump when shipping a new gold-standard default so old autosaves don't win. */
-const LS_KEY = "plarail-real2sim-layout-v3-colored";
+const LS_KEY = "plarail-real2sim-layout-v4-cleaned";
 
 // ── Palette (catalog order; HTML may be sparse — we build buttons in JS) ──
 const paletteOrder = [
@@ -1368,6 +1368,57 @@ try {
   /* ignore */
 }
 
+/** Demo / recording hooks (camera fit, mode probes). */
+window.__plarailDemo = {
+  getView: () => ({ ...view }),
+  getMode: () => train.mode,
+  isRunning: () => running,
+  setSidebarCollapsed,
+  /** Pan so world rect is centered in the canvas (no zoom). */
+  fitWorldRect(rect, pad = 24) {
+    if (!rect) return;
+    const minX = Number(rect.minX) - pad;
+    const minY = Number(rect.minY) - pad;
+    const maxX = Number(rect.maxX) + pad;
+    const maxY = Number(rect.maxY) + pad;
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    view.camX = cx - view.w / 2;
+    view.camY = cy - view.h / 2;
+    updateBounds();
+  },
+  /** Hide chrome for clean capture. */
+  setRecordChrome(hidden) {
+    document.getElementById("app")?.classList.toggle("demo-record", !!hidden);
+    onResize();
+  },
+  /** Start / stop without needing visible toolbar buttons. */
+  start() {
+    unlockAudio();
+    if (!trainPlaced) {
+      const cx = view.camX + view.w / 2;
+      const cy = view.camY + view.h / 2;
+      if (!tryPlaceTrainAt(cx, cy, 2000)) return false;
+    }
+    if (train.mode === TrainMode.STOPPED) return false;
+    if (!train.pathRef && !tryPlaceTrainAt(train.x, train.y, 56)) return false;
+    if (startTrain(train)) {
+      running = true;
+      train.selected = false;
+      startMotor(train.speed / 140);
+      updateStatus();
+      return true;
+    }
+    return false;
+  },
+  stop() {
+    running = false;
+    stopTrain(train);
+    stopMotor();
+    updateStatus();
+  },
+};
+
 // Startup: localStorage autosave → else real meme track (never the circle)
 {
   let loaded = false;
@@ -1396,7 +1447,7 @@ try {
     );
   }
   // Visible build stamp so cache issues are obvious
-  console.info("[Plarail] build 20260805n — modules loaded");
+  console.info("[Plarail] build 20260805o — modules loaded");
 }
 
 function frame(t) {
