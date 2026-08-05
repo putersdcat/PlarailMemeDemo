@@ -47,8 +47,8 @@ function noiseBuffer(sec = 0.5) {
 }
 
 /**
- * Coffee-grinder burr: rapid hard mechanical teeth in wall-hit range.
- * Dense mid/high impulses with short grit tails — grindy, not airy.
+ * Coffee-grinder burr: rapid teeth with wide amplitude swings
+ * (quiet ticks vs loud snaps) for dynamic crackle.
  */
 function burrBuffer(sec = 1.0, teethPerSec = 64) {
   const c = getCtx();
@@ -58,19 +58,27 @@ function burrBuffer(sec = 1.0, teethPerSec = 64) {
   const base = Math.max(5, Math.floor(c.sampleRate / teethPerSec));
   let next = 0;
   while (next < n) {
-    // slight unevenness like a cheap plastic burr
-    const period = Math.floor(base * (0.82 + Math.random() * 0.4));
+    // period + strength vary a lot → dynamic range
+    const period = Math.floor(base * (0.75 + Math.random() * 0.55));
+    // most soft, occasional hard snap
+    const r = Math.random();
+    const peak =
+      r < 0.08
+        ? 0.95 + Math.random() * 0.05 // rare loud
+        : r < 0.35
+          ? 0.45 + Math.random() * 0.25 // medium
+          : 0.12 + Math.random() * 0.22; // quiet ticks
+    const gritScale = peak * (0.7 + Math.random() * 0.6);
     for (let p = 0; p < period && next + p < n; p++) {
       const idx = next + p;
       if (p === 0) {
-        d[idx] = (Math.random() < 0.5 ? -1 : 1) * (0.85 + Math.random() * 0.15);
+        d[idx] = (Math.random() < 0.5 ? -1 : 1) * peak;
       } else if (p < 3) {
-        d[idx] = (Math.random() * 2 - 1) * (0.7 * Math.exp(-p / 1.6));
-      } else if (p < 18) {
-        // longer grit tail = more grind
-        d[idx] = (Math.random() * 2 - 1) * 0.22 * Math.exp(-(p - 3) / 6);
+        d[idx] = (Math.random() * 2 - 1) * peak * 0.75 * Math.exp(-p / 1.6);
+      } else if (p < 20) {
+        d[idx] = (Math.random() * 2 - 1) * gritScale * 0.28 * Math.exp(-(p - 3) / 6);
       } else {
-        d[idx] = (Math.random() * 2 - 1) * 0.02;
+        d[idx] = (Math.random() * 2 - 1) * 0.01 * peak;
       }
     }
     next += period;
@@ -79,25 +87,38 @@ function burrBuffer(sec = 1.0, teethPerSec = 64) {
 }
 
 /**
- * Bean / plastic grit layer: chunkier impacts in the track-clack band.
+ * Bean / plastic grit: sparse loud cracks with quiet gravel between.
  */
 function crunchBuffer(sec = 1.2) {
   const c = getCtx();
   const n = Math.max(1, Math.floor(c.sampleRate * sec));
   const buf = c.createBuffer(1, n, c.sampleRate);
   const d = buf.getChannelData(0);
-  let next = Math.floor(c.sampleRate * 0.015);
+  let next = Math.floor(c.sampleRate * 0.012);
   while (next < n) {
-    // irregular grit hits — denser than before
-    const gap = Math.floor(c.sampleRate * (0.022 + Math.random() * 0.055));
-    const dur = Math.floor(c.sampleRate * (0.003 + Math.random() * 0.01));
+    // wide gap range → silence then punch
+    const gap = Math.floor(c.sampleRate * (0.018 + Math.random() * 0.09));
+    const r = Math.random();
+    const peak =
+      r < 0.12
+        ? 0.9 + Math.random() * 0.1 // hard crack
+        : r < 0.4
+          ? 0.4 + Math.random() * 0.25
+          : 0.08 + Math.random() * 0.18; // soft chip
+    const dur = Math.floor(
+      c.sampleRate * (0.0025 + Math.random() * (peak > 0.6 ? 0.014 : 0.008))
+    );
     for (let p = 0; p < dur && next + p < n; p++) {
-      const env = Math.exp(-p / (dur * 0.3));
-      d[next + p] += (Math.random() * 2 - 1) * env * (0.65 + Math.random() * 0.35);
+      const env = Math.exp(-p / (dur * 0.28));
+      d[next + p] += (Math.random() * 2 - 1) * env * peak;
     }
-    // gravel after crunch
-    for (let p = dur; p < dur + 55 && next + p < n; p++) {
-      d[next + p] += (Math.random() * 2 - 1) * 0.12 * Math.exp(-(p - dur) / 14);
+    // gravel after louder hits only
+    if (peak > 0.35) {
+      const gLen = Math.floor(30 + peak * 50);
+      for (let p = dur; p < dur + gLen && next + p < n; p++) {
+        d[next + p] +=
+          (Math.random() * 2 - 1) * peak * 0.18 * Math.exp(-(p - dur) / 16);
+      }
     }
     next += gap;
   }
@@ -260,6 +281,24 @@ export function startMotor(speedNorm = 1, level = 1) {
   ringBp.connect(ringG);
   ringG.connect(motorHp);
 
+  // Live gain wobble on crackle layers → dynamic range over time
+  const crackleLfo = c.createOscillator();
+  crackleLfo.type = "sine";
+  crackleLfo.frequency.value = 2.6;
+  const crackleLfoG = c.createGain();
+  crackleLfoG.gain.value = 0.12;
+  crackleLfo.connect(crackleLfoG);
+  crackleLfoG.connect(burrG.gain);
+  crackleLfoG.connect(crunchG.gain);
+
+  const crackleLfo2 = c.createOscillator();
+  crackleLfo2.type = "square";
+  crackleLfo2.frequency.value = 0.7;
+  const crackleLfo2G = c.createGain();
+  crackleLfo2G.gain.value = 0.08;
+  crackleLfo2.connect(crackleLfo2G);
+  crackleLfo2G.connect(crunchG.gain);
+
   motorHp.connect(motorLp);
   motorLp.connect(mix);
   mix.connect(master);
@@ -268,6 +307,8 @@ export function startMotor(speedNorm = 1, level = 1) {
   crunch.start();
   motor.start();
   ring.start();
+  crackleLfo.start();
+  crackleLfo2.start();
 
   const t = c.currentTime;
   const target = 0.82 * motorLevel;
@@ -279,6 +320,8 @@ export function startMotor(speedNorm = 1, level = 1) {
     crunch,
     motor,
     ring,
+    crackleLfo,
+    crackleLfo2,
     burrBp,
     burrG,
     crunchG,
@@ -337,7 +380,14 @@ export function stopMotor() {
   }
   motorNodes = null;
   setTimeout(() => {
-    for (const n of [nodes.burr, nodes.crunch, nodes.motor, nodes.ring]) {
+    for (const n of [
+      nodes.burr,
+      nodes.crunch,
+      nodes.motor,
+      nodes.ring,
+      nodes.crackleLfo,
+      nodes.crackleLfo2,
+    ]) {
       try {
         n.stop();
         n.disconnect();

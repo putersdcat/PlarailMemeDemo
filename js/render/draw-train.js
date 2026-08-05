@@ -100,35 +100,32 @@ export function drawTrain(ctx, train) {
   ctx.moveTo(tail + 14, R * 0.72);
   ctx.lineTo(pinchX - 4, R * 0.72);
   ctx.stroke();
-  ctx.fillStyle = "#2a6cb0";
-  ctx.beginPath();
-  ctx.ellipse(pinchX - R * 0.1, R * 0.32, R * 0.35, R * 0.22, 0, 0, Math.PI * 2);
-  ctx.fill();
 
-  // Windshield: crescent moon, moved back from the tip, rounded edge forward
-  const glassFront = tipCx - tipR * 0.15; // set back from nose tip
-  const glassRear = tipCx - tipR * 0.95;
+  // Windshield: fatter crescent (more length along train), rounded edge forward
+  const glassFront = tipCx - tipR * 0.05; // near dome, still slightly set back
+  const glassRear = tipCx - tipR * 1.45; // deeper toward body → fatter lengthwise
   const glassHalfH = R * 0.58;
+  const tipJoin = glassRear + tipR * 0.35; // crescent tips sit further aft
   const crescentPath = () => {
     ctx.beginPath();
     // Top tip of crescent
-    ctx.moveTo(glassRear + tipR * 0.2, -glassHalfH);
+    ctx.moveTo(tipJoin, -glassHalfH);
     // Outer arc — convex / rounded edge toward the nose (+x)
     ctx.bezierCurveTo(
-      glassFront + tipR * 0.35,
-      -glassHalfH * 0.55,
-      glassFront + tipR * 0.35,
-      glassHalfH * 0.55,
-      glassRear + tipR * 0.2,
+      glassFront + tipR * 0.55,
+      -glassHalfH * 0.5,
+      glassFront + tipR * 0.55,
+      glassHalfH * 0.5,
+      tipJoin,
       glassHalfH
     );
-    // Inner arc — concave scoop toward the rear (−x)
+    // Inner arc — concave scoop toward the rear (−x), deeper for thickness
     ctx.bezierCurveTo(
-      glassRear + tipR * 0.55,
-      glassHalfH * 0.45,
-      glassRear + tipR * 0.55,
-      -glassHalfH * 0.45,
-      glassRear + tipR * 0.2,
+      glassRear + tipR * 0.35,
+      glassHalfH * 0.42,
+      glassRear + tipR * 0.35,
+      -glassHalfH * 0.42,
+      tipJoin,
       -glassHalfH
     );
     ctx.closePath();
@@ -139,7 +136,7 @@ export function drawTrain(ctx, train) {
   const glassG = ctx.createLinearGradient(
     glassRear,
     -glassHalfH,
-    glassFront + tipR * 0.2,
+    glassFront + tipR * 0.35,
     glassHalfH
   );
   glassG.addColorStop(0, "rgba(90, 140, 180, 0.42)");
