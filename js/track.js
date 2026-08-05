@@ -520,18 +520,41 @@ export function hitTestPiece(board, x, y) {
 /**
  * Closest active path sample to a point (for placing train / re-rail / hop).
  * maxDist defaults to 48 so placement is forgiving.
+ *
+ * opts.preferAng — when set, rank by heading match first (then distance).
+ * Critical at switch throats / Y-forks where two paths are equally near:
+ * pure distance flips "up vs down" with tiny lateral noise from speed.
  */
-export function closestPathPoint(board, x, y, maxDist = 48) {
+export function closestPathPoint(board, x, y, maxDist = 48, opts = {}) {
+  const preferAng =
+    opts && typeof opts.preferAng === "number" ? opts.preferAng : null;
+  /** Angle weight in score units (px-equivalent per radian). */
+  const angW = opts.angWeight != null ? opts.angWeight : 22;
+
   let best = null;
-  let bestD = maxDist;
+  let bestScore = Infinity;
   for (const path of board.pathIndex) {
     if (!path.active) continue;
     const pts = path.points;
     if (!pts || pts.length < 2) continue;
     for (let i = 1; i < pts.length; i++) {
       const res = distToSeg(x, y, pts[i - 1], pts[i]);
-      if (res.d < bestD) {
-        bestD = res.d;
+      if (res.d > maxDist) continue;
+
+      const ang = Math.atan2(pts[i].y - pts[i - 1].y, pts[i].x - pts[i - 1].x);
+      let angErr = 0;
+      if (preferAng != null) {
+        angErr = Math.min(
+          angleDiff(preferAng, ang),
+          angleDiff(preferAng, ang + Math.PI)
+        );
+      }
+      // Distance primary when no prefer; with prefer, heading dominates ties
+      const score =
+        preferAng != null ? angErr * angW + res.d * 0.35 : res.d;
+
+      if (score < bestScore) {
+        bestScore = score;
         let along = 0;
         for (let k = 1; k < i; k++) {
           along += Math.hypot(
@@ -548,11 +571,10 @@ export function closestPathPoint(board, x, y, maxDist = 48) {
           s: Math.max(0, Math.min(1, s)),
           x: res.x,
           y: res.y,
-          ang: Math.atan2(
-            pts[i].y - pts[i - 1].y,
-            pts[i].x - pts[i - 1].x
-          ),
+          ang,
           dist: res.d,
+          angErr,
+          score,
         };
       }
     }

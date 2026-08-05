@@ -254,9 +254,12 @@ function stepOnRail(train, board, dt) {
 
   let live = resolveLivePath(board, pref);
   if (!live) {
-    // Switch may have de-activated this route ΓÇö try geometric re-seat
+    // Switch de-activated this route — re-seat by heading, not pure distance
+    // (distance alone flips up/down at multi-path throats when speed jitters pose)
     const fa = frontAxlePos(train);
-    const hit = closestPathPoint(board, fa.x, fa.y, RE_RAIL_LATERAL + 8);
+    const hit = closestPathPoint(board, fa.x, fa.y, RE_RAIL_LATERAL + 8, {
+      preferAng: train.ang,
+    });
     if (hit) {
       placeTrainOnPath(train, hit, { keepDir: true });
       train.mode = TrainMode.ON_RAIL;
@@ -375,13 +378,21 @@ function findNextFromGraph(board, live, exitConnId, travelAng) {
   }
 
   if (!candidates.length) return null;
-  candidates.sort(
-    (a, b) =>
-      angleDiff(a.entryAng, travelAng) - angleDiff(b.entryAng, travelAng)
-  );
+  // Prefer heading match; stable tie-break so speed/float never flips branch
+  candidates.sort((a, b) => {
+    const da = angleDiff(a.entryAng, travelAng);
+    const db = angleDiff(b.entryAng, travelAng);
+    if (Math.abs(da - db) > 1e-4) return da - db;
+    const ka = `${a.path.pieceId}:${a.path.id}`;
+    const kb = `${b.path.pieceId}:${b.path.id}`;
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
+  });
   // Reject absurd U-turns unless only option
   const best = candidates[0];
-  if (angleDiff(best.entryAng, travelAng) > Math.PI * 0.75 && candidates.length > 1) {
+  if (
+    angleDiff(best.entryAng, travelAng) > Math.PI * 0.75 &&
+    candidates.length > 1
+  ) {
     return candidates[1];
   }
   return best;
@@ -682,17 +693,22 @@ function resolveCircleSegment(cx, cy, radius, seg) {
 
 function tryRerail(train, board) {
   const fa = frontAxlePos(train);
-  // Search a bit wider than accept window so we can reject bad angles cleanly
-  const hit = closestPathPoint(board, fa.x, fa.y, RE_RAIL_LATERAL + 4);
+  // Prefer heading (derail lock or nose) over pure distance — at switch
+  // throats two paths are often equidistant; distance-only = speed lottery
+  const preferAng =
+    train.offRailPreferAng != null ? train.offRailPreferAng : train.ang;
+  const hit = closestPathPoint(board, fa.x, fa.y, RE_RAIL_LATERAL + 4, {
+    preferAng,
+    angWeight: 28,
+  });
   if (!hit) return;
 
   const pathAng = hit.ang;
-  const d1 = angleDiff(train.ang, pathAng);
-  const d2 = angleDiff(train.ang, pathAng + Math.PI);
+  const d1 = angleDiff(preferAng, pathAng);
+  const d2 = angleDiff(preferAng, pathAng + Math.PI);
   const best = Math.min(d1, d2);
 
-  // Mouth re-entry (open ends) is the main re-rail path; mid-path is strict
-  // so sliding past a perpendicular piece does not magnet-grab the train.
+  // Mouth re-entry is looser; mid-path re-rail stays strict
   const nearMouth = hit.s < 0.12 || hit.s > 0.88;
   const angLimit = nearMouth ? RE_RAIL_ANGLE * 1.15 : RE_RAIL_ANGLE * 0.72;
   const latLimit = nearMouth ? RE_RAIL_LATERAL + 3 : RE_RAIL_LATERAL * 0.75;
@@ -708,13 +724,7 @@ function tryRerail(train, board) {
     pathId: hit.path.id,
   };
   train.s = hit.s;
-  if (train.offRailPreferAng != null) {
-    const e1 = angleDiff(train.offRailPreferAng, pathAng);
-    const e2 = angleDiff(train.offRailPreferAng, pathAng + Math.PI);
-    train.dir = e1 <= e2 ? 1 : -1;
-  } else {
-    train.dir = d1 <= d2 ? 1 : -1;
-  }
+  train.dir = d1 <= d2 ? 1 : -1;
   const ang = train.dir > 0 ? pathAng : normalizeAngle(pathAng + Math.PI);
   const body = bodyFromFrontAxle(hit.x, hit.y, ang);
   train.x = body.x;
