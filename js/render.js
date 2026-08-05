@@ -11,8 +11,8 @@ import {
 } from "./geometry.js";
 import { worldGeoFor } from "./track.js";
 import { FRONT_AXLE_OFFSET, TrainMode } from "./train.js";
-import { drawTrain } from "./render/train.js";
-export { drawTrain } from "./render/train.js";
+import { drawTrain } from "./render/draw-train.js";
+export { drawTrain } from "./render/draw-train.js";
 
 const RAIL_BLUE = "#3a8fd6";
 const RAIL_BLUE_DARK = "#2a6fa8";

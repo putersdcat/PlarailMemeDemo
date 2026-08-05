@@ -58,7 +58,6 @@ import {
   setMotorSpeed,
   startMotor,
   stopMotor,
-  playTestBlip,
 } from "./sound.js";
 import { createPaintController } from "./app/paint.js";
 
@@ -451,7 +450,6 @@ function dateStamp() {
 
 btnStart.addEventListener("click", () => {
   unlockAudio();
-  playTestBlip(); // proves audio path; motor follows if start succeeds
   if (!trainPlaced) {
     const cx = view.camX + view.w / 2;
     const cy = view.camY + view.h / 2;
@@ -1349,6 +1347,8 @@ onResize();
       "Restored autosaved layout. 🚂 train · box-select multi-move · Save downloads JSON."
     );
   }
+  // Visible build stamp so cache issues are obvious
+  console.info("[Plarail] build 20260805c — modules loaded");
 }
 
 function frame(t) {

@@ -2,7 +2,7 @@
  * Geometry public API — re-exports modular pieces.
  * Prefer importing from here so call sites stay stable.
  */
-export * from "./geometry/core.js";
+export * from "./geometry/units-math.js";
 export {
   buildTemplate,
   worldGeometry,
@@ -13,4 +13,4 @@ export {
   rotateAroundVisualPivot,
   flipAroundVisualPivot,
   mirrorAroundVisualPivot,
-} from "./geometry/templates.js";
+} from "./geometry/piece-templates.js";

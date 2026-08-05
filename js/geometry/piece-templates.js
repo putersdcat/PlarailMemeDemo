@@ -18,7 +18,7 @@ import {
   transformDir,
   rotStepsToRad,
   rotatePoint,
-} from "./core.js";
+} from "./units-math.js";
 
 /**
  * Visual pivot in local space — center of the rail bed (path samples),
