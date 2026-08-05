@@ -6,9 +6,9 @@
  *   2) Geometric hop at open joints (near endpoints, heading-matched)
  * so visually joined track stays continuous even if a gender link is missing.
  *
- * Wheelbase (body local, +x = nose):
- *   front axle: classic ~1/3 of length back from nose
- *   rear  axle: inset 1/6 of length from tail
+ * Visual body (TRAIN_LENGTH / TRAIN_RADIUS) is elongated for drawing.
+ * Collision wheelbase is frozen to the pre-scale compact values so wall
+ * glide does not fight itself across a long chassis.
  */
 
 import {
@@ -28,19 +28,22 @@ export const TrainMode = {
 };
 
 /**
- * Body: a bit narrower than track bed, ~1/3 longer than prior.
+ * Visual body: narrower than track bed, elongated.
  * TRACK_W = plastic bed width (40).
  */
-export const TRAIN_RADIUS = HALF_W - 2; // 18 — slightly under track width
+export const TRAIN_RADIUS = HALF_W - 2; // 18
 export const TRAIN_LENGTH = Math.round(TRACK_W * 2.15 * (4 / 3)); // ~115
-/** Inset from nose → front virtual axle (reverted classic). */
-export const FRONT_AXLE_FROM_NOSE = TRAIN_LENGTH / 3;
-/** Center → front axle (+x). */
-export const FRONT_AXLE_OFFSET = TRAIN_LENGTH / 2 - FRONT_AXLE_FROM_NOSE;
-/** Center → rear axle (−x). Inset 1/6 from tail → −L/2 + L/6 = −L/3. */
-export const REAR_AXLE_OFFSET = -TRAIN_LENGTH / 2 + TRAIN_LENGTH / 6;
-/** Axle contact radius — just under body half so walls meet the silhouette. */
-export const WHEEL_RADIUS = Math.max(8, TRAIN_RADIUS - 2);
+
+/**
+ * Physics wheelbase — pre-scale compact train (L=48 era).
+ * Do not derive these from TRAIN_LENGTH or wall contact goes unstable.
+ */
+const PHYS_LEN = 48;
+export const FRONT_AXLE_FROM_NOSE = PHYS_LEN / 3;
+export const FRONT_AXLE_OFFSET = PHYS_LEN / 2 - FRONT_AXLE_FROM_NOSE; // +8
+export const REAR_AXLE_OFFSET = -PHYS_LEN * 0.28; // ~-13.4
+/** Compact contact radius used before the visual scale-up. */
+export const WHEEL_RADIUS = 9;
 
 /**
  * Re-rail snap window — intentionally tight so drive-bys past

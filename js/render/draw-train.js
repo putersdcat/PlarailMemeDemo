@@ -21,7 +21,7 @@ function roundRect(ctx, x, y, w, h, r) {
 }
 
 /**
- * Top-down white bullet train: blunt rounded nose = front (+x), black cockpit.
+ * Top-down white train: airplane-style rounded nose (+x), black cockpit.
  */
 export function drawTrain(ctx, train) {
   const { x, y, ang, mode } = train;
@@ -34,8 +34,9 @@ export function drawTrain(ctx, train) {
   const R = TRAIN_RADIUS;
   const nose = L * 0.5;
   const tail = -L * 0.5;
-  // Rounded tip radius at the nose vertex
-  const tipR = Math.min(R * 0.55, L * 0.08);
+  // Hemispherical airplane nose (radius = body half-width)
+  const tipR = R;
+  const tipCx = nose - tipR; // center of nose semicircle
 
   ctx.fillStyle = "rgba(0,0,0,0.16)";
   ctx.beginPath();
@@ -43,17 +44,11 @@ export function drawTrain(ctx, train) {
   ctx.fill();
 
   const bodyPath = () => {
-    // Soft bullet: sides taper, tip is a rounded cap (not a sharp point)
+    // Parallel fuselage + semicircle nose (top-down airplane)
     ctx.beginPath();
     ctx.moveTo(tail + 6, -R);
-    ctx.lineTo(L * 0.1, -R);
-    ctx.quadraticCurveTo(L * 0.26, -R * 0.98, L * 0.36, -R * 0.72);
-    ctx.quadraticCurveTo(L * 0.44, -R * 0.42, nose - tipR * 0.35, -tipR * 0.85);
-    // Rounded vertex through the nose tip
-    ctx.quadraticCurveTo(nose + tipR * 0.15, -tipR * 0.35, nose + tipR * 0.25, 0);
-    ctx.quadraticCurveTo(nose + tipR * 0.15, tipR * 0.35, nose - tipR * 0.35, tipR * 0.85);
-    ctx.quadraticCurveTo(L * 0.44, R * 0.42, L * 0.36, R * 0.72);
-    ctx.quadraticCurveTo(L * 0.26, R * 0.98, L * 0.1, R);
+    ctx.lineTo(tipCx, -R);
+    ctx.arc(tipCx, 0, tipR, -Math.PI / 2, Math.PI / 2, false);
     ctx.lineTo(tail + 6, R);
     ctx.quadraticCurveTo(tail - 1, R * 0.7, tail - 1, 0);
     ctx.quadraticCurveTo(tail - 1, -R * 0.7, tail + 6, -R);
@@ -89,59 +84,57 @@ export function drawTrain(ctx, train) {
   ctx.fill();
   ctx.restore();
 
+  // Blue side stripe along fuselage (stops before nose dome)
+  ctx.strokeStyle = "#3a7ec4";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(tail + 14, -R * 0.72);
+  ctx.lineTo(tipCx - 2, -R * 0.72);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(tail + 14, R * 0.72);
+  ctx.lineTo(tipCx - 2, R * 0.72);
+  ctx.stroke();
   ctx.fillStyle = "#2a6cb0";
   ctx.beginPath();
-  ctx.moveTo(L * 0.2, R * 0.52);
-  ctx.quadraticCurveTo(L * 0.34, R * 0.7, L * 0.4, R * 0.32);
-  ctx.quadraticCurveTo(L * 0.46, R * 0.12, nose - tipR * 0.4, R * 0.08);
-  ctx.quadraticCurveTo(L * 0.42, R * 0.18, L * 0.32, R * 0.58);
-  ctx.quadraticCurveTo(L * 0.24, R * 0.68, L * 0.2, R * 0.52);
-  ctx.closePath();
+  ctx.ellipse(tipCx + tipR * 0.15, R * 0.35, tipR * 0.55, R * 0.28, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = "#3a7ec4";
-  ctx.lineWidth = 1.4;
-  ctx.beginPath();
-  ctx.moveTo(L * 0.16, -R * 0.72);
-  ctx.quadraticCurveTo(L * 0.3, -R * 0.88, L * 0.38, -R * 0.32);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(L * 0.16, R * 0.72);
-  ctx.quadraticCurveTo(L * 0.3, R * 0.88, L * 0.38, R * 0.32);
-  ctx.stroke();
 
-  // Cockpit glass — follows rounded nose
+  // Cockpit glass on the rounded nose
   ctx.fillStyle = "#1a1e24";
   ctx.beginPath();
-  ctx.moveTo(L * 0.14, -R * 0.4);
-  ctx.lineTo(L * 0.28, -R * 0.48);
-  ctx.quadraticCurveTo(L * 0.36, -R * 0.18, L * 0.38, 0);
-  ctx.quadraticCurveTo(L * 0.36, R * 0.18, L * 0.28, R * 0.48);
-  ctx.lineTo(L * 0.14, R * 0.4);
-  ctx.quadraticCurveTo(L * 0.12, 0, L * 0.14, -R * 0.4);
-  ctx.closePath();
+  ctx.ellipse(tipCx + tipR * 0.15, 0, tipR * 0.55, R * 0.62, 0, 0, Math.PI * 2);
   ctx.fill();
-  const glassG = ctx.createLinearGradient(L * 0.16, -R * 0.3, L * 0.34, R * 0.3);
-  glassG.addColorStop(0, "rgba(90, 140, 180, 0.35)");
-  glassG.addColorStop(0.5, "rgba(40, 50, 60, 0.1)");
-  glassG.addColorStop(1, "rgba(20, 25, 30, 0.4)");
+  const glassG = ctx.createLinearGradient(
+    tipCx - tipR * 0.2,
+    -R * 0.4,
+    tipCx + tipR * 0.5,
+    R * 0.4
+  );
+  glassG.addColorStop(0, "rgba(90, 140, 180, 0.4)");
+  glassG.addColorStop(0.5, "rgba(40, 50, 60, 0.12)");
+  glassG.addColorStop(1, "rgba(20, 25, 30, 0.45)");
   ctx.fillStyle = glassG;
+  ctx.beginPath();
+  ctx.ellipse(tipCx + tipR * 0.15, 0, tipR * 0.55, R * 0.62, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.strokeStyle = "rgba(30, 40, 50, 0.85)";
   ctx.lineWidth = 0.8;
   ctx.stroke();
 
+  // Headlights on the rounded nose
   ctx.fillStyle = "#f0f4f8";
   ctx.beginPath();
-  ctx.arc(nose - tipR * 0.6, -2.4, 1.3, 0, Math.PI * 2);
-  ctx.arc(nose - tipR * 0.6, 2.4, 1.3, 0, Math.PI * 2);
+  ctx.arc(tipCx + tipR * 0.72, -R * 0.28, 1.5, 0, Math.PI * 2);
+  ctx.arc(tipCx + tipR * 0.72, R * 0.28, 1.5, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = "rgba(255, 230, 120, 0.85)";
+  ctx.fillStyle = "rgba(255, 230, 120, 0.9)";
   ctx.beginPath();
-  ctx.arc(nose - tipR * 0.55, -2.4, 0.7, 0, Math.PI * 2);
-  ctx.arc(nose - tipR * 0.55, 2.4, 0.7, 0, Math.PI * 2);
+  ctx.arc(tipCx + tipR * 0.78, -R * 0.28, 0.75, 0, Math.PI * 2);
+  ctx.arc(tipCx + tipR * 0.78, R * 0.28, 0.75, 0, Math.PI * 2);
   ctx.fill();
 
-  // Bogie shadows at virtual axle positions
+  // Bogie shadows at physics axle positions
   ctx.fillStyle = "rgba(55, 70, 85, 0.32)";
   const bogieXs = [FRONT_AXLE_OFFSET, REAR_AXLE_OFFSET];
   for (const wx of bogieXs) {
