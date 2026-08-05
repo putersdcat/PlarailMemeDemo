@@ -3,6 +3,25 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Play demo](https://img.shields.io/badge/demo-github.io-blue)](https://putersdcat.github.io/PlarailMemeDemo/)
 
+<!--
+  GitHub.com does play in-repo MP4s in READMEs via <video>.
+  autoplay usually needs muted; loop works. Click if your browser blocks autoplay.
+-->
+<video
+  src="recordings/plarail-meme-demo-1080p.mp4"
+  width="100%"
+  controls
+  loop
+  muted
+  autoplay
+  playsinline
+  poster=""
+>
+  <a href="recordings/plarail-meme-demo-1080p.mp4">Watch the 1080p demo (MP4)</a>
+</video>
+
+*1080p capture: on rails → derail → wall glide → re-rail (looped, muted autoplay).*
+
 ## Intro (synergistic rail-forward value proposition)
 
 In today’s rapidly evolving multi-modal plastic ecosystem, stakeholders increasingly demand a **holistic end-to-end train-shaped experience** that empowers builders to *leverage* magnetic adjacency, *unlock* paint-adjacent brand moments, and *operationalize* derailment as a first-class citizen of the joy funnel.

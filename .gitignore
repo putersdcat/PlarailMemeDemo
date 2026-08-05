@@ -20,6 +20,11 @@ dist/
 *.png
 !docs/**/*.png
 
+# Recordings: keep the stable demo MP4 in git; ignore intermediates
+recordings/*
+!recordings/plarail-meme-demo-1080p.mp4
+recordings/*.webm
+
 # Local layout dumps (canonical defaults live under layouts/)
 plarail-layout-*.json
 !layouts/**/*.json
