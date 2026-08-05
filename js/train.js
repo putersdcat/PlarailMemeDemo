@@ -78,11 +78,6 @@ export function createTrain() {
     selected: false,
     /** Set true when walls were hit this simulation step (for SFX) */
     wallHit: false,
-    /**
-     * Locked preferred travel angle while off-rail (set on derail).
-     * Prevents wall-tangent sign flips from reversing the train mid-slide.
-     */
-    offRailPreferAng: null,
   };
 }
 
@@ -142,7 +137,6 @@ export function placeTrainOnPath(train, hit, opts = {}) {
   train.ang = ang;
   train.vx = 0;
   train.vy = 0;
-  train.offRailPreferAng = null;
   return true;
 }
 
@@ -211,8 +205,6 @@ export function resetTrainHard(train) {
   train.s = 0;
   train.dir = 1;
   train.selected = false;
-  train.offRailPreferAng = null;
-  train.wallHit = false;
 }
 
 export function updateTrain(train, board, dt, bounds) {
@@ -435,17 +427,10 @@ function leaveRails(train) {
   train.vx = Math.cos(train.ang) * train.speed;
   train.vy = Math.sin(train.ang) * train.speed;
   train.wallHit = false;
-  // Lock intended travel direction for the whole off-rail episode
-  train.offRailPreferAng = train.ang;
+  // Clear the open mouth before re-rail attempts
   train.reRailCooldown = 0.45;
 }
 
-/**
- * Off-rail free motion + wall slide.
- * Simple single-step integrate (no substep drift). Wall tangent uses
- * locked derail heading + unit velocity only so speed magnitude cannot
- * flip slide direction.
- */
 function stepOffRail(train, board, dt, bounds) {
   train.wallHit = false;
   let x = train.x + train.vx * dt;
@@ -469,6 +454,7 @@ function stepOffRail(train, board, dt, bounds) {
     return;
   }
 
+  // Wall slide — soft seat, pure tangent glide (no bounce kick)
   let hitAny = false;
   let lastNx = 0;
   let lastNy = 0;
@@ -488,13 +474,18 @@ function stepOffRail(train, board, dt, bounds) {
       [ra, false],
     ]) {
       for (const w of board.walls) {
-        const res = resolveCircleSegment(axle.x, axle.y, WHEEL_RADIUS, w);
+        const res = resolveCircleSegment(
+          axle.x,
+          axle.y,
+          WHEEL_RADIUS,
+          w
+        );
         if (!res) continue;
         hit = true;
         hitAny = true;
         lastNx = res.nx;
         lastNy = res.ny;
-
+        // Gentle push-out (avoid popping off the wall)
         const pushScale = isFront ? 0.42 : 0.28;
         x += (res.x - axle.x) * pushScale;
         y += (res.y - axle.y) * pushScale;
@@ -502,34 +493,33 @@ function stepOffRail(train, board, dt, bounds) {
         const nx = res.nx;
         const ny = res.ny;
         const vn = vx * nx + vy * ny;
+        // Kill all into-wall velocity (no restitution bounce)
         if (vn < 0) {
           vx -= (1 + EDGE_RESTITUTION) * vn * nx;
           vy -= (1 + EDGE_RESTITUTION) * vn * ny;
         }
+        // Also strip any residual outward normal so speed-normalize
+        // cannot re-amplify a bounce-off kick
         const vn2 = vx * nx + vy * ny;
         if (vn2 > 0) {
           vx -= vn2 * nx;
           vy -= vn2 * ny;
         }
-
-        const preferAng =
-          train.offRailPreferAng != null ? train.offRailPreferAng : ang;
-        const { tx, ty } = wallTangentAlongTravel(nx, ny, vx, vy, preferAng);
-        // Full snap to tangent * speed — no residual that drifts sideways of body
+        // Pure tangent glide along the wall
+        const tx = -ny;
+        const ty = nx;
+        const along = vx * tx + vy * ty;
+        const sign = along >= 0 ? 1 : -1;
         const sp = train.speed;
-        vx = tx * sp;
-        vy = ty * sp;
+        vx = tx * sign * sp * 0.96 + vx * 0.04;
+        vy = ty * sign * sp * 0.96 + vy * 0.04;
 
         if (isFront) {
-          const vAng = Math.atan2(vy, vx);
-          ang = normalizeAngle(ang + 0.35 * normalizeAngle(vAng - ang));
-          if (train.offRailPreferAng != null) {
-            const dPref = normalizeAngle(vAng - train.offRailPreferAng);
-            if (Math.abs(dPref) < Math.PI * 0.5) {
-              train.offRailPreferAng = normalizeAngle(
-                train.offRailPreferAng + 0.1 * dPref
-              );
-            }
+          const vSp = Math.hypot(vx, vy);
+          if (vSp > 1e-3) {
+            const vAng = Math.atan2(vy, vx);
+            // Very gentle yaw — follow wall, no ricochet snap
+            ang = normalizeAngle(ang + 0.18 * normalizeAngle(vAng - ang));
           }
         }
       }
@@ -537,28 +527,23 @@ function stepOffRail(train, board, dt, bounds) {
     if (!hit) break;
   }
 
+  // Cruise speed — if we hit a wall, keep velocity purely tangential
   let sp = Math.hypot(vx, vy);
   if (hitAny && (lastNx || lastNy)) {
-    const preferAng =
-      train.offRailPreferAng != null ? train.offRailPreferAng : ang;
-    const { tx, ty } = wallTangentAlongTravel(
-      lastNx,
-      lastNy,
-      vx,
-      vy,
-      preferAng
-    );
-    vx = tx * train.speed;
-    vy = ty * train.speed;
+    const tx = -lastNy;
+    const ty = lastNx;
+    const along = vx * tx + vy * ty;
+    const sign = along >= 0 ? 1 : -1;
+    vx = tx * sign * train.speed;
+    vy = ty * sign * train.speed;
     const vAng = Math.atan2(vy, vx);
-    // Snap body fully to travel when on a wall — prevents drift pose
-    ang = vAng;
+    ang = normalizeAngle(ang + 0.14 * normalizeAngle(vAng - ang));
   } else if (sp > 1e-3) {
     const target = train.speed;
     vx = (vx / sp) * target;
     vy = (vy / sp) * target;
     const vAng = Math.atan2(vy, vx);
-    ang = normalizeAngle(ang + 0.25 * normalizeAngle(vAng - ang));
+    ang = normalizeAngle(ang + 0.18 * normalizeAngle(vAng - ang));
   } else if (hitAny) {
     vx = Math.cos(ang) * train.speed;
     vy = Math.sin(ang) * train.speed;
@@ -574,29 +559,6 @@ function stepOffRail(train, board, dt, bounds) {
   if (train.reRailCooldown <= 0) {
     tryRerail(train, board);
   }
-}
-
-/**
- * Wall tangent continuing intended travel.
- * Velocity is reduced to a unit vector first so high speed cannot
- * overpower the locked prefer heading (that was the speed flip bug).
- */
-function wallTangentAlongTravel(nx, ny, vx, vy, preferAng) {
-  let tx = -ny;
-  let ty = nx;
-  const hx = Math.cos(preferAng);
-  const hy = Math.sin(preferAng);
-  const vsp = Math.hypot(vx, vy);
-  const ux = vsp > 1e-6 ? vx / vsp : 0;
-  const uy = vsp > 1e-6 ? vy / vsp : 0;
-  // Heading lock dominates; unit travel is a weak tie-break only
-  const preferX = hx * 5 + ux * 0.4;
-  const preferY = hy * 5 + uy * 0.4;
-  if (preferX * tx + preferY * ty < 0) {
-    tx = -tx;
-    ty = -ty;
-  }
-  return { tx, ty };
 }
 
 function resolveCircleSegment(cx, cy, radius, seg) {
@@ -651,14 +613,7 @@ function tryRerail(train, board) {
     pathId: hit.path.id,
   };
   train.s = hit.s;
-  // Prefer re-rail dir that matches locked off-rail travel if present
-  if (train.offRailPreferAng != null) {
-    const e1 = angleDiff(train.offRailPreferAng, pathAng);
-    const e2 = angleDiff(train.offRailPreferAng, pathAng + Math.PI);
-    train.dir = e1 <= e2 ? 1 : -1;
-  } else {
-    train.dir = d1 <= d2 ? 1 : -1;
-  }
+  train.dir = d1 <= d2 ? 1 : -1;
   const ang = train.dir > 0 ? pathAng : normalizeAngle(pathAng + Math.PI);
   const body = bodyFromFrontAxle(hit.x, hit.y, ang);
   train.x = body.x;
@@ -666,7 +621,6 @@ function tryRerail(train, board) {
   train.ang = ang;
   train.vx = 0;
   train.vy = 0;
-  train.offRailPreferAng = null;
   train.reRailCooldown = 0.55;
 }
 
