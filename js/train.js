@@ -13,7 +13,6 @@ import {
   pointOnPolyline,
   angleDiff,
   normalizeAngle,
-  HALF_W,
 } from "./geometry.js";
 import { closestPathPoint } from "./track.js";
 
@@ -37,21 +36,9 @@ export const RE_RAIL_ANGLE = (70 * Math.PI) / 180;
 /** Geometric hop between path ends when graph link is missing. */
 export const PATH_HOP_DIST = 30;
 export const PATH_HOP_ANGLE = (40 * Math.PI) / 180;
+export const EDGE_RESTITUTION = 0.15;
 /** Hit radius for selecting / dragging the train body. */
 export const TRAIN_HIT_R = 28;
-/**
- * Contour ride: when off-rail but near track, follow the rail-bed edge ΓÇö
- * a parallel curve at (HALF_W + WHEEL_RADIUS) from the path centerline.
- * This matches the meme video (train skids along the blue plastic outline)
- * far better than bouncing off discrete wall segments.
- */
-export const EDGE_FOLLOW_LAT = HALF_W + WHEEL_RADIUS; // ~29px from centerline
-/** How far from a path centerline still counts as ΓÇ£on the plastic contourΓÇ¥. */
-export const EDGE_FOLLOW_CATCH = EDGE_FOLLOW_LAT + 28;
-/** Substeps per frame while free-flying between contour catches. */
-export const OFF_RAIL_SUBSTEPS = 3;
-/** How strongly body yaw locks to travel direction while on a contour. */
-export const CONTOUR_YAW_BLEND = 0.9;
 
 export function createTrain() {
   return {
@@ -69,18 +56,6 @@ export function createTrain() {
     vy: 0,
     reRailCooldown: 0,
     selected: false,
-    /** True while front axle is riding a wall contour */
-    wallGlide: false,
-    /** Sticky wall-tangent direction (prevents frame-to-frame flip) */
-    glideTx: 0,
-    glideTy: 0,
-    /** Seconds spent off-rail this excursion (delays re-rail) */
-    offRailTime: 0,
-    /**
-     * Edge-contour ride state (parallel to a path centerline).
-     * { pieceId, pathId, s, side, dir }
-     */
-    edgeRef: null,
   };
 }
 
@@ -203,13 +178,11 @@ export function stopTrain(train) {
 export function resetTrainHard(train) {
   train.mode = TrainMode.IDLE;
   train.pathRef = null;
-  train.edgeRef = null;
   train.vx = 0;
   train.vy = 0;
   train.s = 0;
   train.dir = 1;
   train.selected = false;
-  train.wallGlide = false;
 }
 
 export function updateTrain(train, board, dt, bounds) {
@@ -431,170 +404,18 @@ function leaveRails(train) {
   train.pathRef = null;
   train.vx = Math.cos(train.ang) * train.speed;
   train.vy = Math.sin(train.ang) * train.speed;
-  train.wallGlide = false;
-  train.glideTx = Math.cos(train.ang);
-  train.glideTy = Math.sin(train.ang);
-  train.offRailTime = 0;
-  train.edgeRef = null;
-  train.reRailCooldown = 1.2;
+  // Longer ignore so we clear the mouth / don't instantly re-rail on wrong leg
+  train.reRailCooldown = 0.45;
 }
 
-/**
- * Off-rail (meme contour mode):
- * Ride the rail-bed edge as a parallel curve of the path centerline
- * (offset EDGE_FOLLOW_LAT). Hops across connected pieces like on-rail.
- * Falls into free flight only when leaving the layout envelope.
- */
 function stepOffRail(train, board, dt, bounds) {
-  const speed = Math.max(40, train.speed);
-  let x = train.x;
-  let y = train.y;
+  let x = train.x + train.vx * dt;
+  let y = train.y + train.vy * dt;
   let ang = train.ang;
   let vx = train.vx;
   let vy = train.vy;
-  let gliding = false;
 
-  // Ensure we have an edge-follow ref (piece/path/s/side/dir)
-  let edge = train.edgeRef;
-  if (!edge) {
-    edge = captureEdgeRef(train, board);
-    train.edgeRef = edge;
-  }
-
-  if (edge) {
-    // Refresh live path each frame (switch state may change)
-    let live = board.pathIndex.find(
-      (p) =>
-        p.pieceId === edge.pieceId && p.id === edge.pathId && p.active
-    );
-    if (!live) {
-      // Path gone ΓÇö re-acquire
-      edge = captureEdgeRef(train, board);
-      train.edgeRef = edge;
-      live = edge
-        ? board.pathIndex.find(
-            (p) =>
-              p.pieceId === edge.pieceId &&
-              p.id === edge.pathId &&
-              p.active
-          )
-        : null;
-    }
-
-    if (live) {
-      let len = live.length || 1e-6;
-      let s = edge.s;
-      let dirSense = edge.dir >= 0 ? 1 : -1;
-      const side = edge.side >= 0 ? 1 : -1;
-
-      s += ((speed * dt) / len) * dirSense;
-
-      let guard = 0;
-      while ((s > 1 || s < 0) && guard++ < 12) {
-        const leavingHigh = dirSense > 0;
-        const endS = leavingHigh ? 1 : 0;
-        const pose = pointOnPolyline(live.points, endS);
-        const travelAng =
-          dirSense > 0 ? pose.ang : normalizeAngle(pose.ang + Math.PI);
-        const exitConn = leavingHigh ? live.toC : live.fromC;
-        const overshootPx = leavingHigh ? (s - 1) * len : -s * len;
-        const next = findNextPath(
-          board,
-          live,
-          exitConn,
-          pose,
-          travelAng,
-          train
-        );
-        if (!next) {
-          // Dead end on this contour: reverse and ride back the other way
-          // (meme train keeps sliding the plastic instead of freezing)
-          dirSense *= -1;
-          s = leavingHigh ? 1 - 1e-4 : 1e-4;
-          s += (Math.abs(overshootPx) / len) * dirSense * 0.5;
-          break;
-        }
-        live = next.path;
-        dirSense = next.dir > 0 ? 1 : -1;
-        len = live.length || 1e-6;
-        s = next.s + (overshootPx / len) * dirSense;
-      }
-
-      s = Math.max(0, Math.min(1, s));
-      const ep = edgePose(live, s, side, dirSense);
-      const body = bodyFromFrontAxle(ep.x, ep.y, ep.ang);
-      x = body.x;
-      y = body.y;
-      ang = ep.ang;
-      vx = Math.cos(ang) * speed;
-      vy = Math.sin(ang) * speed;
-      gliding = true;
-      train.dir = dirSense;
-      train.edgeRef = {
-        pieceId: live.pieceId,
-        pathId: live.id,
-        s,
-        side,
-        dir: dirSense,
-      };
-    }
-  }
-
-  // Free flight if no edge ref
-  if (!train.edgeRef) {
-    if (Math.hypot(vx, vy) < 1e-3) {
-      vx = Math.cos(ang) * speed;
-      vy = Math.sin(ang) * speed;
-    }
-    const nSub = OFF_RAIL_SUBSTEPS;
-    const sdt = dt / nSub;
-    for (let i = 0; i < nSub; i++) {
-      x += vx * sdt;
-      y += vy * sdt;
-      const fa = {
-        x: x + Math.cos(ang) * FRONT_AXLE_OFFSET,
-        y: y + Math.sin(ang) * FRONT_AXLE_OFFSET,
-      };
-      for (const h of collectWallHits(
-        fa.x,
-        fa.y,
-        WHEEL_RADIUS,
-        0,
-        board.walls
-      )) {
-        if (h.pen > 0) {
-          x += h.nx * h.pen;
-          y += h.ny * h.pen;
-          const vn = vx * h.nx + vy * h.ny;
-          if (vn < 0) {
-            vx -= vn * h.nx;
-            vy -= vn * h.ny;
-          }
-        }
-      }
-      const sp = Math.hypot(vx, vy);
-      if (sp > 1e-3) {
-        vx = (vx / sp) * speed;
-        vy = (vy / sp) * speed;
-      } else {
-        vx = Math.cos(ang) * speed;
-        vy = Math.sin(ang) * speed;
-      }
-      ang = normalizeAngle(
-        ang + 0.4 * normalizeAngle(Math.atan2(vy, vx) - ang)
-      );
-    }
-    // Try to re-catch a contour while free-flying
-    const recap = captureEdgeRef(
-      { x, y, ang, dir: train.dir },
-      board
-    );
-    if (recap) {
-      train.edgeRef = recap;
-      gliding = true;
-    }
-  }
-
+  // Canvas edge ΓÇö stop
   if (
     x < bounds.minX ||
     x > bounds.maxX ||
@@ -605,10 +426,81 @@ function stepOffRail(train, board, dt, bounds) {
     train.y = Math.max(bounds.minY, Math.min(bounds.maxY, y));
     train.vx = 0;
     train.vy = 0;
-    train.wallGlide = false;
-    train.edgeRef = null;
     train.mode = TrainMode.STOPPED;
     return;
+  }
+
+  // Wall glide ΓÇö front axle primary, rear secondary
+  let hitAny = false;
+  for (let iter = 0; iter < 6; iter++) {
+    let hit = false;
+    const fa = {
+      x: x + Math.cos(ang) * FRONT_AXLE_OFFSET,
+      y: y + Math.sin(ang) * FRONT_AXLE_OFFSET,
+    };
+    const ra = {
+      x: x + Math.cos(ang) * REAR_AXLE_OFFSET,
+      y: y + Math.sin(ang) * REAR_AXLE_OFFSET,
+    };
+
+    for (const [axle, isFront] of [
+      [fa, true],
+      [ra, false],
+    ]) {
+      for (const w of board.walls) {
+        const res = resolveCircleSegment(
+          axle.x,
+          axle.y,
+          WHEEL_RADIUS,
+          w
+        );
+        if (!res) continue;
+        hit = true;
+        hitAny = true;
+        x += res.x - axle.x;
+        y += res.y - axle.y;
+
+        const nx = res.nx;
+        const ny = res.ny;
+        const vn = vx * nx + vy * ny;
+        if (vn < 0) {
+          // Slide along wall: kill normal component, keep tangent
+          vx = vx - (1 + EDGE_RESTITUTION) * vn * nx;
+          vy = vy - (1 + EDGE_RESTITUTION) * vn * ny;
+          // Prefer pure wall slide for toy feel
+          const tx = -ny;
+          const ty = nx;
+          const along = vx * tx + vy * ty;
+          const sign = along >= 0 ? 1 : -1;
+          // Blend: mostly slide, little bounce
+          const sp = train.speed;
+          vx = vx * 0.25 + tx * sign * sp * 0.75;
+          vy = vy * 0.25 + ty * sign * sp * 0.75;
+        }
+
+        if (isFront) {
+          const sp = Math.hypot(vx, vy);
+          if (sp > 1e-3) {
+            const vAng = Math.atan2(vy, vx);
+            ang = normalizeAngle(ang + 0.65 * normalizeAngle(vAng - ang));
+          }
+        }
+      }
+    }
+    if (!hit) break;
+  }
+
+  // Cruise speed
+  let sp = Math.hypot(vx, vy);
+  if (sp > 1e-3) {
+    const target = train.speed;
+    vx = (vx / sp) * target;
+    vy = (vy / sp) * target;
+    const vAng = Math.atan2(vy, vx);
+    ang = normalizeAngle(ang + 0.4 * normalizeAngle(vAng - ang));
+  } else if (hitAny) {
+    vx = Math.cos(ang) * train.speed;
+    vy = Math.sin(ang) * train.speed;
   }
 
   train.x = x;
@@ -616,109 +508,36 @@ function stepOffRail(train, board, dt, bounds) {
   train.ang = ang;
   train.vx = vx;
   train.vy = vy;
-  train.wallGlide = gliding;
-  train.glideTx = Math.cos(ang);
-  train.glideTy = Math.sin(ang);
-  train.offRailTime = (train.offRailTime || 0) + dt;
 
-  if (train.reRailCooldown <= 0 && train.offRailTime > 1.0) {
-    tryRerail(train, board, { fromGlide: gliding });
+  if (train.reRailCooldown <= 0) {
+    tryRerail(train, board);
   }
 }
 
-/** Build edgeRef from train pose + nearest path. */
-function captureEdgeRef(train, board) {
-  const fa = {
-    x: train.x + Math.cos(train.ang) * FRONT_AXLE_OFFSET,
-    y: train.y + Math.sin(train.ang) * FRONT_AXLE_OFFSET,
-  };
-  const near = closestPathPoint(board, fa.x, fa.y, EDGE_FOLLOW_CATCH);
-  if (!near) return null;
-
-  const pathAng = near.ang;
-  const lx = -Math.sin(pathAng);
-  const ly = Math.cos(pathAng);
-  let side =
-    (fa.x - near.x) * lx + (fa.y - near.y) * ly >= 0 ? 1 : -1;
-  // If almost on centerline, pick side from body heading vs left normal
-  if (near.dist < 6) {
-    side =
-      Math.cos(train.ang) * lx + Math.sin(train.ang) * ly >= 0 ? 1 : -1;
-  }
-  const along =
-    Math.cos(train.ang) * Math.cos(pathAng) +
-    Math.sin(train.ang) * Math.sin(pathAng);
-  let dir = along >= 0 ? 1 : -1;
-  // Don't start pinned against an end going nowhere
-  if (near.s < 0.08) dir = 1;
-  if (near.s > 0.92) dir = -1;
+function resolveCircleSegment(cx, cy, radius, seg) {
+  const dx = seg.x2 - seg.x1;
+  const dy = seg.y2 - seg.y1;
+  const L2 = dx * dx + dy * dy || 1;
+  let t = ((cx - seg.x1) * dx + (cy - seg.y1) * dy) / L2;
+  t = Math.max(0, Math.min(1, t));
+  const px = seg.x1 + t * dx;
+  const py = seg.y1 + t * dy;
+  let nx = cx - px;
+  let ny = cy - py;
+  const dist = Math.hypot(nx, ny);
+  if (dist >= radius || dist < 1e-8) return null;
+  nx /= dist;
+  ny /= dist;
+  const push = radius - dist + 0.5;
   return {
-    pieceId: near.path.pieceId,
-    pathId: near.path.id,
-    s: near.s,
-    side,
-    dir,
+    x: cx + nx * push,
+    y: cy + ny * push,
+    nx,
+    ny,
   };
 }
 
-/**
- * World pose of the rail-bed edge at path parameter s.
- * side: +1 / -1 for left/right of path tangent (screen space).
- * dirSense: +1 follow increasing s, -1 reverse.
- */
-function edgePose(path, s, side, dirSense) {
-  const p = pointOnPolyline(path.points, Math.max(0, Math.min(1, s)));
-  const pathAng = p.ang;
-  // Left normal of increasing-s tangent
-  const lx = -Math.sin(pathAng);
-  const ly = Math.cos(pathAng);
-  const x = p.x + lx * side * EDGE_FOLLOW_LAT;
-  const y = p.y + ly * side * EDGE_FOLLOW_LAT;
-  const ang =
-    dirSense > 0 ? pathAng : normalizeAngle(pathAng + Math.PI);
-  return { x, y, ang, pathAng };
-}
-
-/**
- * All wall samples near a probe within radius+stick.
- * pen > 0 means penetrating (need push-out).
- */
-function collectWallHits(cx, cy, radius, stickExtra, walls) {
-  const out = [];
-  if (!walls?.length) return out;
-  const reach = radius + stickExtra;
-
-  for (const seg of walls) {
-    const dx = seg.x2 - seg.x1;
-    const dy = seg.y2 - seg.y1;
-    const L2 = dx * dx + dy * dy || 1;
-    const L = Math.sqrt(L2);
-    let t = ((cx - seg.x1) * dx + (cy - seg.y1) * dy) / L2;
-    t = Math.max(0, Math.min(1, t));
-    const qx = seg.x1 + t * dx;
-    const qy = seg.y1 + t * dy;
-    let nx = cx - qx;
-    let ny = cy - qy;
-    const dist = Math.hypot(nx, ny);
-    if (dist >= reach || dist < 1e-9) continue;
-    nx /= dist;
-    ny /= dist;
-    out.push({
-      nx,
-      ny,
-      tx: dx / L,
-      ty: dy / L,
-      dist,
-      pen: radius - dist,
-      t,
-      qx,
-      qy,
-    });
-  }
-  return out;
-}
-
-function tryRerail(train, board, opts = {}) {
+function tryRerail(train, board) {
   const fa = frontAxlePos(train);
   const hit = closestPathPoint(board, fa.x, fa.y, RE_RAIL_LATERAL + 6);
   if (!hit) return;
@@ -728,21 +547,13 @@ function tryRerail(train, board, opts = {}) {
   const d2 = angleDiff(train.ang, pathAng + Math.PI);
   const best = Math.min(d1, d2);
 
-  const nearMouth = hit.s < 0.12 || hit.s > 0.88;
-  // While contour-gliding exterior plastic, almost never re-rail mid-curve ΓÇö
-  // only a near-perfect mouth catch (meme recovery after the wall tour).
-  if (opts.fromGlide) {
-    if (!nearMouth) return;
-    if (hit.dist > 10 || best > (35 * Math.PI) / 180) return;
-  } else {
-    const angLimit = nearMouth ? RE_RAIL_ANGLE * 1.05 : RE_RAIL_ANGLE * 0.85;
-    const latLimit = nearMouth ? RE_RAIL_LATERAL + 4 : RE_RAIL_LATERAL - 2;
-    if (hit.dist > latLimit || best > angLimit) return;
-  }
+  // Prefer mid-path re-rail (mouth re-entry is looser)
+  const nearMouth = hit.s < 0.1 || hit.s > 0.9;
+  const angLimit = nearMouth ? RE_RAIL_ANGLE * 1.05 : RE_RAIL_ANGLE * 0.85;
+  const latLimit = nearMouth ? RE_RAIL_LATERAL + 4 : RE_RAIL_LATERAL - 2;
+  if (hit.dist > latLimit || best > angLimit) return;
 
   train.mode = TrainMode.ON_RAIL;
-  train.wallGlide = false;
-  train.edgeRef = null;
   train.pathRef = {
     path: hit.path,
     pieceId: hit.path.pieceId,
