@@ -23,19 +23,11 @@ export function drawTrain(ctx, train) {
   ctx.translate(x, y);
   ctx.rotate(ang);
 
-  // Body width matches TRAIN_RADIUS (≈ track width / slightly over)
-  const L = TRAIN_LENGTH * 1.08;
+  // Body half-width = TRAIN_RADIUS; length uses TRAIN_LENGTH
+  const L = TRAIN_LENGTH;
   const R = TRAIN_RADIUS;
-  const nose = L * 0.52;
-  const tail = -L * 0.48;
-
-  if (train.selected) {
-    ctx.strokeStyle = "rgba(240, 192, 64, 0.9)";
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, L * 0.52, R + 7, 0, 0, Math.PI * 2);
-    ctx.stroke();
-  }
+  const nose = L * 0.5;
+  const tail = -L * 0.5;
 
   ctx.fillStyle = "rgba(0,0,0,0.16)";
   ctx.beginPath();
@@ -136,28 +128,23 @@ export function drawTrain(ctx, train) {
   ctx.arc(nose - 3.2, 2.2, 0.7, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.fillStyle = "rgba(55, 70, 85, 0.35)";
-  for (let i = 0; i < 4; i++) {
-    const wx = tail + 12 + i * 7.5;
-    ctx.beginPath();
-    ctx.ellipse(wx, -R * 0.55, 2.4, 1.3, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(wx, R * 0.55, 2.4, 1.3, 0, 0, Math.PI * 2);
-    ctx.fill();
+  // Bogie shadows near virtual axles (front 2/6 from nose, rear 1/6 from tail)
+  ctx.fillStyle = "rgba(55, 70, 85, 0.32)";
+  const bogieXs = [nose - L * (2 / 6), tail + L * (1 / 6)];
+  for (const wx of bogieXs) {
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.ellipse(wx, side * R * 0.58, 5.5, 2.2, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
-  if (mode === TrainMode.OFF_RAIL) {
-    ctx.strokeStyle = "rgba(230,162,60,0.85)";
-    ctx.lineWidth = 2;
+  // Subtle stop tint only — no selection/off-rail orange rings
+  if (mode === TrainMode.STOPPED) {
+    ctx.strokeStyle = "rgba(226,85,85,0.75)";
+    ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.arc(0, 0, R + 7, 0, Math.PI * 2);
-    ctx.stroke();
-  } else if (mode === TrainMode.STOPPED) {
-    ctx.strokeStyle = "rgba(226,85,85,0.9)";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(0, 0, R + 7, 0, Math.PI * 2);
+    ctx.ellipse(0, 0, L * 0.48, R + 3, 0, 0, Math.PI * 2);
     ctx.stroke();
   }
 

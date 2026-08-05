@@ -1,12 +1,14 @@
 /**
- * Train: path following, derail ΓåÆ wall glide ΓåÆ re-rail, canvas edge stop.
+ * Train: path following, derail → wall glide → re-rail, canvas edge stop.
  *
  * Path solver:
  *   1) Connectivity graph (gender-linked connectors)
  *   2) Geometric hop at open joints (near endpoints, heading-matched)
  * so visually joined track stays continuous even if a gender link is missing.
  *
- * Wheelbase: front axle guides path + wall contact (~1/3 body back from nose).
+ * Wheelbase (body local, +x = nose):
+ *   front axle inset 2/6 of length from nose
+ *   rear  axle inset 1/6 of length from tail
  */
 
 import {
@@ -26,16 +28,19 @@ export const TrainMode = {
 };
 
 /**
- * Body half-width ≈ track half-width (+ a hair so it fills the rails).
- * TRACK_W is the plastic bed width; train should read as track-width or slightly more.
+ * Body: a bit narrower than track bed, ~1/3 longer than prior.
+ * TRACK_W = plastic bed width (40).
  */
-export const TRAIN_RADIUS = HALF_W + 2; // 22 when TRACK_W=40
-export const TRAIN_LENGTH = Math.round(TRACK_W * 2.15); // ~86
-export const FRONT_AXLE_FROM_NOSE = TRAIN_LENGTH / 3;
+export const TRAIN_RADIUS = HALF_W - 2; // 18 — slightly under track width
+export const TRAIN_LENGTH = Math.round(TRACK_W * 2.15 * (4 / 3)); // ~115
+/** Inset from nose (fraction of length) → front virtual axle. */
+export const FRONT_AXLE_FROM_NOSE = TRAIN_LENGTH * (2 / 6);
+/** Center → front axle (+x). From center: L/2 − 2L/6 = L/6. */
 export const FRONT_AXLE_OFFSET = TRAIN_LENGTH / 2 - FRONT_AXLE_FROM_NOSE;
-export const REAR_AXLE_OFFSET = -TRAIN_LENGTH * 0.28;
+/** Center → rear axle (−x). Inset 1/6 from tail → −L/2 + L/6 = −L/3. */
+export const REAR_AXLE_OFFSET = -TRAIN_LENGTH / 2 + TRAIN_LENGTH / 6;
 /** Axle contact radius — just under body half so walls meet the silhouette. */
-export const WHEEL_RADIUS = HALF_W - 1;
+export const WHEEL_RADIUS = Math.max(8, TRAIN_RADIUS - 2);
 
 /**
  * Re-rail snap window — intentionally tight so drive-bys past
