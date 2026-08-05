@@ -520,41 +520,18 @@ export function hitTestPiece(board, x, y) {
 /**
  * Closest active path sample to a point (for placing train / re-rail / hop).
  * maxDist defaults to 48 so placement is forgiving.
- *
- * opts.preferAng — when set, rank by heading match first (then distance).
- * Critical at switch throats / Y-forks where two paths are equally near:
- * pure distance flips "up vs down" with tiny lateral noise from speed.
  */
-export function closestPathPoint(board, x, y, maxDist = 48, opts = {}) {
-  const preferAng =
-    opts && typeof opts.preferAng === "number" ? opts.preferAng : null;
-  /** Angle weight in score units (px-equivalent per radian). */
-  const angW = opts.angWeight != null ? opts.angWeight : 22;
-
+export function closestPathPoint(board, x, y, maxDist = 48) {
   let best = null;
-  let bestScore = Infinity;
+  let bestD = maxDist;
   for (const path of board.pathIndex) {
     if (!path.active) continue;
     const pts = path.points;
     if (!pts || pts.length < 2) continue;
     for (let i = 1; i < pts.length; i++) {
       const res = distToSeg(x, y, pts[i - 1], pts[i]);
-      if (res.d > maxDist) continue;
-
-      const ang = Math.atan2(pts[i].y - pts[i - 1].y, pts[i].x - pts[i - 1].x);
-      let angErr = 0;
-      if (preferAng != null) {
-        angErr = Math.min(
-          angleDiff(preferAng, ang),
-          angleDiff(preferAng, ang + Math.PI)
-        );
-      }
-      // Both matter: among nearby paths, better heading wins (switch forks).
-      // Still distance-gated by maxDist so we never grab a far "aligned" rail.
-      const score = preferAng != null ? res.d + angErr * angW : res.d;
-
-      if (score < bestScore) {
-        bestScore = score;
+      if (res.d < bestD) {
+        bestD = res.d;
         let along = 0;
         for (let k = 1; k < i; k++) {
           along += Math.hypot(
@@ -571,10 +548,11 @@ export function closestPathPoint(board, x, y, maxDist = 48, opts = {}) {
           s: Math.max(0, Math.min(1, s)),
           x: res.x,
           y: res.y,
-          ang,
+          ang: Math.atan2(
+            pts[i].y - pts[i - 1].y,
+            pts[i].x - pts[i - 1].x
+          ),
           dist: res.d,
-          angErr,
-          score,
         };
       }
     }
