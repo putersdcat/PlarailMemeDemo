@@ -52,6 +52,10 @@ export const EDGE_FOLLOW_CATCH = EDGE_FOLLOW_LAT + 28;
 export const OFF_RAIL_SUBSTEPS = 3;
 /** How strongly body yaw locks to travel direction while on a contour. */
 export const CONTOUR_YAW_BLEND = 0.9;
+/** Free-flight wall: soft push-out fraction (1 = full pop, lower = softer seat). */
+export const WALL_SOFT_PUSH = 0.55;
+/** Free-flight wall: yaw blend toward slide direction (lower = less bouncy glance). */
+export const WALL_YAW_BLEND = 0.22;
 
 export function createTrain() {
   return {
@@ -548,6 +552,10 @@ function stepOffRail(train, board, dt, bounds) {
     }
     const nSub = OFF_RAIL_SUBSTEPS;
     const sdt = dt / nSub;
+    // Sticky travel sense so wall tangents don't flip each substep
+    let preferX = train.glideTx || Math.cos(ang);
+    let preferY = train.glideTy || Math.sin(ang);
+
     for (let i = 0; i < nSub; i++) {
       x += vx * sdt;
       y += vy * sdt;
@@ -555,36 +563,66 @@ function stepOffRail(train, board, dt, bounds) {
         x: x + Math.cos(ang) * FRONT_AXLE_OFFSET,
         y: y + Math.sin(ang) * FRONT_AXLE_OFFSET,
       };
-      for (const h of collectWallHits(
-        fa.x,
-        fa.y,
-        WHEEL_RADIUS,
-        0,
-        board.walls
-      )) {
+
+      const hits = collectWallHits(fa.x, fa.y, WHEEL_RADIUS, 0, board.walls);
+      let onWall = false;
+
+      if (hits.length) {
+        // Deepest penetration first
+        hits.sort((a, b) => b.pen - a.pen);
+        const h = hits[0];
+
         if (h.pen > 0) {
-          x += h.nx * h.pen;
-          y += h.ny * h.pen;
-          const vn = vx * h.nx + vy * h.ny;
-          if (vn < 0) {
-            vx -= vn * h.nx;
-            vy -= vn * h.ny;
+          // 1) Soft seat — partial push-out, less “pop” off the wall
+          const push = h.pen * WALL_SOFT_PUSH;
+          x += h.nx * push;
+          y += h.ny * push;
+        }
+
+        // 2) Full tangent lock — velocity follows the wall (no bounce)
+        let tx = h.tx;
+        let ty = h.ty;
+        const alongV = vx * tx + vy * ty;
+        const alongP = preferX * tx + preferY * ty;
+        if (alongV < -1e-3 || (Math.abs(alongV) < 1e-3 && alongP < 0)) {
+          tx = -tx;
+          ty = -ty;
+        }
+        vx = tx * speed;
+        vy = ty * speed;
+        preferX = tx;
+        preferY = ty;
+        onWall = true;
+
+        // Secondary walls: soft depenetrate only (don't re-aim)
+        for (let j = 1; j < hits.length; j++) {
+          const h2 = hits[j];
+          if (h2.pen > 0) {
+            x += h2.nx * h2.pen * WALL_SOFT_PUSH * 0.6;
+            y += h2.ny * h2.pen * WALL_SOFT_PUSH * 0.6;
           }
         }
-      }
-      const sp = Math.hypot(vx, vy);
-      if (sp > 1e-3) {
-        vx = (vx / sp) * speed;
-        vy = (vy / sp) * speed;
       } else {
-        vx = Math.cos(ang) * speed;
-        vy = Math.sin(ang) * speed;
+        const sp = Math.hypot(vx, vy);
+        if (sp > 1e-3) {
+          vx = (vx / sp) * speed;
+          vy = (vy / sp) * speed;
+        } else {
+          vx = preferX * speed;
+          vy = preferY * speed;
+        }
       }
-      ang = normalizeAngle(
-        ang + 0.4 * normalizeAngle(Math.atan2(vy, vx) - ang)
-      );
+
+      // 3) Slower yaw — follow the curve gently, no ricochet snap
+      const vAng = Math.atan2(vy, vx);
+      const yawBlend = onWall ? WALL_YAW_BLEND : 0.35;
+      ang = normalizeAngle(ang + yawBlend * normalizeAngle(vAng - ang));
     }
-    // Try to re-catch a contour while free-flying
+
+    train.glideTx = preferX;
+    train.glideTy = preferY;
+
+    // Try to re-catch a contour while free-flying (unchanged catch distance)
     const recap = captureEdgeRef(
       { x, y, ang, dir: train.dir },
       board
