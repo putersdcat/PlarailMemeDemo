@@ -33,6 +33,24 @@ export function createBoard() {
   };
 }
 
+/** Track paint colors (blue = default Plarail). */
+export const PIECE_COLORS = {
+  blue: "#3a8fd6",
+  green: "#3d9e5c",
+  red: "#c94c4c",
+  gray: "#7a828c",
+};
+
+export function normalizePieceColor(c) {
+  if (!c || c === "blue") return "blue";
+  return PIECE_COLORS[c] ? c : "blue";
+}
+
+export function pieceColorHex(c) {
+  const key = normalizePieceColor(c);
+  return PIECE_COLORS[key] || PIECE_COLORS.blue;
+}
+
 export function addPiece(board, type, x, y, rotSteps = 0, opts = {}) {
   const piece = {
     id: `p${nextId++}`,
@@ -43,6 +61,7 @@ export function addPiece(board, type, x, y, rotSteps = 0, opts = {}) {
     flip: !!opts.flip,
     branchSide: opts.branchSide || "R",
     switchState: opts.switchState ?? 0,
+    color: normalizePieceColor(opts.color),
   };
   const tpl = buildTemplate(type, piece);
   if (tpl.defaultSwitch != null && opts.switchState == null) {
@@ -79,6 +98,7 @@ export function serializeBoard(board) {
       flip: !!p.flip,
       branchSide: p.branchSide || "R",
       switchState: p.switchState ?? 0,
+      color: normalizePieceColor(p.color),
     })),
   };
 }
@@ -114,6 +134,7 @@ export function loadBoard(board, data) {
         flip: !!raw.flip,
         branchSide: raw.branchSide || "R",
         switchState: raw.switchState ?? 0,
+        color: raw.color || "blue",
       }
     );
     if (raw.id && typeof raw.id === "string") {

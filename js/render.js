@@ -171,20 +171,33 @@ export function drawScene(ctx, view, board, train, ghost, opts = {}) {
   ctx.restore();
 }
 
+/** Map piece.color key → fill hex (blue default). */
+const PAINT = {
+  blue: RAIL_BLUE,
+  green: "#3d9e5c",
+  red: "#c94c4c",
+  gray: "#7a828c",
+};
+
+function piecePaintHex(piece) {
+  const key = piece?.color && PAINT[piece.color] ? piece.color : "blue";
+  return PAINT[key];
+}
+
 export function drawPiece(ctx, piece, selected = false, opts = {}) {
   const geo = worldGeometry(piece);
-  const color = geo.tpl.color || null;
+  const color = piecePaintHex(piece);
 
   // Solid body webbing (R-14 plate, R-17 leg fills) under rails
   if (geo.tpl.webbingPolys?.length) {
-    drawWebbingPolys(ctx, piece, geo.tpl.webbingPolys);
+    drawWebbingPolys(ctx, piece, geo.tpl.webbingPolys, color);
   } else if (geo.tpl.webbing) {
-    drawWebbing(ctx, piece, geo.tpl.webbing);
+    drawWebbing(ctx, piece, geo.tpl.webbing, color);
   }
 
   // Stop-rail bump
   if (geo.tpl.bump) {
-    drawStopBump(ctx, piece);
+    drawStopBump(ctx, piece, color);
   }
 
   // Draw each path as rail bed
@@ -252,7 +265,7 @@ function drawRailPolyline(ctx, pts, active, selected, color = null) {
   if (pts.length < 2) return;
 
   const bed = color || RAIL_BLUE;
-  const edge = color ? shade(color, -0.18) : RAIL_BLUE_DARK;
+  const edge = shade(bed, -0.18);
 
   // Bed
   ctx.lineJoin = "round";
@@ -548,9 +561,9 @@ function transformLocal(lx, ly, piece) {
   return { x: piece.x + lx * c - ly * s, y: piece.y + lx * s + ly * c };
 }
 
-function drawWebbing(ctx, piece, webs) {
-  ctx.fillStyle = "rgba(45, 120, 185, 0.55)";
-  ctx.strokeStyle = "rgba(30, 90, 150, 0.45)";
+function drawWebbing(ctx, piece, webs, color = RAIL_BLUE) {
+  ctx.fillStyle = withAlpha(color, 0.55);
+  ctx.strokeStyle = withAlpha(shade(color, -0.25), 0.5);
   ctx.lineWidth = 1;
   for (const w of webs) {
     const n = 12;
@@ -571,9 +584,9 @@ function drawWebbing(ctx, piece, webs) {
   }
 }
 
-function drawWebbingPolys(ctx, piece, polys) {
-  ctx.fillStyle = "rgba(50, 130, 195, 0.9)";
-  ctx.strokeStyle = "rgba(28, 85, 145, 0.7)";
+function drawWebbingPolys(ctx, piece, polys, color = RAIL_BLUE) {
+  ctx.fillStyle = withAlpha(color, 0.9);
+  ctx.strokeStyle = withAlpha(shade(color, -0.22), 0.7);
   ctx.lineWidth = 1.25;
   for (const poly of polys) {
     if (!poly?.length) continue;
@@ -589,7 +602,7 @@ function drawWebbingPolys(ctx, piece, polys) {
   }
 }
 
-function drawStopBump(ctx, piece) {
+function drawStopBump(ctx, piece, color = RAIL_BLUE) {
   // R-08 stop bump on +Y of a 1-unit straight
   const len = UNIT;
   const bx0 = -len * 0.22;
@@ -602,13 +615,13 @@ function drawStopBump(ctx, piece) {
     { x: bx1, y: by1 },
     { x: bx1, y: by0 },
   ].map((p) => transformLocal(p.x, p.y, piece));
-  ctx.fillStyle = "rgba(58, 143, 214, 0.85)";
+  ctx.fillStyle = withAlpha(color, 0.85);
   ctx.beginPath();
   ctx.moveTo(corners[0].x, corners[0].y);
   for (let i = 1; i < corners.length; i++) ctx.lineTo(corners[i].x, corners[i].y);
   ctx.closePath();
   ctx.fill();
-  ctx.strokeStyle = "rgba(30, 90, 150, 0.5)";
+  ctx.strokeStyle = withAlpha(shade(color, -0.25), 0.5);
   ctx.stroke();
 }
 

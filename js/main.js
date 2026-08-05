@@ -35,6 +35,7 @@ import {
   rebuild,
   serializeBoard,
   loadBoard,
+  normalizePieceColor,
 } from "./track.js";
 import {
   createTrain,
@@ -83,6 +84,8 @@ let selectedIds = new Set();
 let marquee = null;
 /** Train ghost while dragging train tool (world xy). */
 let trainGhost = null;
+/** Paint mode: null | "blue"|"green"|"red"|"gray" — next piece click paints once. */
+let paintColor = null;
 let showWalls = false;
 let lastT = performance.now();
 let hidePieceId = null;
@@ -306,6 +309,43 @@ document.getElementById("btn-walls").addEventListener("click", () => {
   showWalls = !showWalls;
 });
 
+// ── Paint swatches (one-shot paint bucket) ──
+function setPaintMode(color) {
+  const next = color ? normalizePieceColor(color) : null;
+  // Toggle off if clicking the same swatch again
+  paintColor = paintColor === next ? null : next;
+  document.querySelectorAll(".paint-swatch").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.color === paintColor);
+  });
+  canvas.classList.toggle("paint-cursor", !!paintColor);
+  if (paintColor) {
+    trainTool = false;
+    paletteTool = null;
+    refreshPaletteActive();
+    setHint(
+      `Paint bucket: ${paintColor}. Click a track piece once to color it, then cursor returns to normal.`
+    );
+  } else {
+    setHint("Paint cancelled.");
+  }
+}
+
+function clearPaintMode() {
+  if (!paintColor) return;
+  paintColor = null;
+  document.querySelectorAll(".paint-swatch").forEach((btn) => {
+    btn.classList.remove("active");
+  });
+  canvas.classList.remove("paint-cursor");
+}
+
+document.querySelectorAll(".paint-swatch").forEach((btn) => {
+  btn.addEventListener("click", (e) => {
+    e.preventDefault();
+    setPaintMode(btn.dataset.color);
+  });
+});
+
 // ── Save / Load layout JSON ──
 document.getElementById("btn-save").addEventListener("click", () => {
   saveLayoutToFile();
@@ -506,6 +546,7 @@ window.addEventListener("keydown", (e) => {
     trainGhost = null;
     trainTool = false;
     paletteTool = null;
+    clearPaintMode();
     refreshPaletteActive();
   } else if (e.key === "a" && (e.ctrlKey || e.metaKey)) {
     e.preventDefault();
@@ -541,6 +582,7 @@ function makeGhostAtPivot(type, pivotX, pivotY, extra = {}) {
     flip: !!extra.flip,
     branchSide: extra.branchSide || "R",
     switchState: extra.switchState ?? 0,
+    color: normalizePieceColor(extra.color),
     snapped: false,
     pivotX,
     pivotY,
@@ -669,6 +711,26 @@ function onPointerDown(e) {
 
   canvas.setPointerCapture?.(e.pointerId);
 
+  // Paint bucket: next piece click applies color once, then exits paint mode
+  if (paintColor) {
+    const hitPaint = hitTestPiece(board, p.x, p.y);
+    if (hitPaint?.pieceId && !hitPaint.lever) {
+      const piece = getPiece(board, hitPaint.pieceId);
+      if (piece) {
+        piece.color = normalizePieceColor(paintColor);
+        const painted = piece.color;
+        clearPaintMode();
+        persistLayout();
+        setHint(`Painted piece ${painted}.`);
+        return;
+      }
+    }
+    // Missed piece — cancel paint
+    clearPaintMode();
+    setHint("Paint cancelled (click a track piece while paint is armed).");
+    return;
+  }
+
   // Train tool from palette — place/move like a piece
   if (trainTool) {
     beginTrainDrag(e, p);
@@ -750,6 +812,7 @@ function onPointerDown(e) {
       flip: piece.flip,
       branchSide: piece.branchSide,
       switchState: piece.switchState,
+      color: piece.color,
     });
     board.pieces = board.pieces.filter((q) => q.id !== piece.id);
     rebuild(board);
@@ -977,6 +1040,7 @@ function commitGhostPlace() {
     flip: ghost.flip,
     branchSide: ghost.branchSide,
     switchState: ghost.switchState,
+    color: ghost.color,
   });
   setSelection([piece.id]);
   ghost = null;
@@ -992,6 +1056,7 @@ function commitGhostMove() {
     flip: ghost.flip,
     branchSide: snap.branchSide,
     switchState: snap.switchState,
+    color: snap.color,
   });
   setSelection([piece.id]);
   ghost = null;
@@ -1009,6 +1074,7 @@ function restoreMoveIfCancel() {
         flip: s.flip,
         branchSide: s.branchSide,
         switchState: s.switchState,
+        color: s.color,
       });
     }
   }
@@ -1034,6 +1100,7 @@ function cancelDrag() {
           flip: s.flip,
           branchSide: s.branchSide,
           switchState: s.switchState,
+          color: s.color,
         });
       }
     }
@@ -1168,6 +1235,7 @@ function onPointerUp(e) {
           flip: s.flip,
           branchSide: s.branchSide,
           switchState: s.switchState,
+          color: s.color,
         });
         setSelection([piece.id]);
         setHint("Selected. Drag to move · box-drag empty for multi-select.");

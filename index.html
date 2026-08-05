@@ -118,6 +118,47 @@
         </label>
         <div class="sep"></div>
         <span id="status-text">Ready</span>
+        <div class="sep paint-sep"></div>
+        <div
+          class="paint-swatches"
+          role="group"
+          aria-label="Paint track color"
+          title="Click a color, then click a piece to paint once"
+        >
+          <span class="paint-label">Paint</span>
+          <button
+            type="button"
+            class="paint-swatch"
+            data-color="blue"
+            title="Blue (default)"
+            aria-label="Paint blue"
+            style="--swatch: #3a8fd6"
+          ></button>
+          <button
+            type="button"
+            class="paint-swatch"
+            data-color="green"
+            title="Green"
+            aria-label="Paint green"
+            style="--swatch: #3d9e5c"
+          ></button>
+          <button
+            type="button"
+            class="paint-swatch"
+            data-color="red"
+            title="Red"
+            aria-label="Paint red"
+            style="--swatch: #c94c4c"
+          ></button>
+          <button
+            type="button"
+            class="paint-swatch"
+            data-color="gray"
+            title="Gray"
+            aria-label="Paint gray"
+            style="--swatch: #7a828c"
+          ></button>
+        </div>
       </footer>
     </div>
 
@@ -150,6 +191,10 @@
           <li>
             <strong>Save JSON</strong> downloads a file and autosaves to the browser
             (restored on reload). Never loses the layout to a stuck save dialog.
+          </li>
+          <li>
+            <strong>Paint</strong> (toolbar swatches): click Blue / Green / Red / Gray,
+            then click a piece once — color applies and the cursor returns to normal.
           </li>
         </ul>
         <h2>Units (critical)</h2>
