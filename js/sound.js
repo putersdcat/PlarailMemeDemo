@@ -1,159 +1,174 @@
 /**
- * Library-free synthesized audio (Web Audio API only).
- * No external deps, no sample files.
- *
- * - Motor loop while the train runs on rails
- * - Softer scrape while off-rail / wall-gliding
- * - One-shot clacks for derail / wall / edge stop
+ * Library-free Web Audio synth (no samples, no npm).
+ * Motor loop on rails · scrape off-rail · one-shot clacks.
  */
 
 let ctx = null;
 let master = null;
 let unlocked = false;
 
-// Motor graph
-let motorGain = null;
-let motorOscA = null;
-let motorOscB = null;
-let motorLfo = null;
-let motorLfoGain = null;
-let motorFilter = null;
-let motorRunning = false;
+let motorNodes = null; // { osc, gain, filter, lfo, lfoG, pulse }
+let scrapeNodes = null;
 
-// Off-rail scrape
-let scrapeGain = null;
-let scrapeNoise = null;
-let scrapeFilter = null;
-let scrapeRunning = false;
-
-function ensureCtx() {
+function getCtx() {
   if (ctx) return ctx;
   const AC = window.AudioContext || window.webkitAudioContext;
   if (!AC) return null;
   ctx = new AC();
   master = ctx.createGain();
-  master.gain.value = 0.35;
+  master.gain.value = 0.4;
   master.connect(ctx.destination);
   return ctx;
 }
 
-/** Call from any user gesture so browsers allow audio. */
+/** Must run inside a user gesture (click/key). */
 export function unlockAudio() {
-  const c = ensureCtx();
-  if (!c) return;
+  const c = getCtx();
+  if (!c) return false;
+  unlocked = true;
   if (c.state === "suspended") {
     c.resume().catch(() => {});
   }
-  unlocked = true;
+  return true;
 }
 
 export function isAudioReady() {
-  return unlocked && ctx && ctx.state === "running";
+  return !!(unlocked && ctx && ctx.state !== "closed");
 }
 
-function noiseBuffer(seconds = 1) {
-  const c = ensureCtx();
-  const n = Math.floor(c.sampleRate * seconds);
+function noiseBuffer(sec = 0.4) {
+  const c = getCtx();
+  const n = Math.max(1, Math.floor(c.sampleRate * sec));
   const buf = c.createBuffer(1, n, c.sampleRate);
-  const data = buf.getChannelData(0);
-  for (let i = 0; i < n; i++) data[i] = Math.random() * 2 - 1;
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
   return buf;
 }
 
-/**
- * Start continuous on-rail motor (low hum + pulse).
- * speedNorm: ~0.4–2 from speed slider (optional).
- */
+function beep({ freq = 200, dur = 0.12, type = "triangle", vol = 0.12, slideTo = null }) {
+  const c = getCtx();
+  if (!c || !unlocked) return;
+  if (c.state === "suspended") c.resume().catch(() => {});
+  const t = c.currentTime;
+  const osc = c.createOscillator();
+  const g = c.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, t);
+  if (slideTo != null) {
+    osc.frequency.exponentialRampToValueAtTime(Math.max(20, slideTo), t + dur);
+  }
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + 0.008);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  osc.connect(g);
+  g.connect(master);
+  osc.start(t);
+  osc.stop(t + dur + 0.02);
+}
+
+function noiseBurst({ dur = 0.12, freq = 500, vol = 0.14, q = 0.8 }) {
+  const c = getCtx();
+  if (!c || !unlocked) return;
+  if (c.state === "suspended") c.resume().catch(() => {});
+  const t = c.currentTime;
+  const src = c.createBufferSource();
+  src.buffer = noiseBuffer(Math.max(0.05, dur + 0.05));
+  const bp = c.createBiquadFilter();
+  bp.type = "bandpass";
+  bp.frequency.value = freq;
+  bp.Q.value = q;
+  const g = c.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + 0.005);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(bp);
+  bp.connect(g);
+  g.connect(master);
+  src.start(t);
+  src.stop(t + dur + 0.02);
+}
+
 export function startMotor(speedNorm = 1) {
-  const c = ensureCtx();
+  const c = getCtx();
   if (!c || !unlocked) return;
   if (c.state === "suspended") c.resume().catch(() => {});
 
-  if (motorRunning) {
+  if (motorNodes) {
     setMotorSpeed(speedNorm);
     return;
   }
 
-  motorFilter = c.createBiquadFilter();
-  motorFilter.type = "lowpass";
-  motorFilter.frequency.value = 280;
-  motorFilter.Q.value = 0.7;
+  const n = Math.max(0.4, Math.min(2, speedNorm));
+  const osc = c.createOscillator();
+  osc.type = "sawtooth";
+  osc.frequency.value = 52 * n;
 
-  motorGain = c.createGain();
-  motorGain.gain.value = 0.0001;
+  const pulse = c.createOscillator();
+  pulse.type = "square";
+  pulse.frequency.value = 8 * n;
+  const pulseG = c.createGain();
+  pulseG.gain.value = 0.0; // depth set via modulation path
 
-  motorOscA = c.createOscillator();
-  motorOscA.type = "sawtooth";
-  motorOscA.frequency.value = 48 * speedNorm;
+  // Simple: dual osc through lowpass
+  const osc2 = c.createOscillator();
+  osc2.type = "triangle";
+  osc2.frequency.value = 104 * n;
+  const g2 = c.createGain();
+  g2.gain.value = 0.15;
 
-  motorOscB = c.createOscillator();
-  motorOscB.type = "square";
-  motorOscB.frequency.value = 96 * speedNorm;
-  const bGain = c.createGain();
-  bGain.gain.value = 0.12;
+  const filter = c.createBiquadFilter();
+  filter.type = "lowpass";
+  filter.frequency.value = 320;
+  filter.Q.value = 0.8;
 
-  // Subtle amplitude pulse (wheel / joint feel)
-  motorLfo = c.createOscillator();
-  motorLfo.type = "sine";
-  motorLfo.frequency.value = 6 * speedNorm;
-  motorLfoGain = c.createGain();
-  motorLfoGain.gain.value = 0.04;
+  const gain = c.createGain();
+  gain.gain.value = 0.0001;
 
-  motorOscA.connect(motorFilter);
-  motorOscB.connect(bGain);
-  bGain.connect(motorFilter);
-  motorFilter.connect(motorGain);
-  motorLfo.connect(motorLfoGain);
-  motorLfoGain.connect(motorGain.gain);
-  motorGain.connect(master);
+  osc.connect(filter);
+  osc2.connect(g2);
+  g2.connect(filter);
+  filter.connect(gain);
+  gain.connect(master);
 
-  motorOscA.start();
-  motorOscB.start();
-  motorLfo.start();
+  osc.start();
+  osc2.start();
+  pulse.start();
 
   const t = c.currentTime;
-  motorGain.gain.setValueAtTime(0.0001, t);
-  motorGain.gain.exponentialRampToValueAtTime(0.11, t + 0.12);
-  // LFO modulates around base — keep base above zero via setValueAtTime after ramp
-  motorGain.gain.setValueAtTime(0.11, t + 0.13);
+  gain.gain.setValueAtTime(0.0001, t);
+  gain.gain.linearRampToValueAtTime(0.14, t + 0.15);
 
-  motorRunning = true;
+  motorNodes = { osc, osc2, g2, filter, gain, pulse, pulseG };
   setMotorSpeed(speedNorm);
 }
 
 export function setMotorSpeed(speedNorm = 1) {
-  if (!motorRunning || !ctx) return;
-  const n = Math.max(0.35, Math.min(2.2, speedNorm));
+  if (!motorNodes || !ctx) return;
+  const n = Math.max(0.4, Math.min(2.2, speedNorm));
   const t = ctx.currentTime;
   try {
-    motorOscA.frequency.setTargetAtTime(46 * n, t, 0.05);
-    motorOscB.frequency.setTargetAtTime(92 * n, t, 0.05);
-    motorLfo.frequency.setTargetAtTime(5.5 * n, t, 0.05);
-    if (motorFilter) {
-      motorFilter.frequency.setTargetAtTime(220 + 120 * n, t, 0.08);
-    }
+    motorNodes.osc.frequency.setTargetAtTime(50 * n, t, 0.06);
+    motorNodes.osc2.frequency.setTargetAtTime(100 * n, t, 0.06);
+    motorNodes.filter.frequency.setTargetAtTime(240 + 140 * n, t, 0.08);
   } catch {
     /* ignore */
   }
 }
 
 export function stopMotor() {
-  if (!motorRunning || !ctx) return;
-  const c = ctx;
-  const t = c.currentTime;
+  if (!motorNodes || !ctx) return;
+  const { osc, osc2, gain, pulse } = motorNodes;
+  const t = ctx.currentTime;
   try {
-    motorGain.gain.cancelScheduledValues(t);
-    motorGain.gain.setValueAtTime(Math.max(0.0001, motorGain.gain.value), t);
-    motorGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.1);
+    gain.gain.cancelScheduledValues(t);
+    gain.gain.setValueAtTime(Math.max(0.0001, gain.gain.value), t);
+    gain.gain.linearRampToValueAtTime(0.0001, t + 0.12);
   } catch {
     /* ignore */
   }
-  const gainNode = motorGain;
-  const nodes = [motorOscA, motorOscB, motorLfo];
-  motorRunning = false;
-  motorOscA = motorOscB = motorLfo = motorLfoGain = motorFilter = motorGain = null;
+  motorNodes = null;
   setTimeout(() => {
-    for (const n of nodes) {
+    for (const n of [osc, osc2, pulse]) {
       try {
         n.stop();
         n.disconnect();
@@ -162,161 +177,85 @@ export function stopMotor() {
       }
     }
     try {
-      gainNode?.disconnect();
+      gain.disconnect();
+    } catch {
+      /* ignore */
+    }
+  }, 180);
+}
+
+export function startScrape() {
+  const c = getCtx();
+  if (!c || !unlocked) return;
+  if (c.state === "suspended") c.resume().catch(() => {});
+  if (scrapeNodes) return;
+
+  const src = c.createBufferSource();
+  src.buffer = noiseBuffer(1);
+  src.loop = true;
+  const bp = c.createBiquadFilter();
+  bp.type = "bandpass";
+  bp.frequency.value = 850;
+  bp.Q.value = 0.5;
+  const gain = c.createGain();
+  gain.gain.value = 0.0001;
+  src.connect(bp);
+  bp.connect(gain);
+  gain.connect(master);
+  src.start();
+  const t = c.currentTime;
+  gain.gain.setValueAtTime(0.0001, t);
+  gain.gain.linearRampToValueAtTime(0.05, t + 0.1);
+  scrapeNodes = { src, bp, gain };
+}
+
+export function stopScrape() {
+  if (!scrapeNodes || !ctx) return;
+  const { src, gain } = scrapeNodes;
+  const t = ctx.currentTime;
+  try {
+    gain.gain.cancelScheduledValues(t);
+    gain.gain.setValueAtTime(Math.max(0.0001, gain.gain.value), t);
+    gain.gain.linearRampToValueAtTime(0.0001, t + 0.1);
+  } catch {
+    /* ignore */
+  }
+  scrapeNodes = null;
+  setTimeout(() => {
+    try {
+      src.stop();
+      src.disconnect();
+      gain.disconnect();
     } catch {
       /* ignore */
     }
   }, 150);
 }
 
-/** Light plastic scrape while sliding off-rail. */
-export function startScrape() {
-  const c = ensureCtx();
-  if (!c || !unlocked) return;
-  if (c.state === "suspended") c.resume().catch(() => {});
-  if (scrapeRunning) return;
-
-  const buf = noiseBuffer(1.5);
-  scrapeNoise = c.createBufferSource();
-  scrapeNoise.buffer = buf;
-  scrapeNoise.loop = true;
-
-  scrapeFilter = c.createBiquadFilter();
-  scrapeFilter.type = "bandpass";
-  scrapeFilter.frequency.value = 900;
-  scrapeFilter.Q.value = 0.6;
-
-  scrapeGain = c.createGain();
-  scrapeGain.gain.value = 0.0001;
-
-  scrapeNoise.connect(scrapeFilter);
-  scrapeFilter.connect(scrapeGain);
-  scrapeGain.connect(master);
-  scrapeNoise.start();
-
-  const t = c.currentTime;
-  scrapeGain.gain.setValueAtTime(0.0001, t);
-  scrapeGain.gain.exponentialRampToValueAtTime(0.045, t + 0.08);
-  scrapeRunning = true;
-}
-
-export function stopScrape() {
-  if (!scrapeRunning || !ctx) return;
-  const t = ctx.currentTime;
-  try {
-    scrapeGain.gain.cancelScheduledValues(t);
-    scrapeGain.gain.setValueAtTime(Math.max(0.0001, scrapeGain.gain.value), t);
-    scrapeGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
-  } catch {
-    /* ignore */
-  }
-  const n = scrapeNoise;
-  const g = scrapeGain;
-  scrapeRunning = false;
-  scrapeNoise = scrapeFilter = scrapeGain = null;
-  setTimeout(() => {
-    try {
-      n?.stop();
-      n?.disconnect();
-      g?.disconnect();
-    } catch {
-      /* ignore */
-    }
-  }, 160);
-}
-
-/** One-shot: leave rails / hit plastic. */
 export function playCollision(kind = "derail") {
-  const c = ensureCtx();
-  if (!c || !unlocked) return;
-  if (c.state === "suspended") c.resume().catch(() => {});
-
-  const t0 = c.currentTime;
-  // Noise burst
-  const src = c.createBufferSource();
-  src.buffer = noiseBuffer(0.25);
-  const bp = c.createBiquadFilter();
-  bp.type = "bandpass";
-  const g = c.createGain();
-  g.gain.value = 0.0001;
-
-  // Tonal thunk
-  const osc = c.createOscillator();
-  osc.type = "triangle";
-  const og = c.createGain();
-  og.gain.value = 0.0001;
-
+  if (!unlocked) return;
   if (kind === "edge") {
-    bp.frequency.value = 180;
-    bp.Q.value = 1.2;
-    osc.frequency.setValueAtTime(90, t0);
-    osc.frequency.exponentialRampToValueAtTime(40, t0 + 0.18);
-    g.gain.setValueAtTime(0.0001, t0);
-    g.gain.exponentialRampToValueAtTime(0.2, t0 + 0.01);
-    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.28);
-    og.gain.setValueAtTime(0.0001, t0);
-    og.gain.exponentialRampToValueAtTime(0.12, t0 + 0.008);
-    og.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.22);
+    noiseBurst({ dur: 0.22, freq: 160, vol: 0.22, q: 1.1 });
+    beep({ freq: 95, dur: 0.2, type: "triangle", vol: 0.14, slideTo: 40 });
   } else if (kind === "wall") {
-    bp.frequency.value = 700;
-    bp.Q.value = 0.8;
-    osc.frequency.setValueAtTime(220, t0);
-    osc.frequency.exponentialRampToValueAtTime(110, t0 + 0.08);
-    g.gain.setValueAtTime(0.0001, t0);
-    g.gain.exponentialRampToValueAtTime(0.1, t0 + 0.005);
-    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.1);
-    og.gain.setValueAtTime(0.0001, t0);
-    og.gain.exponentialRampToValueAtTime(0.06, t0 + 0.004);
-    og.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.09);
+    noiseBurst({ dur: 0.08, freq: 680, vol: 0.1, q: 0.7 });
+    beep({ freq: 240, dur: 0.07, type: "square", vol: 0.05, slideTo: 120 });
   } else {
-    // derail — plastic clack
-    bp.frequency.value = 450;
-    bp.Q.value = 0.9;
-    osc.frequency.setValueAtTime(160, t0);
-    osc.frequency.exponentialRampToValueAtTime(55, t0 + 0.14);
-    g.gain.setValueAtTime(0.0001, t0);
-    g.gain.exponentialRampToValueAtTime(0.16, t0 + 0.008);
-    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.16);
-    og.gain.setValueAtTime(0.0001, t0);
-    og.gain.exponentialRampToValueAtTime(0.09, t0 + 0.006);
-    og.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.14);
+    // derail
+    noiseBurst({ dur: 0.14, freq: 420, vol: 0.18, q: 0.85 });
+    beep({ freq: 170, dur: 0.12, type: "triangle", vol: 0.1, slideTo: 60 });
   }
-
-  src.connect(bp);
-  bp.connect(g);
-  g.connect(master);
-  osc.connect(og);
-  og.connect(master);
-  src.start(t0);
-  osc.start(t0);
-  src.stop(t0 + 0.3);
-  osc.stop(t0 + 0.3);
 }
 
-/** Small re-rail click. */
 export function playRerail() {
-  const c = ensureCtx();
-  if (!c || !unlocked) return;
-  const t0 = c.currentTime;
-  const osc = c.createOscillator();
-  osc.type = "sine";
-  osc.frequency.setValueAtTime(520, t0);
-  osc.frequency.exponentialRampToValueAtTime(280, t0 + 0.07);
-  const g = c.createGain();
-  g.gain.value = 0.0001;
-  g.gain.setValueAtTime(0.0001, t0);
-  g.gain.exponentialRampToValueAtTime(0.07, t0 + 0.005);
-  g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.09);
-  osc.connect(g);
-  g.connect(master);
-  osc.start(t0);
-  osc.stop(t0 + 0.1);
+  if (!unlocked) return;
+  beep({ freq: 540, dur: 0.08, type: "sine", vol: 0.08, slideTo: 300 });
 }
 
 /**
- * Sync loops to sim state. Call once per frame (or on mode change).
+ * Frame/state sync for loops + transition SFX.
  * @param {{ running: boolean, mode: string, wallGlide?: boolean, speed?: number }} state
- * @param {{ prevMode?: string }} mem — pass a mutable object to track transitions
+ * @param {{ prevMode?: string, wasGliding?: boolean }} mem
  */
 export function syncTrainAudio(state, mem = {}) {
   if (!unlocked) return;
@@ -324,9 +263,8 @@ export function syncTrainAudio(state, mem = {}) {
   const running = !!state.running;
   const prev = mem.prevMode;
 
-  // Transitions
   if (prev && prev !== mode) {
-    if (mode === "off_rail" && (prev === "on_rail" || prev === "idle")) {
+    if (mode === "off_rail" && prev === "on_rail") {
       playCollision("derail");
     } else if (mode === "stopped") {
       playCollision("edge");
@@ -337,13 +275,11 @@ export function syncTrainAudio(state, mem = {}) {
     }
   }
 
-  // One soft tick when first contacting a wall while off-rail (not a spam loop)
   if (mode === "off_rail" && state.wallGlide && !mem.wasGliding) {
     playCollision("wall");
   }
   mem.wasGliding = !!(mode === "off_rail" && state.wallGlide);
 
-  // Loops
   const speedNorm = (state.speed || 140) / 140;
   if (running && mode === "on_rail") {
     startMotor(speedNorm);
@@ -357,4 +293,10 @@ export function syncTrainAudio(state, mem = {}) {
   }
 
   mem.prevMode = mode;
+}
+
+/** Immediate test chirp (debug / prove audio works). */
+export function playTestBlip() {
+  unlockAudio();
+  beep({ freq: 660, dur: 0.1, type: "sine", vol: 0.12, slideTo: 440 });
 }

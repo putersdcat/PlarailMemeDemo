@@ -1,0 +1,10 @@
+{
+  "name": "plarail-meme-demo",
+  "private": true,
+  "type": "module",
+  "description": "Library-free Plarail meme layout simulator (browser ES modules)",
+  "scripts": {
+    "test": "node tests/run.mjs",
+    "serve": "python -m http.server 8765"
+  }
+}

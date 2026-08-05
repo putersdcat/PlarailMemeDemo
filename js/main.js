@@ -52,7 +52,15 @@ import {
 } from "./train.js";
 import { resizeCanvas, drawScene, drawPaletteIcon } from "./render.js";
 import { loadMemeStyle, loadRealMemeTrack } from "./presets.js";
-import { unlockAudio, syncTrainAudio, setMotorSpeed } from "./sound.js";
+import {
+  unlockAudio,
+  syncTrainAudio,
+  setMotorSpeed,
+  startMotor,
+  stopMotor,
+  playTestBlip,
+} from "./sound.js";
+import { createPaintController } from "./app/paint.js";
 
 const canvas = document.getElementById("stage");
 const badgeEl = document.getElementById("mode-badge");
@@ -85,8 +93,6 @@ let selectedIds = new Set();
 let marquee = null;
 /** Train ghost while dragging train tool (world xy). */
 let trainGhost = null;
-/** Paint mode: null | "blue"|"green"|"red"|"gray" — next piece click paints once. */
-let paintColor = null;
 let showWalls = false;
 let lastT = performance.now();
 let hidePieceId = null;
@@ -313,41 +319,17 @@ document.getElementById("btn-walls").addEventListener("click", () => {
 });
 
 // ── Paint swatches (one-shot paint bucket) ──
-function setPaintMode(color) {
-  const next = color ? normalizePieceColor(color) : null;
-  // Toggle off if clicking the same swatch again
-  paintColor = paintColor === next ? null : next;
-  document.querySelectorAll(".paint-swatch").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.color === paintColor);
-  });
-  canvas.classList.toggle("paint-cursor", !!paintColor);
-  if (paintColor) {
+const paint = createPaintController({
+  canvas,
+  setHint: (t) => setHint(t),
+  onArm: () => {
     trainTool = false;
     paletteTool = null;
     refreshPaletteActive();
-    setHint(
-      `Paint bucket: ${paintColor}. Click a track piece once to color it, then cursor returns to normal.`
-    );
-  } else {
-    setHint("Paint cancelled.");
-  }
-}
-
-function clearPaintMode() {
-  if (!paintColor) return;
-  paintColor = null;
-  document.querySelectorAll(".paint-swatch").forEach((btn) => {
-    btn.classList.remove("active");
-  });
-  canvas.classList.remove("paint-cursor");
-}
-
-document.querySelectorAll(".paint-swatch").forEach((btn) => {
-  btn.addEventListener("click", (e) => {
-    e.preventDefault();
-    setPaintMode(btn.dataset.color);
-  });
+  },
 });
+paint.bindUi();
+const clearPaintMode = () => paint.clearPaintMode();
 
 // ── Save / Load layout JSON ──
 document.getElementById("btn-save").addEventListener("click", () => {
@@ -469,6 +451,7 @@ function dateStamp() {
 
 btnStart.addEventListener("click", () => {
   unlockAudio();
+  playTestBlip(); // proves audio path; motor follows if start succeeds
   if (!trainPlaced) {
     const cx = view.camX + view.w / 2;
     const cy = view.camY + view.h / 2;
@@ -490,6 +473,7 @@ btnStart.addEventListener("click", () => {
   if (startTrain(train)) {
     running = true;
     train.selected = false;
+    startMotor(train.speed / 140);
     setHint("Running. Follows connected track · open ends derail · walls glide.");
   } else {
     setHint("Could not start — seat the train on an active rail path first.");
@@ -499,6 +483,7 @@ btnStop.addEventListener("click", () => {
   unlockAudio();
   running = false;
   stopTrain(train);
+  stopMotor();
 });
 btnResetTrain.addEventListener("click", () => {
   running = false;
@@ -727,21 +712,17 @@ function onPointerDown(e) {
   canvas.setPointerCapture?.(e.pointerId);
 
   // Paint bucket: next piece click applies color once, then exits paint mode
-  if (paintColor) {
+  if (paint.isPainting()) {
+    unlockAudio();
     const hitPaint = hitTestPiece(board, p.x, p.y);
     if (hitPaint?.pieceId && !hitPaint.lever) {
       const piece = getPiece(board, hitPaint.pieceId);
-      if (piece) {
-        piece.color = normalizePieceColor(paintColor);
-        const painted = piece.color;
-        clearPaintMode();
+      if (piece && paint.applyToPiece(piece)) {
         persistLayout();
-        setHint(`Painted piece ${painted}.`);
         return;
       }
     }
-    // Missed piece — cancel paint
-    clearPaintMode();
+    paint.clearPaintMode();
     setHint("Paint cancelled (click a track piece while paint is armed).");
     return;
   }

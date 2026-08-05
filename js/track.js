@@ -489,15 +489,6 @@ export function findGroupSnap(board, selectedIds, magnetDist = SNAP_DIST) {
   return best;
 }
 
-/**
- * Free connectors near a world point (for snap glow hints).
- */
-export function nearbyFreeConnectors(board, x, y, radius = SNAP_DIST) {
-  return board.connectors.filter(
-    (c) => !c.linked && Math.hypot(c.wx - x, c.wy - y) < radius
-  );
-}
-
 /** Hit-test piece under point (path proximity + levers). */
 export function hitTestPiece(board, x, y) {
   // Levers first (R-14 has four)
