@@ -78,6 +78,14 @@ export function createTrain() {
     selected: false,
     /** Set true when walls were hit this simulation step (for SFX) */
     wallHit: false,
+    /** Heading at derail — locks wall-slide left/right for all speeds */
+    offRailPreferAng: null,
+    /** Cumulative distance traveled off-rail (px) */
+    offRailDistAcc: 0,
+    /** Completed fixed-size geometry steps */
+    offRailStepsDone: 0,
+    /** Distance left before re-rail is allowed */
+    reRailDistLeft: 0,
   };
 }
 
@@ -137,6 +145,10 @@ export function placeTrainOnPath(train, hit, opts = {}) {
   train.ang = ang;
   train.vx = 0;
   train.vy = 0;
+  train.offRailPreferAng = null;
+  train.offRailDistAcc = 0;
+  train.offRailStepsDone = 0;
+  train.reRailDistLeft = 0;
   return true;
 }
 
@@ -205,6 +217,11 @@ export function resetTrainHard(train) {
   train.s = 0;
   train.dir = 1;
   train.selected = false;
+  train.wallHit = false;
+  train.offRailPreferAng = null;
+  train.offRailDistAcc = 0;
+  train.offRailStepsDone = 0;
+  train.reRailDistLeft = 0;
 }
 
 export function updateTrain(train, board, dt, bounds) {
@@ -421,144 +438,175 @@ function findNextGeometric(board, live, x, y, travelAng) {
   return candidates[0];
 }
 
+/**
+ * Fixed geometry step (px). Speed only changes how many steps run per frame.
+ * Same step count from the same derail pose ⇒ same path at every speed.
+ */
+export const OFF_RAIL_DS = 2.5;
+/** Center-slider reference speed (for re-rail unlock distance). */
+export const OFF_RAIL_REF_SPEED = 120;
+
 function leaveRails(train) {
   train.mode = TrainMode.OFF_RAIL;
   train.pathRef = null;
   train.vx = Math.cos(train.ang) * train.speed;
   train.vy = Math.sin(train.ang) * train.speed;
   train.wallHit = false;
-  // Clear the open mouth before re-rail attempts
-  train.reRailCooldown = 0.45;
+  // Freeze intended travel at derail — wall corners use THIS, never speed-scaled vel
+  train.offRailPreferAng = train.ang;
+  train.offRailDistAcc = 0;
+  train.offRailStepsDone = 0;
+  // Same unlock distance for every speed (~0.45s at default speed)
+  train.reRailDistLeft = OFF_RAIL_REF_SPEED * 0.45;
+  train.reRailCooldown = 0;
 }
 
+/**
+ * Off-rail motion that is speed-invariant in geometry:
+ *  - advance only in fixed OFF_RAIL_DS steps (from total distance traveled)
+ *  - wall slide direction from locked derail heading (not velocity sign)
+ *  - front axle steers; rear only pushes out (no reverse-steer fights)
+ *  - body ang always = travel direction (no lag / "drift")
+ */
 function stepOffRail(train, board, dt, bounds) {
   train.wallHit = false;
-  let x = train.x + train.vx * dt;
-  let y = train.y + train.vy * dt;
-  let ang = train.ang;
-  let vx = train.vx;
-  let vy = train.vy;
+  const speed = Math.max(1, train.speed);
 
-  // Canvas edge — stop
-  if (
-    x < bounds.minX ||
-    x > bounds.maxX ||
-    y < bounds.minY ||
-    y > bounds.maxY
-  ) {
-    train.x = Math.max(bounds.minX, Math.min(bounds.maxX, x));
-    train.y = Math.max(bounds.minY, Math.min(bounds.maxY, y));
-    train.vx = 0;
-    train.vy = 0;
-    train.mode = TrainMode.STOPPED;
-    return;
+  train.offRailDistAcc = (train.offRailDistAcc || 0) + speed * dt;
+  const targetSteps = Math.floor(train.offRailDistAcc / OFF_RAIL_DS + 1e-9);
+
+  let x = train.x;
+  let y = train.y;
+  let ang = train.ang;
+  let ux = Math.cos(ang);
+  let uy = Math.sin(ang);
+  {
+    const vsp = Math.hypot(train.vx, train.vy);
+    if (vsp > 1e-3) {
+      ux = train.vx / vsp;
+      uy = train.vy / vsp;
+    }
   }
 
-  // Wall slide — soft seat, pure tangent glide (no bounce kick)
+  const preferAng =
+    train.offRailPreferAng != null ? train.offRailPreferAng : ang;
   let hitAny = false;
-  let lastNx = 0;
-  let lastNy = 0;
-  for (let iter = 0; iter < 5; iter++) {
-    let hit = false;
-    const fa = {
-      x: x + Math.cos(ang) * FRONT_AXLE_OFFSET,
-      y: y + Math.sin(ang) * FRONT_AXLE_OFFSET,
-    };
-    const ra = {
-      x: x + Math.cos(ang) * REAR_AXLE_OFFSET,
-      y: y + Math.sin(ang) * REAR_AXLE_OFFSET,
-    };
 
-    for (const [axle, isFront] of [
-      [fa, true],
-      [ra, false],
-    ]) {
+  while ((train.offRailStepsDone || 0) < targetSteps) {
+    train.offRailStepsDone = (train.offRailStepsDone || 0) + 1;
+    if (train.reRailDistLeft > 0) {
+      train.reRailDistLeft = Math.max(0, train.reRailDistLeft - OFF_RAIL_DS);
+    }
+
+    // Free advance one fixed step
+    x += ux * OFF_RAIL_DS;
+    y += uy * OFF_RAIL_DS;
+
+    if (
+      x < bounds.minX ||
+      x > bounds.maxX ||
+      y < bounds.minY ||
+      y > bounds.maxY
+    ) {
+      train.x = Math.max(bounds.minX, Math.min(bounds.maxX, x));
+      train.y = Math.max(bounds.minY, Math.min(bounds.maxY, y));
+      train.vx = 0;
+      train.vy = 0;
+      train.ang = ang;
+      train.mode = TrainMode.STOPPED;
+      return;
+    }
+
+    // Resolve wall contacts (repeat for corner stacking)
+    for (let iter = 0; iter < 6; iter++) {
+      let hit = false;
+      const fa = {
+        x: x + Math.cos(ang) * FRONT_AXLE_OFFSET,
+        y: y + Math.sin(ang) * FRONT_AXLE_OFFSET,
+      };
+      const ra = {
+        x: x + Math.cos(ang) * REAR_AXLE_OFFSET,
+        y: y + Math.sin(ang) * REAR_AXLE_OFFSET,
+      };
+
+      // Rear: push only (never steers — rear steering flipped corners by speed)
       for (const w of board.walls) {
-        const res = resolveCircleSegment(
-          axle.x,
-          axle.y,
-          WHEEL_RADIUS,
-          w
-        );
+        const res = resolveCircleSegment(ra.x, ra.y, WHEEL_RADIUS, w);
         if (!res) continue;
         hit = true;
         hitAny = true;
-        lastNx = res.nx;
-        lastNy = res.ny;
-        // Gentle push-out (avoid popping off the wall)
-        const pushScale = isFront ? 0.42 : 0.28;
-        x += (res.x - axle.x) * pushScale;
-        y += (res.y - axle.y) * pushScale;
-
-        const nx = res.nx;
-        const ny = res.ny;
-        const vn = vx * nx + vy * ny;
-        // Kill all into-wall velocity (no restitution bounce)
-        if (vn < 0) {
-          vx -= (1 + EDGE_RESTITUTION) * vn * nx;
-          vy -= (1 + EDGE_RESTITUTION) * vn * ny;
-        }
-        // Also strip any residual outward normal so speed-normalize
-        // cannot re-amplify a bounce-off kick
-        const vn2 = vx * nx + vy * ny;
-        if (vn2 > 0) {
-          vx -= vn2 * nx;
-          vy -= vn2 * ny;
-        }
-        // Pure tangent glide along the wall
-        const tx = -ny;
-        const ty = nx;
-        const along = vx * tx + vy * ty;
-        const sign = along >= 0 ? 1 : -1;
-        const sp = train.speed;
-        vx = tx * sign * sp * 0.96 + vx * 0.04;
-        vy = ty * sign * sp * 0.96 + vy * 0.04;
-
-        if (isFront) {
-          const vSp = Math.hypot(vx, vy);
-          if (vSp > 1e-3) {
-            const vAng = Math.atan2(vy, vx);
-            // Very gentle yaw — follow wall, no ricochet snap
-            ang = normalizeAngle(ang + 0.18 * normalizeAngle(vAng - ang));
-          }
-        }
+        x += (res.x - ra.x) * 0.5;
+        y += (res.y - ra.y) * 0.5;
       }
+
+      // Front: push + set travel along wall using locked prefer heading
+      for (const w of board.walls) {
+        const res = resolveCircleSegment(fa.x, fa.y, WHEEL_RADIUS, w);
+        if (!res) continue;
+        hit = true;
+        hitAny = true;
+        x += (res.x - fa.x) * 0.7;
+        y += (res.y - fa.y) * 0.7;
+
+        const { tx, ty } = wallTangentFromPrefer(res.nx, res.ny, preferAng);
+        ux = tx;
+        uy = ty;
+        ang = Math.atan2(uy, ux);
+      }
+
+      if (!hit) break;
+      // refresh axle poses after push for next iter
     }
-    if (!hit) break;
+
+    // Normalize direction
+    const len = Math.hypot(ux, uy);
+    if (len > 1e-6) {
+      ux /= len;
+      uy /= len;
+    } else {
+      ux = Math.cos(preferAng);
+      uy = Math.sin(preferAng);
+      ang = preferAng;
+    }
+
+    // Write pose so re-rail sees consistent state after each geometry step
+    train.x = x;
+    train.y = y;
+    train.ang = ang;
+    train.vx = ux * speed;
+    train.vy = uy * speed;
+    train.wallHit = hitAny;
+
+    if (train.reRailDistLeft <= 0) {
+      tryRerail(train, board);
+      if (train.mode !== TrainMode.OFF_RAIL) return;
+    }
   }
 
-  // Cruise speed — if we hit a wall, keep velocity purely tangential
-  let sp = Math.hypot(vx, vy);
-  if (hitAny && (lastNx || lastNy)) {
-    const tx = -lastNy;
-    const ty = lastNx;
-    const along = vx * tx + vy * ty;
-    const sign = along >= 0 ? 1 : -1;
-    vx = tx * sign * train.speed;
-    vy = ty * sign * train.speed;
-    const vAng = Math.atan2(vy, vx);
-    ang = normalizeAngle(ang + 0.14 * normalizeAngle(vAng - ang));
-  } else if (sp > 1e-3) {
-    const target = train.speed;
-    vx = (vx / sp) * target;
-    vy = (vy / sp) * target;
-    const vAng = Math.atan2(vy, vx);
-    ang = normalizeAngle(ang + 0.18 * normalizeAngle(vAng - ang));
-  } else if (hitAny) {
-    vx = Math.cos(ang) * train.speed;
-    vy = Math.sin(ang) * train.speed;
+  if (train.mode === TrainMode.OFF_RAIL) {
+    train.x = x;
+    train.y = y;
+    train.ang = ang;
+    train.vx = ux * speed;
+    train.vy = uy * speed;
+    train.wallHit = hitAny;
   }
+}
 
-  train.x = x;
-  train.y = y;
-  train.ang = ang;
-  train.vx = vx;
-  train.vy = vy;
-  train.wallHit = hitAny;
-
-  if (train.reRailCooldown <= 0) {
-    tryRerail(train, board);
+/**
+ * Wall tangent that continues the locked derail heading.
+ * NO velocity input — velocity magnitude/sign is what made corners flip with speed.
+ */
+function wallTangentFromPrefer(nx, ny, preferAng) {
+  let tx = -ny;
+  let ty = nx;
+  const hx = Math.cos(preferAng);
+  const hy = Math.sin(preferAng);
+  if (hx * tx + hy * ty < 0) {
+    tx = -tx;
+    ty = -ty;
   }
+  return { tx, ty };
 }
 
 function resolveCircleSegment(cx, cy, radius, seg) {
@@ -621,6 +669,10 @@ function tryRerail(train, board) {
   train.ang = ang;
   train.vx = 0;
   train.vy = 0;
+  train.offRailPreferAng = null;
+  train.offRailDistAcc = 0;
+  train.offRailStepsDone = 0;
+  train.reRailDistLeft = 0;
   train.reRailCooldown = 0.55;
 }
 
