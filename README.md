@@ -4,23 +4,24 @@
 [![Play demo](https://img.shields.io/badge/demo-github.io-blue)](https://putersdcat.github.io/PlarailMemeDemo/)
 
 <!--
-  GitHub.com does play in-repo MP4s in READMEs via <video>.
-  autoplay usually needs muted; loop works. Click if your browser blocks autoplay.
+  GitHub README video limit is small (~10MB, flaky above a few MB).
+  Embed the 480p / 12fps loop; link full 1080p separately.
+  autoplay usually needs muted; loop works.
 -->
 <video
-  src="recordings/plarail-meme-demo-1080p.mp4"
+  src="recordings/plarail-meme-demo-480p.mp4"
   width="100%"
   controls
   loop
   muted
   autoplay
   playsinline
-  poster=""
 >
-  <a href="recordings/plarail-meme-demo-1080p.mp4">Watch the 1080p demo (MP4)</a>
+  <a href="recordings/plarail-meme-demo-480p.mp4">Watch the demo (480p MP4)</a>
 </video>
 
-*1080p capture: on rails → derail → wall glide → re-rail (looped, muted autoplay).*
+*Demo loop (480p · 12 fps · ~180 KB): on rails → derail → wall glide → re-rail.*  
+Full quality: **[1080p MP4](recordings/plarail-meme-demo-1080p.mp4)** (~2.7 MB).
 
 ## Intro (synergistic rail-forward value proposition)
 

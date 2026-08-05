@@ -20,8 +20,9 @@ dist/
 *.png
 !docs/**/*.png
 
-# Recordings: keep the stable demo MP4 in git; ignore intermediates
+# Recordings: keep stable demo MP4s in git; ignore intermediates / dated dumps
 recordings/*
+!recordings/plarail-meme-demo-480p.mp4
 !recordings/plarail-meme-demo-1080p.mp4
 recordings/*.webm
 
