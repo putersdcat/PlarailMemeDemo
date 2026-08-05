@@ -1,8 +1,27 @@
 {
   "name": "plarail-meme-demo",
-  "private": true,
+  "version": "1.0.0",
+  "private": false,
   "type": "module",
-  "description": "Library-free Plarail meme layout simulator (browser ES modules)",
+  "license": "MIT",
+  "description": "Library-free Plarail meme layout simulator (browser ES modules + Web Audio)",
+  "homepage": "https://putersdcat.github.io/PlarailMemeDemo/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/putersdcat/PlarailMemeDemo.git"
+  },
+  "bugs": {
+    "url": "https://github.com/putersdcat/PlarailMemeDemo/issues"
+  },
+  "author": "Eric Anderson",
+  "keywords": [
+    "plarail",
+    "train",
+    "canvas",
+    "web-audio",
+    "meme",
+    "simulation"
+  ],
   "scripts": {
     "test": "node tests/run.mjs",
     "serve": "python -m http.server 8765"
