@@ -98,7 +98,7 @@ let hidePieceId = null;
 /** Mutable audio transition memory for syncTrainAudio */
 const audioMem = { prevMode: null, lastWallTick: 0 };
 /** Bump when shipping a new gold-standard default so old autosaves don't win. */
-const LS_KEY = "plarail-real2sim-layout-v4-cleaned";
+const LS_KEY = "plarail-real2sim-layout-v5-start";
 
 // ── Palette (catalog order; HTML may be sparse — we build buttons in JS) ──
 const paletteOrder = [
@@ -1256,7 +1256,19 @@ function placeTrainAtHint(hint) {
   if (!hint) return;
   const hit = closestPathPoint(board, hint.x, hint.y, 80);
   if (hit) {
-    placeTrainOnPath(train, hit, { dir: 1 });
+    // Prefer saved facing when present (layout.train.ang)
+    let dir = 1;
+    if (typeof hint.ang === "number" && Number.isFinite(hint.ang)) {
+      const d1 = Math.abs(
+        ((hint.ang - hit.ang + Math.PI * 3) % (Math.PI * 2)) - Math.PI
+      );
+      const d2 = Math.abs(
+        ((hint.ang - (hit.ang + Math.PI) + Math.PI * 3) % (Math.PI * 2)) -
+          Math.PI
+      );
+      dir = d1 <= d2 ? 1 : -1;
+    }
+    placeTrainOnPath(train, hit, { dir });
     trainPlaced = true;
     train.selected = false;
     running = false;
@@ -1447,7 +1459,7 @@ window.__plarailDemo = {
     );
   }
   // Visible build stamp so cache issues are obvious
-  console.info("[Plarail] build 20260805p — modules loaded");
+  console.info("[Plarail] build 20260805q — modules loaded");
 }
 
 function frame(t) {
