@@ -454,7 +454,9 @@ function stepOffRail(train, board, dt, bounds) {
     return;
   }
 
-  // Wall slide — soft seat, pure tangent glide (no bounce kick)
+  // Wall slide — soft seat, pure tangent glide (no bounce kick).
+  // Tangent direction follows train heading so a near head-on touch
+  // does not flip "left/up" when the train was going "right/down".
   let hitAny = false;
   let lastNx = 0;
   let lastNy = 0;
@@ -498,28 +500,25 @@ function stepOffRail(train, board, dt, bounds) {
           vx -= (1 + EDGE_RESTITUTION) * vn * nx;
           vy -= (1 + EDGE_RESTITUTION) * vn * ny;
         }
-        // Also strip any residual outward normal so speed-normalize
-        // cannot re-amplify a bounce-off kick
+        // Strip residual outward normal so speed-normalize cannot kick
         const vn2 = vx * nx + vy * ny;
         if (vn2 > 0) {
           vx -= vn2 * nx;
           vy -= vn2 * ny;
         }
-        // Pure tangent glide along the wall
-        const tx = -ny;
-        const ty = nx;
-        const along = vx * tx + vy * ty;
-        const sign = along >= 0 ? 1 : -1;
+
+        // Prefer wall tangent that continues current travel / nose heading
+        const { tx, ty } = wallTangentAlongTravel(nx, ny, vx, vy, ang);
         const sp = train.speed;
-        vx = tx * sign * sp * 0.96 + vx * 0.04;
-        vy = ty * sign * sp * 0.96 + vy * 0.04;
+        vx = tx * sp * 0.92 + vx * 0.08;
+        vy = ty * sp * 0.92 + vy * 0.08;
 
         if (isFront) {
           const vSp = Math.hypot(vx, vy);
           if (vSp > 1e-3) {
             const vAng = Math.atan2(vy, vx);
-            // Very gentle yaw — follow wall, no ricochet snap
-            ang = normalizeAngle(ang + 0.18 * normalizeAngle(vAng - ang));
+            // Follow wall, but keep nose with travel (a bit stronger)
+            ang = normalizeAngle(ang + 0.28 * normalizeAngle(vAng - ang));
           }
         }
       }
@@ -530,14 +529,11 @@ function stepOffRail(train, board, dt, bounds) {
   // Cruise speed — if we hit a wall, keep velocity purely tangential
   let sp = Math.hypot(vx, vy);
   if (hitAny && (lastNx || lastNy)) {
-    const tx = -lastNy;
-    const ty = lastNx;
-    const along = vx * tx + vy * ty;
-    const sign = along >= 0 ? 1 : -1;
-    vx = tx * sign * train.speed;
-    vy = ty * sign * train.speed;
+    const { tx, ty } = wallTangentAlongTravel(lastNx, lastNy, vx, vy, ang);
+    vx = tx * train.speed;
+    vy = ty * train.speed;
     const vAng = Math.atan2(vy, vx);
-    ang = normalizeAngle(ang + 0.14 * normalizeAngle(vAng - ang));
+    ang = normalizeAngle(ang + 0.22 * normalizeAngle(vAng - ang));
   } else if (sp > 1e-3) {
     const target = train.speed;
     vx = (vx / sp) * target;
@@ -559,6 +555,26 @@ function stepOffRail(train, board, dt, bounds) {
   if (train.reRailCooldown <= 0) {
     tryRerail(train, board);
   }
+}
+
+/**
+ * Pick wall tangent that continues travel.
+ * Heading dominates so near-zero tangent velocity does not reverse the train.
+ */
+function wallTangentAlongTravel(nx, ny, vx, vy, ang) {
+  // Outward-normal right-handed tangent
+  let tx = -ny;
+  let ty = nx;
+  const hx = Math.cos(ang);
+  const hy = Math.sin(ang);
+  // Prefer nose heading; velocity only as a light tie-break
+  const preferX = hx * 2.5 + vx;
+  const preferY = hy * 2.5 + vy;
+  if (preferX * tx + preferY * ty < 0) {
+    tx = -tx;
+    ty = -ty;
+  }
+  return { tx, ty };
 }
 
 function resolveCircleSegment(cx, cy, radius, seg) {
