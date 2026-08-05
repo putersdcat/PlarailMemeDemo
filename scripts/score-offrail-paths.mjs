@@ -89,7 +89,8 @@ function runOffRailFrom(board, derail, speed) {
   train.vy = Math.sin(derail.ang) * speed;
   train.offRailPreferAng =
     derail.prefer != null ? derail.prefer : derail.ang;
-  train.offRailCarryTenths = 0;
+  train.offRailDistAcc = 0;
+  train.offRailStepsDone = 0;
   train.reRailDistLeft = OFF_RAIL_REF_SPEED * 0.45;
   train.reRailCooldown = 0;
   train.pathRef = null;

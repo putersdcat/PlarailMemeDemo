@@ -83,8 +83,10 @@ export function createTrain() {
      * (never scaled by speed) so wall-tangent choice is speed-invariant.
      */
     offRailPreferAng: null,
-    /** Integer tenths-of-px carry for fixed-size off-rail substeps. */
-    offRailCarryTenths: 0,
+    /** Cumulative off-rail distance traveled (px). */
+    offRailDistAcc: 0,
+    /** How many fixed OFF_RAIL_DS steps have been applied. */
+    offRailStepsDone: 0,
     /** Distance remaining before re-rail is allowed (speed-invariant). */
     reRailDistLeft: 0,
   };
@@ -147,7 +149,8 @@ export function placeTrainOnPath(train, hit, opts = {}) {
   train.vx = 0;
   train.vy = 0;
   train.offRailPreferAng = null;
-  train.offRailCarryTenths = 0;
+  train.offRailDistAcc = 0;
+  train.offRailStepsDone = 0;
   train.reRailDistLeft = 0;
   return true;
 }
@@ -218,7 +221,8 @@ export function resetTrainHard(train) {
   train.dir = 1;
   train.selected = false;
   train.offRailPreferAng = null;
-  train.offRailCarryTenths = 0;
+  train.offRailDistAcc = 0;
+  train.offRailStepsDone = 0;
   train.reRailDistLeft = 0;
   train.wallHit = false;
 }
@@ -468,7 +472,8 @@ function leaveRails(train) {
   train.wallHit = false;
   // Unit-direction lock at derail (angle only — never scaled by speed)
   train.offRailPreferAng = train.ang;
-  train.offRailCarryTenths = 0;
+  train.offRailDistAcc = 0;
+  train.offRailStepsDone = 0;
   // ~0.45s at center speed, but as *distance* so all speeds unlock re-rail
   // at the same point along the wall path
   train.reRailDistLeft = OFF_RAIL_REF_SPEED * 0.45;
@@ -485,9 +490,9 @@ function leaveRails(train) {
 function stepOffRail(train, board, dt, bounds) {
   train.wallHit = false;
   const speed = Math.max(1, train.speed);
-  // Integer carry in 0.1px units — same substep sequence at every speed
-  train.offRailCarryTenths =
-    (train.offRailCarryTenths || 0) + Math.round(speed * dt * 10);
+  // Total arc length defines exact step count — independent of frame rounding
+  train.offRailDistAcc = (train.offRailDistAcc || 0) + speed * dt;
+  const targetSteps = Math.floor(train.offRailDistAcc / OFF_RAIL_DS + 1e-9);
 
   let x = train.x;
   let y = train.y;
@@ -508,9 +513,8 @@ function stepOffRail(train, board, dt, bounds) {
   let lastNx = 0;
   let lastNy = 0;
 
-  // Only full fixed steps — leftover tenths stay for next frame
-  while (train.offRailCarryTenths >= OFF_RAIL_DS_TENTHS) {
-    train.offRailCarryTenths -= OFF_RAIL_DS_TENTHS;
+  while ((train.offRailStepsDone || 0) < targetSteps) {
+    train.offRailStepsDone = (train.offRailStepsDone || 0) + 1;
     const ds = OFF_RAIL_DS;
     if (train.reRailDistLeft > 0) {
       train.reRailDistLeft = Math.max(0, train.reRailDistLeft - ds);
@@ -582,17 +586,10 @@ function stepOffRail(train, board, dt, bounds) {
           ux = tx;
           uy = ty;
 
-          // Snap body to travel — no soft lag (that was the "drift" look)
+          // Snap body to travel — no soft lag. Prefer ang stays locked at derail
+          // (updating it amplified tiny float diffs into big path forks).
           if (isFront) {
             ang = Math.atan2(uy, ux);
-            if (train.offRailPreferAng != null) {
-              const dPref = normalizeAngle(ang - train.offRailPreferAng);
-              if (Math.abs(dPref) < Math.PI * 0.5) {
-                train.offRailPreferAng = normalizeAngle(
-                  train.offRailPreferAng + 0.08 * dPref
-                );
-              }
-            }
           }
         }
       }
@@ -620,7 +617,6 @@ function stepOffRail(train, board, dt, bounds) {
     if (train.reRailDistLeft <= 0) {
       tryRerail(train, board);
       if (train.mode !== TrainMode.OFF_RAIL) {
-        train.offRailCarryTenths = 0;
         return;
       }
     }
@@ -733,7 +729,8 @@ function tryRerail(train, board) {
   train.vx = 0;
   train.vy = 0;
   train.offRailPreferAng = null;
-  train.offRailCarryTenths = 0;
+  train.offRailDistAcc = 0;
+  train.offRailStepsDone = 0;
   train.reRailDistLeft = 0;
   train.reRailCooldown = 0.55;
 }
