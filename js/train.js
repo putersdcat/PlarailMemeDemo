@@ -66,7 +66,7 @@ export function createTrain() {
     x: 0,
     y: 0,
     ang: 0,
-    speed: 120,
+    speed: 210,
     pathRef: null,
     /** Front axle parameter along current path [0,1] */
     s: 0,
@@ -444,7 +444,7 @@ function findNextGeometric(board, live, x, y, travelAng) {
  */
 export const OFF_RAIL_DS = 2.5;
 /** Center-slider reference speed (for re-rail unlock distance). */
-export const OFF_RAIL_REF_SPEED = 120;
+export const OFF_RAIL_REF_SPEED = 210;
 
 function leaveRails(train) {
   train.mode = TrainMode.OFF_RAIL;

@@ -98,7 +98,7 @@ let hidePieceId = null;
 /** Mutable audio transition memory for syncTrainAudio */
 const audioMem = { prevMode: null, lastWallTick: 0 };
 /** Bump when shipping a new gold-standard default so old autosaves don't win. */
-const LS_KEY = "plarail-real2sim-layout-v6-speed120";
+const LS_KEY = "plarail-real2sim-layout-v7-speed210";
 
 // ── Palette (catalog order; HTML may be sparse — we build buttons in JS) ──
 const paletteOrder = [
@@ -301,7 +301,7 @@ document.getElementById("btn-meme").addEventListener("click", () => {
   const info = loadRealMemeTrack(board);
   clearSelection();
   placeTrainAtHint(info.trainHint);
-  applySpeed(info.speed ?? info.trainHint?.speed ?? 120);
+  applySpeed(info.speed ?? info.trainHint?.speed ?? 210);
   persistLayout();
   setHint(info.note || "Meme track loaded.");
 });
@@ -402,7 +402,7 @@ function applyLoadedLayout(data, label = "layout") {
     placeTrainAtHint({ x: 528.73, y: 653 });
   }
   // Layout / train speed (starter track ships at the working slider setting)
-  applySpeed(data.train?.speed ?? data.speed ?? speedSlider?.value ?? 120);
+  applySpeed(data.train?.speed ?? data.speed ?? speedSlider?.value ?? 210);
   persistLayout();
   setHint(`Loaded ${result.pieceCount} pieces from ${label}.`);
   updateStatus();
@@ -510,8 +510,8 @@ speedSlider.addEventListener("input", () => {
   applySpeed(speedSlider.value);
   persistLayout();
 });
-// Initial speed from slider default (120 — slightly left of old center)
-applySpeed(speedSlider?.value ?? 120);
+// Initial speed: 75% of max (280 → 210)
+applySpeed(speedSlider?.value ?? 210);
 
 // Unlock Web Audio on first pointer / key (browser autoplay policy)
 function armAudioUnlock() {
@@ -1465,7 +1465,7 @@ window.__plarailDemo = {
   if (!loaded) {
     const info = loadRealMemeTrack(board);
     placeTrainAtHint(info.trainHint);
-    applySpeed(info.speed ?? info.trainHint?.speed ?? 120);
+    applySpeed(info.speed ?? info.trainHint?.speed ?? 210);
     persistLayout();
     setHint(
       info.note ||
@@ -1477,7 +1477,7 @@ window.__plarailDemo = {
     );
   }
   // Visible build stamp so cache issues are obvious
-  console.info("[Plarail] build 20260806b — modules loaded");
+  console.info("[Plarail] build 20260806c — modules loaded");
 }
 
 function frame(t) {

@@ -35,8 +35,8 @@ export function loadRealMemeTrack(board) {
   const result = loadBoard(board, REAL_MEME_LAYOUT);
   const t = REAL_MEME_LAYOUT.train;
   const th = t
-    ? { x: t.x, y: t.y, ang: t.ang, speed: t.speed ?? 120 }
-    : ${JSON.stringify({ ...hint, ang: 0.7853981633974487, speed: 120 })};
+    ? { x: t.x, y: t.y, ang: t.ang, speed: t.speed ?? 210 }
+    : ${JSON.stringify({ ...hint, ang: 0.7853981633974487, speed: 210 })};
   return {
     ok: result.ok,
     pieceCount: result.pieceCount,
