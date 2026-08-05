@@ -1,17 +1,15 @@
 /**
  * Built-in layouts.
- * Default: gold-standard WORKING meme track (plarail-layout-WORKING-*).
+ * Default: gold-standard WORKING meme track with paint colors.
  */
 
 import { UNIT, PIECE_TYPES } from "./geometry.js";
 import { addPiece, clearBoard, rebuild, loadBoard } from "./track.js";
 
-/** Absolute layout — functionally tested gold standard. */
+/** Absolute layout — functionally tested gold standard (with paint). */
 export const REAL_MEME_LAYOUT = {
   "format": "plarail-meme-layout",
   "version": 1,
-  "name": "Real-2-Sim meme track (WORKING)",
-  "source": "plarail-layout-WORKING-20260805-1534.json",
   "pieces": [
     {
       "id": "p1",
@@ -21,7 +19,8 @@ export const REAL_MEME_LAYOUT = {
       "rotSteps": 1,
       "flip": true,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "blue"
     },
     {
       "id": "p2",
@@ -31,7 +30,8 @@ export const REAL_MEME_LAYOUT = {
       "rotSteps": 5,
       "flip": true,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "blue"
     },
     {
       "id": "p3",
@@ -41,7 +41,8 @@ export const REAL_MEME_LAYOUT = {
       "rotSteps": 0,
       "flip": false,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "blue"
     },
     {
       "id": "p4",
@@ -51,7 +52,8 @@ export const REAL_MEME_LAYOUT = {
       "rotSteps": 0,
       "flip": false,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "blue"
     },
     {
       "id": "p5",
@@ -61,7 +63,8 @@ export const REAL_MEME_LAYOUT = {
       "rotSteps": 0,
       "flip": false,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "blue"
     },
     {
       "id": "p6",
@@ -71,7 +74,8 @@ export const REAL_MEME_LAYOUT = {
       "rotSteps": 2,
       "flip": true,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "green"
     },
     {
       "id": "p7",
@@ -81,7 +85,8 @@ export const REAL_MEME_LAYOUT = {
       "rotSteps": 1,
       "flip": false,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "blue"
     },
     {
       "id": "p8",
@@ -91,7 +96,8 @@ export const REAL_MEME_LAYOUT = {
       "rotSteps": 1,
       "flip": false,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "blue"
     },
     {
       "id": "p9",
@@ -101,7 +107,8 @@ export const REAL_MEME_LAYOUT = {
       "rotSteps": 1,
       "flip": false,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "blue"
     },
     {
       "id": "p10",
@@ -111,275 +118,305 @@ export const REAL_MEME_LAYOUT = {
       "rotSteps": 3,
       "flip": true,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "red"
     },
     {
-      "id": "p12",
+      "id": "p11",
       "type": "R01",
       "x": 265.0237231115737,
       "y": 239.28277092497484,
       "rotSteps": 3,
       "flip": false,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "blue"
     },
     {
-      "id": "p13",
+      "id": "p12",
       "type": "R02",
       "x": -70,
       "y": 322,
       "rotSteps": 0,
       "flip": false,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "blue"
     },
     {
-      "id": "p15",
+      "id": "p13",
       "type": "R22",
       "x": -143,
       "y": 595.3951521042545,
       "rotSteps": 2,
       "flip": false,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "blue"
     },
     {
-      "id": "p16",
+      "id": "p14",
       "type": "R17",
       "x": 338.329697217056,
       "y": 158.3064940365486,
       "rotSteps": 2,
       "flip": false,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "blue"
     },
     {
-      "id": "p17",
+      "id": "p15",
       "type": "R11",
       "x": 445.57679681949253,
       "y": 233.45939443411203,
       "rotSteps": 4,
       "flip": false,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "blue"
     },
     {
-      "id": "p18",
+      "id": "p16",
       "type": "R02",
       "x": 373.57679681949253,
       "y": 233.45939443411203,
       "rotSteps": 0,
       "flip": true,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "red"
     },
     {
-      "id": "p19",
+      "id": "p17",
       "type": "R01",
       "x": 541.5767968194925,
       "y": 233.45939443411203,
       "rotSteps": 0,
       "flip": true,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "blue"
     },
     {
-      "id": "p20",
+      "id": "p18",
       "type": "R02",
       "x": 613.5767968194925,
       "y": 233.45939443411203,
       "rotSteps": 0,
       "flip": true,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "blue"
     },
     {
-      "id": "p21",
+      "id": "p19",
       "type": "R14",
       "x": 733.5767968194925,
       "y": 233.45939443411203,
       "rotSteps": 6,
       "flip": true,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "blue"
     },
     {
-      "id": "p22",
+      "id": "p20",
       "type": "R20",
       "x": 657.670302782944,
       "y": 501.32969721705604,
       "rotSteps": 0,
       "flip": true,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "blue"
     },
     {
-      "id": "p23",
+      "id": "p21",
       "type": "R105",
       "x": 669.670302782944,
       "y": 405.32969721705604,
       "rotSteps": 0,
       "flip": false,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "yellow"
     },
     {
-      "id": "p24",
+      "id": "p22",
       "type": "R20",
       "x": 765.670302782944,
       "y": 393.32969721705604,
       "rotSteps": 2,
       "flip": false,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "blue"
     },
     {
-      "id": "p25",
+      "id": "p23",
       "type": "R02",
       "x": 710,
       "y": 653,
       "rotSteps": 0,
       "flip": false,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "blue"
     },
     {
-      "id": "p26",
+      "id": "p24",
       "type": "R01",
       "x": 782,
       "y": 653,
       "rotSteps": 0,
       "flip": false,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "gray"
     },
     {
-      "id": "p27",
+      "id": "p25",
       "type": "R105",
       "x": 830,
       "y": 557,
       "rotSteps": 0,
       "flip": true,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "blue"
     },
     {
-      "id": "p28",
+      "id": "p26",
       "type": "R02",
       "x": 926,
       "y": 533,
       "rotSteps": 2,
       "flip": true,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "blue"
     },
     {
-      "id": "p31",
+      "id": "p27",
       "type": "R01",
       "x": 926,
       "y": 365,
       "rotSteps": 2,
       "flip": true,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "blue"
     },
     {
-      "id": "p32",
+      "id": "p28",
       "type": "R21",
       "x": 829.5767968194925,
       "y": 329.459394434112,
       "rotSteps": 6,
       "flip": true,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "red"
     },
     {
-      "id": "p33",
+      "id": "p29",
       "type": "R04",
       "x": -269.9896929200715,
       "y": 302.2986418475234,
       "rotSteps": 0,
       "flip": false,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "blue"
     },
     {
-      "id": "p34",
+      "id": "p30",
       "type": "R20",
       "x": 790.8470996024366,
       "y": 353.7529003975635,
       "rotSteps": 0,
       "flip": true,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "blue"
     },
     {
-      "id": "p35",
+      "id": "p31",
       "type": "R02",
       "x": 754.8470996024366,
       "y": 353.7529003975635,
       "rotSteps": 0,
       "flip": true,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "blue"
     },
     {
-      "id": "p36",
+      "id": "p32",
       "type": "R14",
       "x": 590,
       "y": 653,
       "rotSteps": 6,
       "flip": true,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 1,
+      "color": "blue"
     },
     {
-      "id": "p37",
+      "id": "p33",
       "type": "R04",
       "x": 802.8470996024366,
       "y": 488.1529003975635,
       "rotSteps": 6,
       "flip": true,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "blue"
     },
     {
-      "id": "p38",
+      "id": "p34",
       "type": "R11",
       "x": 926,
       "y": 461,
       "rotSteps": 6,
       "flip": false,
       "branchSide": "L",
-      "switchState": 1
+      "switchState": 1,
+      "color": "blue"
     },
     {
-      "id": "p39",
+      "id": "p35",
       "type": "R02",
       "x": 289.02372311157376,
       "y": 279.0472729127919,
       "rotSteps": 4,
       "flip": false,
       "branchSide": "R",
-      "switchState": 0
+      "switchState": 0,
+      "color": "blue"
     },
     {
-      "id": "p40",
+      "id": "p36",
       "type": "R11",
       "x": 197.14147211766516,
       "y": 307.1650219188834,
       "rotSteps": 7,
       "flip": true,
       "branchSide": "R",
-      "switchState": 1
+      "switchState": 1,
+      "color": "blue"
     }
   ],
   "train": {
-    "x": 528.728896703535,
-    "y": 653,
-    "ang": 0,
-    "mode": "on_rail"
-  }
+    "x": 918.8438974806379,
+    "y": 424.0490664793312,
+    "ang": -2.0371264863121463,
+    "mode": "idle"
+  },
+  "savedAt": "2026-08-05T14:49:04.000Z",
+  "name": "Real-2-Sim meme track (WORKING colored)",
+  "source": "plarail-layout-working-colored-20260805-1649.json"
 };
 
 /**
@@ -389,7 +426,7 @@ export function loadRealMemeTrack(board) {
   const result = loadBoard(board, REAL_MEME_LAYOUT);
   const th = REAL_MEME_LAYOUT.train
     ? { x: REAL_MEME_LAYOUT.train.x, y: REAL_MEME_LAYOUT.train.y }
-    : {"x":528.728896703535,"y":653};
+    : { x: 528.728896703535, y: 653 };
   return {
     ok: result.ok,
     pieceCount: result.pieceCount,

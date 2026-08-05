@@ -98,7 +98,7 @@ let hidePieceId = null;
 /** Mutable audio transition memory for syncTrainAudio */
 const audioMem = { prevMode: null, lastWallTick: 0 };
 /** Bump when shipping a new gold-standard default so old autosaves don't win. */
-const LS_KEY = "plarail-real2sim-layout-v2-working";
+const LS_KEY = "plarail-real2sim-layout-v3-colored";
 
 // ── Palette (catalog order; HTML may be sparse — we build buttons in JS) ──
 const paletteOrder = [
@@ -1348,7 +1348,7 @@ onResize();
     );
   }
   // Visible build stamp so cache issues are obvious
-  console.info("[Plarail] build 20260805e — modules loaded");
+  console.info("[Plarail] build 20260805f — modules loaded");
 }
 
 function frame(t) {
