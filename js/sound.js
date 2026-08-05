@@ -337,14 +337,11 @@ export function syncTrainAudio(state, mem = {}) {
     }
   }
 
-  // Light wall tick when gliding (throttled)
-  if (mode === "off_rail" && state.wallGlide) {
-    const now = performance.now();
-    if (!mem.lastWallTick || now - mem.lastWallTick > 220) {
-      playCollision("wall");
-      mem.lastWallTick = now;
-    }
+  // One soft tick when first contacting a wall while off-rail (not a spam loop)
+  if (mode === "off_rail" && state.wallGlide && !mem.wasGliding) {
+    playCollision("wall");
   }
+  mem.wasGliding = !!(mode === "off_rail" && state.wallGlide);
 
   // Loops
   const speedNorm = (state.speed || 140) / 140;
