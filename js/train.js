@@ -30,9 +30,13 @@ export const FRONT_AXLE_OFFSET = TRAIN_LENGTH / 2 - FRONT_AXLE_FROM_NOSE;
 export const REAR_AXLE_OFFSET = -TRAIN_LENGTH * 0.28;
 export const WHEEL_RADIUS = 9;
 
-/** Max lateral distance to snap onto a rail when placing / re-railing. */
-export const RE_RAIL_LATERAL = 22;
-export const RE_RAIL_ANGLE = (70 * Math.PI) / 180;
+/**
+ * Re-rail snap window — intentionally tight so drive-bys past
+ * perpendicular track do not steal the train.
+ * Mouth re-entry is a bit looser than mid-path.
+ */
+export const RE_RAIL_LATERAL = 14;
+export const RE_RAIL_ANGLE = (38 * Math.PI) / 180;
 /** Geometric hop between path ends when graph link is missing. */
 export const PATH_HOP_DIST = 30;
 export const PATH_HOP_ANGLE = (40 * Math.PI) / 180;
@@ -568,7 +572,8 @@ function resolveCircleSegment(cx, cy, radius, seg) {
 
 function tryRerail(train, board) {
   const fa = frontAxlePos(train);
-  const hit = closestPathPoint(board, fa.x, fa.y, RE_RAIL_LATERAL + 6);
+  // Search a bit wider than accept window so we can reject bad angles cleanly
+  const hit = closestPathPoint(board, fa.x, fa.y, RE_RAIL_LATERAL + 4);
   if (!hit) return;
 
   const pathAng = hit.ang;
@@ -576,11 +581,15 @@ function tryRerail(train, board) {
   const d2 = angleDiff(train.ang, pathAng + Math.PI);
   const best = Math.min(d1, d2);
 
-  // Prefer mid-path re-rail (mouth re-entry is looser)
-  const nearMouth = hit.s < 0.1 || hit.s > 0.9;
-  const angLimit = nearMouth ? RE_RAIL_ANGLE * 1.05 : RE_RAIL_ANGLE * 0.85;
-  const latLimit = nearMouth ? RE_RAIL_LATERAL + 4 : RE_RAIL_LATERAL - 2;
+  // Mouth re-entry (open ends) is the main re-rail path; mid-path is strict
+  // so sliding past a perpendicular piece does not magnet-grab the train.
+  const nearMouth = hit.s < 0.12 || hit.s > 0.88;
+  const angLimit = nearMouth ? RE_RAIL_ANGLE * 1.15 : RE_RAIL_ANGLE * 0.72;
+  const latLimit = nearMouth ? RE_RAIL_LATERAL + 3 : RE_RAIL_LATERAL * 0.75;
   if (hit.dist > latLimit || best > angLimit) return;
+
+  // Extra reject: nearly-perpendicular crossings (even if under angLimit)
+  if (!nearMouth && best > (28 * Math.PI) / 180) return;
 
   train.mode = TrainMode.ON_RAIL;
   train.pathRef = {
@@ -597,7 +606,7 @@ function tryRerail(train, board) {
   train.ang = ang;
   train.vx = 0;
   train.vy = 0;
-  train.reRailCooldown = 0.5;
+  train.reRailCooldown = 0.55;
 }
 
 export function modeLabel(mode) {
