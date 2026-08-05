@@ -98,7 +98,7 @@ let hidePieceId = null;
 /** Mutable audio transition memory for syncTrainAudio */
 const audioMem = { prevMode: null, lastWallTick: 0 };
 /** Bump when shipping a new gold-standard default so old autosaves don't win. */
-const LS_KEY = "plarail-real2sim-layout-v5-start";
+const LS_KEY = "plarail-real2sim-layout-v6-speed120";
 
 // ── Palette (catalog order; HTML may be sparse — we build buttons in JS) ──
 const paletteOrder = [
@@ -301,6 +301,7 @@ document.getElementById("btn-meme").addEventListener("click", () => {
   const info = loadRealMemeTrack(board);
   clearSelection();
   placeTrainAtHint(info.trainHint);
+  applySpeed(info.speed ?? info.trainHint?.speed ?? 120);
   persistLayout();
   setHint(info.note || "Meme track loaded.");
 });
@@ -358,10 +359,22 @@ function buildSavePayload() {
       y: train.y,
       ang: train.ang,
       mode: train.mode,
+      speed: train.speed,
     };
   }
+  // Always persist speed so starter / autosave keep the sweet spot
+  payload.speed = train.speed;
   payload.savedAt = new Date().toISOString();
   return payload;
+}
+
+function applySpeed(speed) {
+  const n = Number(speed);
+  if (!Number.isFinite(n)) return;
+  const clamped = Math.max(60, Math.min(280, Math.round(n / 10) * 10));
+  train.speed = clamped;
+  if (speedSlider) speedSlider.value = String(clamped);
+  setMotorSpeed(train.speed / 140);
 }
 
 function persistLayout() {
@@ -388,6 +401,8 @@ function applyLoadedLayout(data, label = "layout") {
     // Fallback seat (gold-standard train pose)
     placeTrainAtHint({ x: 528.73, y: 653 });
   }
+  // Layout / train speed (starter track ships at the working slider setting)
+  applySpeed(data.train?.speed ?? data.speed ?? speedSlider?.value ?? 120);
   persistLayout();
   setHint(`Loaded ${result.pieceCount} pieces from ${label}.`);
   updateStatus();
@@ -492,9 +507,11 @@ btnResetTrain.addEventListener("click", () => {
 });
 
 speedSlider.addEventListener("input", () => {
-  train.speed = Number(speedSlider.value);
-  setMotorSpeed(train.speed / 140);
+  applySpeed(speedSlider.value);
+  persistLayout();
 });
+// Initial speed from slider default (120 — slightly left of old center)
+applySpeed(speedSlider?.value ?? 120);
 
 // Unlock Web Audio on first pointer / key (browser autoplay policy)
 function armAudioUnlock() {
@@ -1448,6 +1465,7 @@ window.__plarailDemo = {
   if (!loaded) {
     const info = loadRealMemeTrack(board);
     placeTrainAtHint(info.trainHint);
+    applySpeed(info.speed ?? info.trainHint?.speed ?? 120);
     persistLayout();
     setHint(
       info.note ||
@@ -1459,7 +1477,7 @@ window.__plarailDemo = {
     );
   }
   // Visible build stamp so cache issues are obvious
-  console.info("[Plarail] build 20260805y — modules loaded");
+  console.info("[Plarail] build 20260805z — modules loaded");
 }
 
 function frame(t) {

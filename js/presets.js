@@ -359,7 +359,8 @@ export const REAL_MEME_LAYOUT = {
     "x": 232.00799435903565,
     "y": 545.6782971419796,
     "ang": 0.7853981633974487,
-    "mode": "idle"
+    "mode": "idle",
+    "speed": 120
   }
 };
 
@@ -370,12 +371,18 @@ export function loadRealMemeTrack(board) {
   const result = loadBoard(board, REAL_MEME_LAYOUT);
   const t = REAL_MEME_LAYOUT.train;
   const th = t
-    ? { x: t.x, y: t.y, ang: t.ang }
-    : { x: 232.00799435903565, y: 545.6782971419796, ang: 0.7853981633974487 };
+    ? { x: t.x, y: t.y, ang: t.ang, speed: t.speed ?? 120 }
+    : {
+        x: 232.00799435903565,
+        y: 545.6782971419796,
+        ang: 0.7853981633974487,
+        speed: 120,
+      };
   return {
     ok: result.ok,
     pieceCount: result.pieceCount,
     trainHint: th,
+    speed: th.speed,
     note: `Loaded Real-2-Sim meme track (${result.pieceCount} pieces). Drag train onto a rail, then Start.`,
   };
 }

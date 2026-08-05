@@ -35,12 +35,13 @@ export function loadRealMemeTrack(board) {
   const result = loadBoard(board, REAL_MEME_LAYOUT);
   const t = REAL_MEME_LAYOUT.train;
   const th = t
-    ? { x: t.x, y: t.y, ang: t.ang }
-    : ${JSON.stringify({ ...hint, ang: 0.7853981633974487 })};
+    ? { x: t.x, y: t.y, ang: t.ang, speed: t.speed ?? 120 }
+    : ${JSON.stringify({ ...hint, ang: 0.7853981633974487, speed: 120 })};
   return {
     ok: result.ok,
     pieceCount: result.pieceCount,
     trainHint: th,
+    speed: th.speed,
     note: \`Loaded Real-2-Sim meme track (\${result.pieceCount} pieces). Drag train onto a rail, then Start.\`,
   };
 }

@@ -66,7 +66,7 @@ export function createTrain() {
     x: 0,
     y: 0,
     ang: 0,
-    speed: 140,
+    speed: 120,
     pathRef: null,
     /** Front axle parameter along current path [0,1] */
     s: 0,
