@@ -355,10 +355,10 @@
   "name": "Real-2-Sim meme track (WORKING colored)",
   "source": "plarail-layout-20260805-2105.json",
   "demoCrop": {
-    "minX": 67.08259761461943,
-    "minY": 14.3064940365486,
-    "maxX": 994,
-    "maxY": 797.8723877473067
+    "minX": 40,
+    "minY": -20,
+    "maxX": 1020,
+    "maxY": 830
   },
   "speed": 210
 }
