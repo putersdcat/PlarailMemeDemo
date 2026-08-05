@@ -20,8 +20,8 @@
   <a href="recordings/plarail-meme-demo-480p.mp4">Watch the demo (480p MP4)</a>
 </video>
 
-*Demo loop (480p · 12 fps · ~180 KB): on rails → derail → wall glide → re-rail.*  
-Full quality: **[1080p MP4](recordings/plarail-meme-demo-1080p.mp4)** (~2.7 MB).
+*Demo loop (480p · 12 fps · ~330 KB): on rails → derail → wall glide → re-rail.*  
+Full quality: **[1080p MP4](recordings/plarail-meme-demo-1080p.mp4)** (~5 MB, framed to the track).
 
 ## Intro (synergistic rail-forward value proposition)
 
