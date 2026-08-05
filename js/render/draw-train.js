@@ -34,9 +34,11 @@ export function drawTrain(ctx, train) {
   const R = TRAIN_RADIUS;
   const nose = L * 0.5;
   const tail = -L * 0.5;
-  // Hemispherical airplane nose (radius = body half-width)
-  const tipR = R;
-  const tipCx = nose - tipR; // center of nose semicircle
+  // Nose: slight inward waist, then semicircle rounds it off
+  const tipR = R * 0.9;
+  const tipCx = nose - tipR;
+  const pinchX = tipCx - R * 0.28; // start of inward bend
+  const pinchR = R * 0.78; // waist half-width before the dome
 
   ctx.fillStyle = "rgba(0,0,0,0.16)";
   ctx.beginPath();
@@ -44,11 +46,14 @@ export function drawTrain(ctx, train) {
   ctx.fill();
 
   const bodyPath = () => {
-    // Parallel fuselage + semicircle nose (top-down airplane)
+    // Parallel fuselage → slight inward pinch → semicircle nose
     ctx.beginPath();
     ctx.moveTo(tail + 6, -R);
-    ctx.lineTo(tipCx, -R);
+    ctx.lineTo(pinchX - R * 0.35, -R);
+    // Inward bend into the waist, then up to dome start
+    ctx.quadraticCurveTo(pinchX + R * 0.05, -R, tipCx, -tipR);
     ctx.arc(tipCx, 0, tipR, -Math.PI / 2, Math.PI / 2, false);
+    ctx.quadraticCurveTo(pinchX + R * 0.05, R, pinchX - R * 0.35, R);
     ctx.lineTo(tail + 6, R);
     ctx.quadraticCurveTo(tail - 1, R * 0.7, tail - 1, 0);
     ctx.quadraticCurveTo(tail - 1, -R * 0.7, tail + 6, -R);
@@ -84,54 +89,80 @@ export function drawTrain(ctx, train) {
   ctx.fill();
   ctx.restore();
 
-  // Blue side stripe along fuselage (stops before nose dome)
+  // Blue side stripe along fuselage (stops before the pinch)
   ctx.strokeStyle = "#3a7ec4";
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.moveTo(tail + 14, -R * 0.72);
-  ctx.lineTo(tipCx - 2, -R * 0.72);
+  ctx.lineTo(pinchX - 4, -R * 0.72);
   ctx.stroke();
   ctx.beginPath();
   ctx.moveTo(tail + 14, R * 0.72);
-  ctx.lineTo(tipCx - 2, R * 0.72);
+  ctx.lineTo(pinchX - 4, R * 0.72);
   ctx.stroke();
   ctx.fillStyle = "#2a6cb0";
   ctx.beginPath();
-  ctx.ellipse(tipCx + tipR * 0.15, R * 0.35, tipR * 0.55, R * 0.28, 0, 0, Math.PI * 2);
+  ctx.ellipse(pinchX - R * 0.1, R * 0.32, R * 0.35, R * 0.22, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Cockpit glass on the rounded nose
+  // Windshield: crescent moon, moved back from the tip, rounded edge forward
+  const glassFront = tipCx - tipR * 0.15; // set back from nose tip
+  const glassRear = tipCx - tipR * 0.95;
+  const glassHalfH = R * 0.58;
+  const crescentPath = () => {
+    ctx.beginPath();
+    // Top tip of crescent
+    ctx.moveTo(glassRear + tipR * 0.2, -glassHalfH);
+    // Outer arc — convex / rounded edge toward the nose (+x)
+    ctx.bezierCurveTo(
+      glassFront + tipR * 0.35,
+      -glassHalfH * 0.55,
+      glassFront + tipR * 0.35,
+      glassHalfH * 0.55,
+      glassRear + tipR * 0.2,
+      glassHalfH
+    );
+    // Inner arc — concave scoop toward the rear (−x)
+    ctx.bezierCurveTo(
+      glassRear + tipR * 0.55,
+      glassHalfH * 0.45,
+      glassRear + tipR * 0.55,
+      -glassHalfH * 0.45,
+      glassRear + tipR * 0.2,
+      -glassHalfH
+    );
+    ctx.closePath();
+  };
   ctx.fillStyle = "#1a1e24";
-  ctx.beginPath();
-  ctx.ellipse(tipCx + tipR * 0.15, 0, tipR * 0.55, R * 0.62, 0, 0, Math.PI * 2);
+  crescentPath();
   ctx.fill();
   const glassG = ctx.createLinearGradient(
-    tipCx - tipR * 0.2,
-    -R * 0.4,
-    tipCx + tipR * 0.5,
-    R * 0.4
+    glassRear,
+    -glassHalfH,
+    glassFront + tipR * 0.2,
+    glassHalfH
   );
-  glassG.addColorStop(0, "rgba(90, 140, 180, 0.4)");
-  glassG.addColorStop(0.5, "rgba(40, 50, 60, 0.12)");
-  glassG.addColorStop(1, "rgba(20, 25, 30, 0.45)");
+  glassG.addColorStop(0, "rgba(90, 140, 180, 0.42)");
+  glassG.addColorStop(0.45, "rgba(40, 50, 60, 0.12)");
+  glassG.addColorStop(1, "rgba(20, 25, 30, 0.5)");
   ctx.fillStyle = glassG;
-  ctx.beginPath();
-  ctx.ellipse(tipCx + tipR * 0.15, 0, tipR * 0.55, R * 0.62, 0, 0, Math.PI * 2);
+  crescentPath();
   ctx.fill();
   ctx.strokeStyle = "rgba(30, 40, 50, 0.85)";
-  ctx.lineWidth = 0.8;
+  ctx.lineWidth = 0.85;
+  crescentPath();
   ctx.stroke();
 
-  // Headlights on the rounded nose
+  // Headlights on the rounded nose tip
   ctx.fillStyle = "#f0f4f8";
   ctx.beginPath();
-  ctx.arc(tipCx + tipR * 0.72, -R * 0.28, 1.5, 0, Math.PI * 2);
-  ctx.arc(tipCx + tipR * 0.72, R * 0.28, 1.5, 0, Math.PI * 2);
+  ctx.arc(tipCx + tipR * 0.78, -R * 0.26, 1.5, 0, Math.PI * 2);
+  ctx.arc(tipCx + tipR * 0.78, R * 0.26, 1.5, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = "rgba(255, 230, 120, 0.9)";
   ctx.beginPath();
-  ctx.arc(tipCx + tipR * 0.78, -R * 0.28, 0.75, 0, Math.PI * 2);
-  ctx.arc(tipCx + tipR * 0.78, R * 0.28, 0.75, 0, Math.PI * 2);
+  ctx.arc(tipCx + tipR * 0.84, -R * 0.26, 0.75, 0, Math.PI * 2);
+  ctx.arc(tipCx + tipR * 0.84, R * 0.26, 0.75, 0, Math.PI * 2);
   ctx.fill();
 
   // Bogie shadows at physics axle positions

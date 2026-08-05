@@ -47,29 +47,30 @@ function noiseBuffer(sec = 0.5) {
 }
 
 /**
- * Coffee-grinder burr: rapid hard mechanical teeth, not airy hiss.
- * Dense mid impulses with short grit tails.
+ * Coffee-grinder burr: rapid hard mechanical teeth in wall-hit range.
+ * Dense mid/high impulses with short grit tails — grindy, not airy.
  */
-function burrBuffer(sec = 1.0, teethPerSec = 48) {
+function burrBuffer(sec = 1.0, teethPerSec = 64) {
   const c = getCtx();
   const n = Math.max(1, Math.floor(c.sampleRate * sec));
   const buf = c.createBuffer(1, n, c.sampleRate);
   const d = buf.getChannelData(0);
-  const base = Math.max(6, Math.floor(c.sampleRate / teethPerSec));
+  const base = Math.max(5, Math.floor(c.sampleRate / teethPerSec));
   let next = 0;
   while (next < n) {
     // slight unevenness like a cheap plastic burr
-    const period = Math.floor(base * (0.88 + Math.random() * 0.28));
+    const period = Math.floor(base * (0.82 + Math.random() * 0.4));
     for (let p = 0; p < period && next + p < n; p++) {
       const idx = next + p;
       if (p === 0) {
-        d[idx] = (Math.random() < 0.5 ? -1 : 1) * (0.75 + Math.random() * 0.25);
-      } else if (p < 4) {
-        d[idx] = (Math.random() * 2 - 1) * (0.55 * Math.exp(-p / 2.2));
-      } else if (p < 14) {
-        d[idx] = (Math.random() * 2 - 1) * 0.12 * Math.exp(-(p - 4) / 5);
+        d[idx] = (Math.random() < 0.5 ? -1 : 1) * (0.85 + Math.random() * 0.15);
+      } else if (p < 3) {
+        d[idx] = (Math.random() * 2 - 1) * (0.7 * Math.exp(-p / 1.6));
+      } else if (p < 18) {
+        // longer grit tail = more grind
+        d[idx] = (Math.random() * 2 - 1) * 0.22 * Math.exp(-(p - 3) / 6);
       } else {
-        d[idx] = (Math.random() * 2 - 1) * 0.012;
+        d[idx] = (Math.random() * 2 - 1) * 0.02;
       }
     }
     next += period;
@@ -78,25 +79,25 @@ function burrBuffer(sec = 1.0, teethPerSec = 48) {
 }
 
 /**
- * Bean crunch layer: slower, chunkier impacts between burr teeth.
+ * Bean / plastic grit layer: chunkier impacts in the track-clack band.
  */
 function crunchBuffer(sec = 1.2) {
   const c = getCtx();
   const n = Math.max(1, Math.floor(c.sampleRate * sec));
   const buf = c.createBuffer(1, n, c.sampleRate);
   const d = buf.getChannelData(0);
-  let next = Math.floor(c.sampleRate * 0.02);
+  let next = Math.floor(c.sampleRate * 0.015);
   while (next < n) {
-    // irregular bean hits
-    const gap = Math.floor(c.sampleRate * (0.035 + Math.random() * 0.09));
-    const dur = Math.floor(c.sampleRate * (0.004 + Math.random() * 0.012));
+    // irregular grit hits — denser than before
+    const gap = Math.floor(c.sampleRate * (0.022 + Math.random() * 0.055));
+    const dur = Math.floor(c.sampleRate * (0.003 + Math.random() * 0.01));
     for (let p = 0; p < dur && next + p < n; p++) {
-      const env = Math.exp(-p / (dur * 0.35));
-      d[next + p] += (Math.random() * 2 - 1) * env * (0.55 + Math.random() * 0.4);
+      const env = Math.exp(-p / (dur * 0.3));
+      d[next + p] += (Math.random() * 2 - 1) * env * (0.65 + Math.random() * 0.35);
     }
-    // tiny gravel after crunch
-    for (let p = dur; p < dur + 40 && next + p < n; p++) {
-      d[next + p] += (Math.random() * 2 - 1) * 0.08 * Math.exp(-(p - dur) / 12);
+    // gravel after crunch
+    for (let p = dur; p < dur + 55 && next + p < n; p++) {
+      d[next + p] += (Math.random() * 2 - 1) * 0.12 * Math.exp(-(p - dur) / 14);
     }
     next += gap;
   }
@@ -184,60 +185,60 @@ export function startMotor(speedNorm = 1, level = 1) {
 
   const n = Math.max(0.5, Math.min(2.2, speedNorm));
 
-  // --- Burr teeth (main character) ---
+  // --- Burr teeth (main character) — pitched into wall-hit / clack band ---
   const burr = c.createBufferSource();
-  burr.buffer = burrBuffer(1.0, 52 * n);
+  burr.buffer = burrBuffer(1.0, 70 * n);
   burr.loop = true;
   const burrBp = c.createBiquadFilter();
   burrBp.type = "bandpass";
-  burrBp.frequency.value = 1400;
-  burrBp.Q.value = 1.1;
+  burrBp.frequency.value = 1700; // ~wall hit range
+  burrBp.Q.value = 1.0;
   const burrHp = c.createBiquadFilter();
   burrHp.type = "highpass";
-  burrHp.frequency.value = 400;
+  burrHp.frequency.value = 650;
   const burrG = c.createGain();
-  burrG.gain.value = 0.38;
+  burrG.gain.value = 0.42;
 
-  // --- Bean crunch ---
+  // --- Plastic grit / crunch (track-hit colour) ---
   const crunch = c.createBufferSource();
   crunch.buffer = crunchBuffer(1.2);
   crunch.loop = true;
   const crunchBp = c.createBiquadFilter();
   crunchBp.type = "bandpass";
-  crunchBp.frequency.value = 900;
-  crunchBp.Q.value = 0.8;
+  crunchBp.frequency.value = 1300;
+  crunchBp.Q.value = 0.85;
   const crunchG = c.createGain();
-  crunchG.gain.value = 0.28;
+  crunchG.gain.value = 0.34;
 
-  // --- Small motor hum (not a leaf-blower whoosh) ---
+  // --- Small motor hum (supporting, higher than before) ---
   const motor = c.createOscillator();
   motor.type = "square";
-  motor.frequency.value = 110 * n;
+  motor.frequency.value = 180 * n;
   const motorBp = c.createBiquadFilter();
   motorBp.type = "bandpass";
-  motorBp.frequency.value = 220;
-  motorBp.Q.value = 2.5;
+  motorBp.frequency.value = 360;
+  motorBp.Q.value = 2.2;
   const motorG = c.createGain();
-  motorG.gain.value = 0.045;
+  motorG.gain.value = 0.035;
 
-  // Harmonic ring of the burr cage
+  // Harmonic ring of the burr cage — brighter grind overtone
   const ring = c.createOscillator();
   ring.type = "triangle";
-  ring.frequency.value = 340 * n;
+  ring.frequency.value = 520 * n;
   const ringBp = c.createBiquadFilter();
   ringBp.type = "bandpass";
-  ringBp.frequency.value = 680;
-  ringBp.Q.value = 3.5;
+  ringBp.frequency.value = 1100;
+  ringBp.Q.value = 2.8;
   const ringG = c.createGain();
-  ringG.gain.value = 0.03;
+  ringG.gain.value = 0.04;
 
-  // Master: keep presence, kill airy top
+  // Master: keep mid-high grit, still cut ultra-air
   const motorHp = c.createBiquadFilter();
   motorHp.type = "highpass";
-  motorHp.frequency.value = 120;
+  motorHp.frequency.value = 280;
   const motorLp = c.createBiquadFilter();
   motorLp.type = "lowpass";
-  motorLp.frequency.value = 3200;
+  motorLp.frequency.value = 4200;
 
   const mix = c.createGain();
   mix.gain.value = 0.0001;
@@ -308,16 +309,16 @@ export function setMotorSpeed(speedNorm = 1) {
   const n = Math.max(0.5, Math.min(2.2, speedNorm));
   const t = ctx.currentTime;
   try {
-    // Faster grind = faster burr + pitch up
-    motorNodes.burr.playbackRate.setTargetAtTime(0.7 + 0.55 * n, t, 0.08);
-    motorNodes.crunch.playbackRate.setTargetAtTime(0.65 + 0.5 * n, t, 0.1);
-    motorNodes.motor.frequency.setTargetAtTime(90 + 70 * n, t, 0.08);
-    motorNodes.ring.frequency.setTargetAtTime(280 + 160 * n, t, 0.08);
-    motorNodes.burrBp.frequency.setTargetAtTime(1100 + 500 * n, t, 0.1);
-    motorNodes.burrG.gain.setTargetAtTime(0.28 + 0.16 * n, t, 0.08);
-    motorNodes.crunchG.gain.setTargetAtTime(0.2 + 0.12 * n, t, 0.1);
-    motorNodes.motorG.gain.setTargetAtTime(0.03 + 0.025 * n, t, 0.1);
-    motorNodes.ringG.gain.setTargetAtTime(0.02 + 0.02 * n, t, 0.1);
+    // Faster grind = faster burr + pitch up into clack band
+    motorNodes.burr.playbackRate.setTargetAtTime(0.95 + 0.55 * n, t, 0.08);
+    motorNodes.crunch.playbackRate.setTargetAtTime(0.9 + 0.5 * n, t, 0.1);
+    motorNodes.motor.frequency.setTargetAtTime(150 + 90 * n, t, 0.08);
+    motorNodes.ring.frequency.setTargetAtTime(450 + 220 * n, t, 0.08);
+    motorNodes.burrBp.frequency.setTargetAtTime(1450 + 550 * n, t, 0.1);
+    motorNodes.burrG.gain.setTargetAtTime(0.32 + 0.18 * n, t, 0.08);
+    motorNodes.crunchG.gain.setTargetAtTime(0.26 + 0.14 * n, t, 0.1);
+    motorNodes.motorG.gain.setTargetAtTime(0.022 + 0.02 * n, t, 0.1);
+    motorNodes.ringG.gain.setTargetAtTime(0.028 + 0.022 * n, t, 0.1);
   } catch {
     /* ignore */
   }
