@@ -49,6 +49,13 @@ export {
   leaveRails,
   stepOffRail,
   playfieldWallSegments,
+  nearestPlayfieldCorner,
+  cornerExitDir,
+  pickCornerPair,
+  wallSlideDir,
+  wallHitsSorted,
+  deepestWallHit,
+  CORNER_DOT_MAX,
 } from "./train/off-rail.js";
 
 export function placeTrainOnPath(train, hit, opts = {}) {
@@ -152,6 +159,9 @@ export function resetTrainHard(train) {
   train.offRailDistAcc = 0;
   train.offRailStepsDone = 0;
   train.reRailDistLeft = 0;
+  train.cornerLockSteps = 0;
+  train.cornerLockUx = null;
+  train.cornerLockUy = null;
 }
 
 

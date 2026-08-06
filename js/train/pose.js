@@ -34,6 +34,10 @@ export function createTrain() {
     offRailStepsDone: 0,
     /** Distance left before re-rail is allowed */
     reRailDistLeft: 0,
+    /** After corner-redirect material fires, hold exit heading this many steps */
+    cornerLockSteps: 0,
+    cornerLockUx: null,
+    cornerLockUy: null,
   };
 }
 
