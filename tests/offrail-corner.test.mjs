@@ -248,20 +248,28 @@ test("solid walls: 90° mid-edge hit aligns parallel and keeps moving", () => {
   const board = createBoard();
   rebuild(board);
   const bounds = { minX: 0, minY: 0, maxX: 400, maxY: 300 };
-  // Head straight into bottom wall mid-span
+  // Head straight into bottom wall mid-span — check soon after first contact
   const train = makeOffRailTrain(200, 250, Math.PI / 2, 220);
+  let contacted = false;
   for (let i = 0; i < 90; i++) {
     updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+    if (train.y >= bounds.maxY - 20) {
+      contacted = true;
+      break;
+    }
   }
+  assert(contacted, "should reach bottom wall");
   assertEq(train.mode, TrainMode.OFF_RAIL);
-  // Carriage should be roughly parallel to bottom wall (heading ±X)
+  // Shortly after impact: parallel to bottom (±X) before any corner
+  for (let i = 0; i < 8; i++) {
+    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+  }
   assert(
     Math.abs(Math.cos(train.ang)) > 0.85,
-    `expected parallel to bottom, ang=${train.ang}`
+    `expected parallel to bottom soon after impact, ang=${train.ang}`
   );
-  // Not frozen at impact point
   const x0 = train.x;
-  for (let i = 0; i < 60; i++) {
+  for (let i = 0; i < 40; i++) {
     updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
   }
   assert(Math.abs(train.x - x0) > 10, `should slide along wall, dx=${train.x - x0}`);
@@ -352,4 +360,193 @@ test("track-style walls (no cornerRedirect): single wall slide still stable", ()
     if (Math.abs(d) > 1.0) flips++;
   }
   assert(flips < 10, `track wall thrash flips=${flips}`);
+});
+
+// ---------------------------------------------------------------------------
+// Acceptance: mid-edge direction stability, no continuous tap-tap, speed scale
+// ---------------------------------------------------------------------------
+
+test("solid walls: vertical mid-edge ride does not reverse top↔bottom", () => {
+  const board = createBoard();
+  rebuild(board);
+  const bounds = { minX: 0, minY: 0, maxX: 400, maxY: 300 };
+  // Seat on right wall mid-span, head down — never reverse while mid-edge
+  const train = makeOffRailTrain(391, 60, Math.PI / 2, 210);
+  let flips = 0;
+  let prevSign = 1;
+  for (let i = 0; i < 80; i++) {
+    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+    assertEq(train.mode, TrainMode.OFF_RAIL);
+    // Mid-edge only: stay away from top/bottom corners
+    if (train.y > 40 && train.y < 250) {
+      const s = Math.sign(Math.sin(train.ang) || train.vy);
+      if (s && prevSign && s !== prevSign && Math.abs(Math.sin(train.ang)) > 0.7) {
+        flips++;
+      }
+      if (s) prevSign = s;
+    }
+  }
+  assert(flips === 0, `mid-edge vertical 180° flips=${flips}`);
+  // Still made progress downward (or around) — not stuck thrashing
+  assert(train.y > 60, `should advance along wall, y=${train.y}`);
+});
+
+test("solid walls: horizontal mid-edge ride does not reverse left↔right", () => {
+  const board = createBoard();
+  rebuild(board);
+  const bounds = { minX: 0, minY: 0, maxX: 400, maxY: 300 };
+  const train = makeOffRailTrain(50, 291, 0, 210);
+  let flips = 0;
+  let prevSign = 1;
+  for (let i = 0; i < 80; i++) {
+    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+    assertEq(train.mode, TrainMode.OFF_RAIL);
+    if (train.x > 40 && train.x < 350) {
+      const s = Math.sign(Math.cos(train.ang) || train.vx);
+      if (s && prevSign && s !== prevSign && Math.abs(Math.cos(train.ang)) > 0.7) {
+        flips++;
+      }
+      if (s) prevSign = s;
+    }
+  }
+  assert(flips === 0, `mid-edge horizontal 180° flips=${flips}`);
+  assert(train.x > 50, `should advance along wall, x=${train.x}`);
+});
+
+test("solid walls: parallel glide does not continuous wallHit tap-tap", () => {
+  const board = createBoard();
+  rebuild(board);
+  const bounds = { minX: 0, minY: 0, maxX: 400, maxY: 300 };
+  // Already seated on right wall, pure parallel down
+  const train = makeOffRailTrain(391, 80, Math.PI / 2, 210);
+  // Warm-up one frame so any first seating impact is past
+  updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+  let hits = 0;
+  const frames = 90;
+  for (let i = 0; i < frames; i++) {
+    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+    if (train.wallHit) hits++;
+  }
+  // Continuous scrape must not fire every step; allow rare corner contact
+  assert(
+    hits / frames < 0.15,
+    `parallel glide wallHit rate too high: ${hits}/${frames}`
+  );
+});
+
+test("solid walls: head-on impact still sets wallHit once", () => {
+  const board = createBoard();
+  rebuild(board);
+  const bounds = { minX: 0, minY: 0, maxX: 400, maxY: 300 };
+  const train = makeOffRailTrain(200, 200, Math.PI / 2, 280);
+  let sawHit = false;
+  for (let i = 0; i < 60; i++) {
+    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+    if (train.wallHit) sawHit = true;
+  }
+  assert(sawHit, "first bottom impact should raise wallHit");
+});
+
+test("solid walls: resolvePlayfieldAabb parallel on edge is not hit", () => {
+  const bounds = { minX: 0, minY: 0, maxX: 400, maxY: 300 };
+  const R = 9; // WHEEL_RADIUS-ish; resolve takes explicit radius
+  const r = resolvePlayfieldAabb(400 - R, 150, 0, 1, Math.PI / 2, bounds, R);
+  assertEq(r.hit, false);
+  assert(r.uy > 0.9, `keep down slide uy=${r.uy}`);
+  // Into-wall component is killed and counts as hit
+  const r2 = resolvePlayfieldAabb(400 - R, 150, 0.8, 0.2, 0.2, bounds, R);
+  assert(r2.hit === true, "into-wall impact must hit");
+  assert(Math.abs(r2.ux) < 0.05, `into-wall ux killed, ux=${r2.ux}`);
+});
+
+test("solid walls: corner turns free-axis, not reverse thrash", () => {
+  const board = createBoard();
+  rebuild(board);
+  const bounds = { minX: 0, minY: 0, maxX: 400, maxY: 300 };
+  // Down right wall into BR — must turn onto bottom (left) not bounce back up
+  const train = makeOffRailTrain(391, 200, Math.PI / 2, 210);
+  for (let i = 0; i < 120; i++) {
+    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+  }
+  assertEq(train.mode, TrainMode.OFF_RAIL);
+  // After BR, should be on bottom traveling left or still approaching bottom
+  assert(
+    train.y > 250 || Math.abs(Math.cos(train.ang)) > 0.7,
+    `expected turn onto bottom after BR, pos=${train.x},${train.y} ang=${train.ang}`
+  );
+  // Not stuck at BR vertex
+  assert(
+    Math.hypot(train.x - 400, train.y - 300) > 20,
+    `stuck on BR corner`
+  );
+});
+
+test("solid walls: fixed-step distance scales with speed (no thrash phantom)", () => {
+  const board = createBoard();
+  rebuild(board);
+  const bounds = { minX: 0, minY: 0, maxX: 400, maxY: 300 };
+
+  function freeTravel(speed, frames) {
+    const t = makeOffRailTrain(40, 150, 0, speed);
+    const x0 = t.x;
+    for (let i = 0; i < frames; i++) {
+      updateTrain(t, board, 1 / 60, bounds, { solidPlayfield: true });
+    }
+    return Math.abs(t.x - x0);
+  }
+  function wallTravel(speed, frames) {
+    const t = makeOffRailTrain(391, 40, Math.PI / 2, speed);
+    const y0 = t.y;
+    for (let i = 0; i < frames; i++) {
+      updateTrain(t, board, 1 / 60, bounds, { solidPlayfield: true });
+    }
+    return Math.abs(t.y - y0);
+  }
+
+  const d1 = freeTravel(100, 50);
+  const d2 = freeTravel(200, 50);
+  assert(d1 > 20 && d2 > 20, `free travel too small d1=${d1} d2=${d2}`);
+  const freeRatio = d2 / d1;
+  assert(
+    freeRatio > 1.85 && freeRatio < 2.15,
+    `free distance ratio should ≈2, got ${freeRatio}`
+  );
+
+  const w1 = wallTravel(100, 40);
+  const w2 = wallTravel(200, 40);
+  assert(w1 > 15 && w2 > 15, `wall travel too small w1=${w1} w2=${w2}`);
+  const wallRatio = w2 / w1;
+  assert(
+    wallRatio > 1.85 && wallRatio < 2.15,
+    `wall distance ratio should ≈2, got ${wallRatio}`
+  );
+});
+
+test("solid walls: perimeter loop visits four sides without mid-edge reverse", () => {
+  const board = createBoard();
+  rebuild(board);
+  const bounds = { minX: 0, minY: 0, maxX: 400, maxY: 300 };
+  const train = makeOffRailTrain(391, 50, Math.PI / 2, 210);
+  let midEdgeFlips = 0;
+  let prevAng = train.ang;
+  const sides = { right: 0, bottom: 0, left: 0, top: 0 };
+  for (let i = 0; i < 360; i++) {
+    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+    assertEq(train.mode, TrainMode.OFF_RAIL);
+    const nearCorner =
+      (train.x < 35 || train.x > 365) && (train.y < 35 || train.y > 265);
+    let d = train.ang - prevAng;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    if (!nearCorner && Math.abs(d) > 2.5) midEdgeFlips++;
+    prevAng = train.ang;
+    if (train.x > 370) sides.right++;
+    if (train.y > 270) sides.bottom++;
+    if (train.x < 30) sides.left++;
+    if (train.y < 30) sides.top++;
+  }
+  assert(midEdgeFlips === 0, `mid-edge 180° flips on perimeter=${midEdgeFlips}`);
+  // Should circumnavigate at least three sides (full loop depends on path length)
+  const visited = Object.values(sides).filter((n) => n > 5).length;
+  assert(visited >= 3, `expected ≥3 sides visited, got ${JSON.stringify(sides)}`);
 });

@@ -55,8 +55,19 @@ export function playfieldWallSegments(bounds) {
 
 /**
  * AABB playfield: seat body inside, kill velocity into walls, align heading
- * to remaining free motion (slide). Corners pick a free axis from prefer.
- * Exported for unit tests.
+ * to remaining free motion (slide).
+ *
+ * Hit semantics (SFX / tap-tap):
+ *  - `hit` only when an into-wall velocity component is killed (impact), or
+ *    position was outside and got clamped.
+ *  - Pure parallel glide on an edge is NOT a hit (no continuous tap-tap).
+ *
+ * Direction (thrash):
+ *  - Mid-edge: keep free-axis velocity sign; never re-pick from stale prefer.
+ *  - Dual-edge corner when stopped: free axes only, scored by pre-impact
+ *    travel then preferAng (turn the corner, don't reverse along the wall).
+ *
+ * Exported for unit tests. All solid-playfield logic lives here for revert.
  */
 export function resolvePlayfieldAabb(
   x,
@@ -74,31 +85,50 @@ export function resolvePlayfieldAabb(
   const hiX = bounds.maxX - radius;
   const loY = bounds.minY + radius;
   const hiY = bounds.maxY - radius;
-  /** On-boundary tolerance — strict > after clamp never fired, so vertical
-   *  walls kept into-wall velocity and jammed (180° / stuck). */
+  /** On-boundary tolerance — inclusive so vertical walls kill into-vel. */
   const on = 0.75;
   let hit = false;
 
-  // Always seat inside the inner rect first
-  if (x < loX) x = loX;
-  if (x > hiX) x = hiX;
-  if (y < loY) y = loY;
-  if (y > hiY) y = hiY;
+  // Capture travel before wall kills — used to keep along-wall sign / turn
+  const inUx = ux;
+  const inUy = uy;
 
-  // Kill velocity *into* any wall we're on (inclusive edges)
-  if (x <= loX + on && ux < -1e-6) {
+  // Seat inside the inner rect; clamp from outside counts as impact
+  if (x < loX) {
+    x = loX;
+    hit = true;
+  } else if (x > hiX) {
+    x = hiX;
+    hit = true;
+  }
+  if (y < loY) {
+    y = loY;
+    hit = true;
+  } else if (y > hiY) {
+    y = hiY;
+    hit = true;
+  }
+
+  const onLeft = x <= loX + on;
+  const onRight = x >= hiX - on;
+  const onTop = y <= loY + on;
+  const onBottom = y >= hiY - on;
+
+  // Kill velocity *into* walls we're on — real impact only when we zero a
+  // nonzero into-wall component (not when already tangent / parallel).
+  if (onLeft && ux < -1e-6) {
     ux = 0;
     hit = true;
   }
-  if (x >= hiX - on && ux > 1e-6) {
+  if (onRight && ux > 1e-6) {
     ux = 0;
     hit = true;
   }
-  if (y <= loY + on && uy < -1e-6) {
+  if (onTop && uy < -1e-6) {
     uy = 0;
     hit = true;
   }
-  if (y >= hiY - on && uy > 1e-6) {
+  if (onBottom && uy > 1e-6) {
     uy = 0;
     hit = true;
   }
@@ -106,76 +136,74 @@ export function resolvePlayfieldAabb(
   const hx = Math.cos(preferAng);
   const hy = Math.sin(preferAng);
   let sp = Math.hypot(ux, uy);
+  const wallCount =
+    (onLeft ? 1 : 0) + (onRight ? 1 : 0) + (onTop ? 1 : 0) + (onBottom ? 1 : 0);
 
-  // Also treat "sitting on wall with free tangent motion" as contact for SFX
-  const onLeft = x <= loX + on;
-  const onRight = x >= hiX - on;
-  const onTop = y <= loY + on;
-  const onBottom = y >= hiY - on;
-  if (onLeft || onRight || onTop || onBottom) hit = true;
-
-  if (sp < 0.08 && (onLeft || onRight || onTop || onBottom)) {
-    // Fully stopped into wall(s): pick slide along free tangents via prefer
+  /**
+   * Free cardinal dirs that do not dig into a seated wall.
+   * Dual-edge corners only allow inward free axes (turn, not reverse).
+   */
+  function freeDirs() {
     const cands = [
       { ux: 1, uy: 0 },
       { ux: -1, uy: 0 },
       { ux: 0, uy: 1 },
       { ux: 0, uy: -1 },
     ];
+    return cands.filter((c) => {
+      if (onLeft && c.ux < 0) return false;
+      if (onRight && c.ux > 0) return false;
+      if (onTop && c.uy < 0) return false;
+      if (onBottom && c.uy > 0) return false;
+      return true;
+    });
+  }
+
+  /** Score free dir: prefer continuing inbound travel, then preferAng. */
+  function scoreDir(c) {
+    // Strong weight on pre-impact travel so mid-edge / corner don't reverse
+    const cont = c.ux * inUx + c.uy * inUy;
+    const pref = c.ux * hx + c.uy * hy;
+    return cont * 4 + pref;
+  }
+
+  function pickBest(dirs) {
     let best = null;
     let bestScore = -Infinity;
-    for (const c of cands) {
-      if (onLeft && c.ux < 0) continue;
-      if (onRight && c.ux > 0) continue;
-      if (onTop && c.uy < 0) continue;
-      if (onBottom && c.uy > 0) continue;
-      const score = c.ux * hx + c.uy * hy;
-      if (score > bestScore) {
-        bestScore = score;
+    for (const c of dirs) {
+      const s = scoreDir(c);
+      if (s > bestScore) {
+        bestScore = s;
         best = c;
       }
     }
-    if (!best) {
-      // Corner: free dirs are into the room (away from both walls)
-      const inward = [];
-      if (onRight) inward.push({ ux: -1, uy: 0 });
-      if (onLeft) inward.push({ ux: 1, uy: 0 });
-      if (onBottom) inward.push({ ux: 0, uy: -1 });
-      if (onTop) inward.push({ ux: 0, uy: 1 });
-      best = inward[0] || { ux: hx, uy: hy };
-      bestScore = -Infinity;
-      for (const c of inward) {
-        const s = c.ux * hx + c.uy * hy;
-        if (s > bestScore) {
-          bestScore = s;
-          best = c;
-        }
-      }
+    return best;
+  }
+
+  if (sp < 0.08 && wallCount > 0) {
+    // Fully stopped into wall(s): choose free slide — never use into-wall dirs
+    let dirs = freeDirs();
+    if (!dirs.length) {
+      // Degenerate: force inward from each seated wall
+      dirs = [];
+      if (onRight) dirs.push({ ux: -1, uy: 0 });
+      if (onLeft) dirs.push({ ux: 1, uy: 0 });
+      if (onBottom) dirs.push({ ux: 0, uy: -1 });
+      if (onTop) dirs.push({ ux: 0, uy: 1 });
     }
+    const best = pickBest(dirs) || { ux: hx, uy: hy };
     ux = best.ux;
     uy = best.uy;
     sp = 1;
-  }
-
-  if (sp > 1e-6) {
+  } else if (sp > 1e-6) {
+    // Keep residual free motion (along-wall sign preserved)
     ux /= sp;
     uy /= sp;
   } else {
-    // Last resort: free axis from prefer
+    // No wall, no residual — aim by prefer
     ux = hx;
     uy = hy;
-    if (onLeft && ux < 0) ux = 0;
-    if (onRight && ux > 0) ux = 0;
-    if (onTop && uy < 0) uy = 0;
-    if (onBottom && uy > 0) uy = 0;
-    sp = Math.hypot(ux, uy);
-    if (sp < 1e-6) {
-      if (!onRight) ux = 1;
-      else if (!onLeft) ux = -1;
-      else if (!onBottom) uy = 1;
-      else uy = -1;
-      sp = 1;
-    }
+    sp = Math.hypot(ux, uy) || 1;
     ux /= sp;
     uy /= sp;
   }
@@ -286,12 +314,15 @@ export function stepOffRail(train, board, dt, bounds, opts = {}) {
 
     // Solid playfield: AABB align + slide (not segment dual-hit thrash)
     if (solidPlayfield && bounds) {
+      // Prefer tracks current slide so corners turn instead of reverse thrash
+      const slidePrefer =
+        train.offRailPreferAng != null ? train.offRailPreferAng : preferAng;
       const r = resolvePlayfieldAabb(
         x,
         y,
         ux,
         uy,
-        preferAng,
+        slidePrefer,
         bounds,
         WHEEL_RADIUS
       );
@@ -301,6 +332,8 @@ export function stepOffRail(train, board, dt, bounds, opts = {}) {
       uy = r.uy;
       ang = r.ang;
       if (r.hit) hitAny = true;
+      // Update leave-rails prefer to *current* free motion (not stale derail ang)
+      train.offRailPreferAng = ang;
     }
 
     const len = Math.hypot(ux, uy);
@@ -308,9 +341,11 @@ export function stepOffRail(train, board, dt, bounds, opts = {}) {
       ux /= len;
       uy /= len;
     } else {
-      ux = Math.cos(preferAng);
-      uy = Math.sin(preferAng);
-      ang = preferAng;
+      const pa =
+        train.offRailPreferAng != null ? train.offRailPreferAng : preferAng;
+      ux = Math.cos(pa);
+      uy = Math.sin(pa);
+      ang = pa;
     }
 
     train.x = x;
@@ -318,6 +353,7 @@ export function stepOffRail(train, board, dt, bounds, opts = {}) {
     train.ang = ang;
     train.vx = ux * speed;
     train.vy = uy * speed;
+    // wallHit = true only if this frame had impact (not parallel scrape)
     train.wallHit = hitAny;
 
     if (train.reRailDistLeft <= 0) {
