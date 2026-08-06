@@ -279,30 +279,6 @@ export const ARNTENOUGHRAILS_LAYOUT = {
       "r": 38,
       "kind": "dome",
       "color": "#5aaf3a"
-    },
-    {
-      "id": "pot1",
-      "x": 520,
-      "y": 700,
-      "r": 18,
-      "kind": "pot",
-      "color": "#c4783a"
-    },
-    {
-      "id": "pot2",
-      "x": 450,
-      "y": 380,
-      "r": 16,
-      "kind": "pot",
-      "color": "#a85c2e"
-    },
-    {
-      "id": "pot3",
-      "x": 340,
-      "y": 250,
-      "r": 17,
-      "kind": "pot",
-      "color": "#b86838"
     }
   ],
   "train": {

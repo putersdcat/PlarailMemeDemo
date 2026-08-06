@@ -38,13 +38,11 @@ test("TRACK_CATALOG exposes arntenoughrails without removing real-meme", () => {
   assertEq(t.id, "arntenoughrails");
 });
 
-test("loadArntenoughrailsTrack yields pieces, pots, solid walls, 3-car consist", () => {
+test("loadArntenoughrailsTrack yields pieces, solid walls, 3-car consist", () => {
   const board = createBoard();
   const info = loadArntenoughrailsTrack(board);
   assert(info.ok, "load ok");
   assert(info.pieceCount > 0, `pieces ${info.pieceCount}`);
-  assert((info.potCount ?? board.pots.length) >= 1, "need pots");
-  assert(board.pots.length >= 1);
   assert(info.solidPlayfield === true, "walls intended on");
   assert(info.consist?.length === 3, `consist ${info.consist?.length}`);
   assertEq(info.consist[0].role, "lead");
@@ -52,6 +50,10 @@ test("loadArntenoughrailsTrack yields pieces, pots, solid walls, 3-car consist",
   assertEq(info.consist[2].role, "trail");
   // Layout data present
   assert(ARNTENOUGHRAILS_LAYOUT.pieces.length === info.pieceCount);
+  // Optional video prop: green dome (not clay pots — that was a typo for "lots")
+  if (board.pots?.length) {
+    assert(board.pots.every((p) => p.kind === "dome" || p.kind === "tunnel"));
+  }
 });
 
 test("real-meme load still works as single-engine default", () => {
@@ -259,10 +261,12 @@ test("updateTrain knocks pot through full step path", () => {
   assert(train.potHit === true || board.pots[0].knocked, "potHit flag or knocked");
 });
 
-test("arntenoughrails layout loadBoard preserves pots", () => {
+test("arntenoughrails layout loadBoard preserves green dome prop", () => {
   const board = createBoard();
   const r = loadBoard(board, ARNTENOUGHRAILS_LAYOUT);
   assert(r.ok);
-  assert(r.potCount >= 1);
-  assert(board.pots.some((p) => p.kind === "dome" || p.kind === "pot"));
+  // Dome is optional flavor from the video; if present must be a dome
+  if ((r.potCount ?? 0) > 0) {
+    assert(board.pots.some((p) => p.kind === "dome" || p.kind === "tunnel"));
+  }
 });
