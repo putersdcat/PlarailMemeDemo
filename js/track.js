@@ -30,6 +30,8 @@ export function createBoard() {
     walls: [],
     pathIndex: [],
     connectors: [],
+    /** Freestanding knockable pots / domes (layout props, not track pieces). */
+    pots: [],
   };
 }
 
@@ -82,12 +84,13 @@ export function removePiece(board, id) {
 export function clearBoard(board) {
   board.pieces = [];
   board.selectedId = null;
+  board.pots = [];
   rebuild(board);
 }
 
 /** Serialize board to a plain JSON-friendly object (native layout format). */
 export function serializeBoard(board) {
-  return {
+  const out = {
     format: "plarail-meme-layout",
     version: 1,
     pieces: board.pieces.map((p) => ({
@@ -102,6 +105,18 @@ export function serializeBoard(board) {
       color: normalizePieceColor(p.color),
     })),
   };
+  if (board.pots?.length) {
+    out.pots = board.pots.map((p) => ({
+      id: p.id,
+      x: p.x,
+      y: p.y,
+      r: p.r,
+      kind: p.kind || "pot",
+      color: p.color,
+      knocked: !!p.knocked,
+    }));
+  }
+  return out;
 }
 
 /**
@@ -149,8 +164,26 @@ export function loadBoard(board, data) {
     }
   }
   if (maxN > 0) nextId = Math.max(nextId, maxN + 1);
+  // Knockable freestanding props (pots / green dome)
+  if (Array.isArray(data.pots)) {
+    board.pots = data.pots.map((p, i) => ({
+      id: p.id || `pot${i + 1}`,
+      x: Number(p.x) || 0,
+      y: Number(p.y) || 0,
+      r: Number(p.r) > 0 ? Number(p.r) : 22,
+      kind: p.kind || "pot",
+      color: p.color || "#5aaf3a",
+      knocked: !!p.knocked,
+      vx: 0,
+      vy: 0,
+      ang: Number(p.ang) || 0,
+      spin: 0,
+    }));
+  } else {
+    board.pots = [];
+  }
   rebuild(board);
-  return { ok: true, pieceCount: board.pieces.length };
+  return { ok: true, pieceCount: board.pieces.length, potCount: board.pots.length };
 }
 
 export function getPiece(board, id) {

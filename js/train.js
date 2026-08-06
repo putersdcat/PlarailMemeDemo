@@ -18,6 +18,15 @@ import {
 } from "./train/constants.js";
 import { frontAxlePos, bodyFromFrontAxle } from "./train/pose.js";
 import { leaveRails, stepOffRail } from "./train/off-rail.js";
+import {
+  ensureConsist,
+  placeFollowers,
+  knockPots,
+  threeCarConsistSpec,
+  loadPotsFromLayout,
+  COUPLER_DIST,
+  POT_RADIUS,
+} from "./train/consist.js";
 
 export {
   TrainMode,
@@ -59,6 +68,16 @@ export {
   CORNER_DOT_MAX,
 } from "./train/off-rail.js";
 
+export {
+  ensureConsist,
+  placeFollowers,
+  knockPots,
+  threeCarConsistSpec,
+  loadPotsFromLayout,
+  COUPLER_DIST,
+  POT_RADIUS,
+};
+
 export function placeTrainOnPath(train, hit, opts = {}) {
   if (!hit?.path) return false;
   train.mode = TrainMode.IDLE;
@@ -87,6 +106,11 @@ export function placeTrainOnPath(train, hit, opts = {}) {
   train.offRailDistAcc = 0;
   train.offRailStepsDone = 0;
   train.reRailDistLeft = 0;
+  // Seat multi-car chain behind lead
+  if (train.consistSpec?.length || train.cars?.length > 1) {
+    ensureConsist(train);
+    placeFollowers(train);
+  }
   return true;
 }
 
@@ -163,6 +187,14 @@ export function resetTrainHard(train) {
   train.cornerLockSteps = 0;
   train.cornerLockUx = null;
   train.cornerLockUy = null;
+  train.potHit = false;
+  // Keep consistSpec; re-seat cars if multi-unit
+  if (train.consistSpec?.length) {
+    ensureConsist(train, train.consistSpec);
+    placeFollowers(train);
+  } else {
+    train.cars = null;
+  }
 }
 
 
@@ -171,14 +203,31 @@ export function resetTrainHard(train) {
  * @param {boolean} [opts.solidPlayfield] bounce on playfield perimeter instead of STOPPED
  */
 export function updateTrain(train, board, dt, bounds, opts = {}) {
-  if (train.mode === TrainMode.IDLE || train.mode === TrainMode.STOPPED) return;
+  if (train.mode === TrainMode.IDLE || train.mode === TrainMode.STOPPED) {
+    // Still seat followers if multi-car while idle (visual)
+    if (train.cars?.length > 1) placeFollowers(train);
+    return;
+  }
 
   if (train.reRailCooldown > 0) train.reRailCooldown -= dt;
+  train.potHit = false;
 
   if (train.mode === TrainMode.ON_RAIL) {
     stepOnRail(train, board, dt);
   } else if (train.mode === TrainMode.OFF_RAIL) {
     stepOffRail(train, board, dt, bounds, opts);
+  }
+
+  // Linked cars trail the lead after physics step
+  if (train.cars?.length > 1 || train.consistSpec?.length > 1) {
+    ensureConsist(train);
+    placeFollowers(train);
+  }
+
+  // Knock freestanding pots / dome with any car body
+  if (board?.pots?.length) {
+    const n = knockPots(train, board, dt);
+    if (n > 0) train.potHit = true;
   }
 }
 

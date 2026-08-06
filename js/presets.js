@@ -5,6 +5,10 @@
 
 import { UNIT, PIECE_TYPES } from "./geometry.js";
 import { addPiece, clearBoard, rebuild, loadBoard } from "./track.js";
+import { ARNTENOUGHRAILS_LAYOUT } from "./layouts-arntenoughrails.js";
+import { threeCarConsistSpec } from "./train/consist.js";
+
+export { ARNTENOUGHRAILS_LAYOUT };
 
 /** Absolute layout — functionally tested gold standard. */
 export const REAL_MEME_LAYOUT = {
@@ -378,7 +382,35 @@ export function loadRealMemeTrack(board) {
     pieceCount: result.pieceCount,
     trainHint: th,
     speed: th.speed,
+    solidPlayfield: false,
+    consist: null,
     note: `Loaded Real-2-Sim meme track (${result.pieceCount} pieces). Drag train onto a rail, then Start.`,
+  };
+}
+
+/**
+ * Load godi3 "not enough rails" meme track — sparse S-curve, multi-car, pots, walls.
+ * https://x.com/godi3/status/945956752515670016
+ */
+export function loadArntenoughrailsTrack(board) {
+  const result = loadBoard(board, ARNTENOUGHRAILS_LAYOUT);
+  const t = ARNTENOUGHRAILS_LAYOUT.train;
+  const th = t
+    ? { x: t.x, y: t.y, ang: t.ang, speed: t.speed ?? 200 }
+    : { x: 180, y: 580, ang: -Math.PI / 2, speed: 200 };
+  const consist =
+    t?.consist?.length >= 3 ? t.consist : threeCarConsistSpec();
+  return {
+    ok: result.ok,
+    pieceCount: result.pieceCount,
+    potCount: result.potCount ?? board.pots?.length ?? 0,
+    trainHint: th,
+    speed: th.speed,
+    solidPlayfield: true,
+    consist,
+    note: `Loaded “Not enough rails” (${result.pieceCount} pieces, ${
+      result.potCount ?? 0
+    } pots, 3-car train). Solid walls on — Start and watch the chaos.`,
   };
 }
 
@@ -391,6 +423,11 @@ export const TRACK_CATALOG = [
     id: "real-meme",
     name: "Real-2-Sim meme track",
     load: loadRealMemeTrack,
+  },
+  {
+    id: "arntenoughrails",
+    name: "Not enough rails (godi3)",
+    load: loadArntenoughrailsTrack,
   },
 ];
 

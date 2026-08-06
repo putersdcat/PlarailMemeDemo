@@ -38,6 +38,15 @@ export function createTrain() {
     cornerLockSteps: 0,
     cornerLockUx: null,
     cornerLockUy: null,
+    /**
+     * Linked cars (lead + followers). Empty/absent → single engine.
+     * Lead always mirrors train.x/y/ang after placeFollowers.
+     */
+    cars: null,
+    /** Spec used to (re)build cars: [{role, kind}, ...] */
+    consistSpec: null,
+    /** Pots knocked this frame (SFX hook) */
+    potHit: false,
   };
 }
 

@@ -4,8 +4,8 @@
 
 import { UNIT } from "./geometry.js";
 import { FRONT_AXLE_OFFSET, TrainMode } from "./train.js";
-import { drawTrain } from "./render/draw-train.js";
-export { drawTrain } from "./render/draw-train.js";
+import { drawTrain, drawPot } from "./render/draw-train.js";
+export { drawTrain, drawPot } from "./render/draw-train.js";
 import { drawPiece } from "./render/draw-piece.js";
 export { drawPiece } from "./render/draw-piece.js";
 
@@ -147,6 +147,11 @@ export function drawScene(ctx, view, board, train, ghost, opts = {}) {
       ctx.lineTo(wseg.x2, wseg.y2);
       ctx.stroke();
     }
+  }
+
+  // Knockable pots / green dome (under train)
+  if (board.pots?.length) {
+    for (const pot of board.pots) drawPot(ctx, pot);
   }
 
   // Ghost (palette place or moving piece preview)

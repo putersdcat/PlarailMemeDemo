@@ -47,6 +47,9 @@ import {
   updateTrain,
   modeLabel,
   TrainMode,
+  ensureConsist,
+  placeFollowers,
+  threeCarConsistSpec,
 } from "./train.js";
 import { resizeCanvas, drawScene, drawPaletteIcon } from "./render.js";
 import { loadRealMemeTrack, TRACK_CATALOG, getTrackById } from "./presets.js";
@@ -323,6 +326,28 @@ if (trackSelect) {
   }
 }
 
+function applyTrackLoadInfo(info) {
+  // Multi-car consist (lead + mid + trailing pulled engine)
+  if (info?.consist?.length) {
+    train.consistSpec = info.consist;
+    ensureConsist(train, info.consist);
+  } else {
+    train.consistSpec = null;
+    train.cars = null;
+  }
+  // This layout wants solid outer walls (not-enough-rails chaos)
+  if (info?.solidPlayfield) setSolidPlayfield(true);
+  clearSelection();
+  placeTrainAtHint(info.trainHint);
+  if (train.consistSpec?.length) {
+    ensureConsist(train);
+    placeFollowers(train);
+  }
+  applySpeed(info.speed ?? info.trainHint?.speed ?? 210);
+  persistLayout();
+  fitBoardToView(48);
+}
+
 function loadSelectedTrack() {
   const id = trackSelect?.value || TRACK_CATALOG[0]?.id;
   const entry = getTrackById(id);
@@ -331,11 +356,7 @@ function loadSelectedTrack() {
     return;
   }
   const info = entry.load(board);
-  clearSelection();
-  placeTrainAtHint(info.trainHint);
-  applySpeed(info.speed ?? info.trainHint?.speed ?? 210);
-  persistLayout();
-  fitBoardToView(48);
+  applyTrackLoadInfo(info);
   setHint(info.note || `Loaded ${entry.name}.`);
 }
 
