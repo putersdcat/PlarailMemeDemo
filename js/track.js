@@ -138,15 +138,17 @@ export function loadBoard(board, data) {
         color: raw.color || "blue",
       }
     );
+    // Preserve authored ids so layout fidelity checks and saves match disk.
     if (raw.id && typeof raw.id === "string") {
-      // Keep generated id; optional restore not required for play
+      piece.id = raw.id;
+      const m = /^p(\d+)$/.exec(raw.id);
+      if (m) maxN = Math.max(maxN, Number(m[1]));
+    } else {
+      const m = /^p(\d+)$/.exec(piece.id);
+      if (m) maxN = Math.max(maxN, Number(m[1]));
     }
-    const m = /^p(\d+)$/.exec(piece.id);
-    if (m) maxN = Math.max(maxN, Number(m[1]));
   }
-  if (maxN > 0) {
-    // nextId is module-private; bump via addPiece already incremented
-  }
+  if (maxN > 0) nextId = Math.max(nextId, maxN + 1);
   rebuild(board);
   return { ok: true, pieceCount: board.pieces.length };
 }
@@ -283,98 +285,84 @@ function eachLinkedPair(board, fn) {
   }
 }
 
+function linksOf(board, pieceId) {
+  return (board.connectors || []).filter(
+    (c) => c.pieceId === pieceId && c.linked
+  ).length;
+}
+
 /**
- * Translate pieces so each linked connector pair meets at its midpoint.
- * Multiple links on one piece average their required translations (Jacobi).
- * @returns {boolean} true if any piece moved by more than epsilon
+ * Safe weld: close joint gaps without warping authored multi-link layouts.
+ * - Leaf (1 link): snap fully onto mate (up to LINK_DIST) — free ends only.
+ * - Dual+ hubs: micro midpoint only when gap ≤ WELD_HUB_MAX_PX.
+ * Large dual-hub residuals must be fixed in layout JSON, not by runtime yank.
+ * @returns {boolean} true if any piece moved
  */
 export function weldLinkedConnectors(board) {
   if (!board?.connectors?.length) return false;
 
-  /** @type {Map<string, { dx: number, dy: number, n: number }>} */
-  const acc = new Map();
-
-  const add = (pieceId, dx, dy) => {
-    let m = acc.get(pieceId);
-    if (!m) {
-      m = { dx: 0, dy: 0, n: 0 };
-      acc.set(pieceId, m);
-    }
-    m.dx += dx;
-    m.dy += dy;
-    m.n += 1;
-  };
-
-  eachLinkedPair(board, (a, b) => {
-    const mx = (a.wx + b.wx) / 2;
-    const my = (a.wy + b.wy) / 2;
-    add(a.pieceId, mx - a.wx, my - a.wy);
-    add(b.pieceId, mx - b.wx, my - b.wy);
-  });
-
+  /** Dual-hub micro weld cap — never Jacobi-warp gold multi-link layouts. */
+  const WELD_HUB_MAX_PX = 3.0;
+  /** Leaf free-end snap: same reach as connector pairing. */
+  const WELD_LEAF_MAX_PX = SNAP_DIST * 1.15;
   const EPS = 1e-9;
   let moved = false;
-  for (const [pieceId, m] of acc) {
-    const dx = m.dx / m.n;
-    const dy = m.dy / m.n;
-    if (Math.hypot(dx, dy) < EPS) continue;
-    const p = getPiece(board, pieceId);
-    if (!p) continue;
-    p.x += dx;
-    p.y += dy;
-    moved = true;
-  }
-  return moved;
-}
 
-/**
- * Fully weld one pair: move the freer piece onto the more-anchored mate
- * (or both halfway if equal link counts). Reduces fighting in multi-link nets.
- */
-function weldOnePairFull(board, a, b) {
-  const pa = getPiece(board, a.pieceId);
-  const pb = getPiece(board, b.pieceId);
-  if (!pa || !pb) return false;
-  const ga = worldGeometry(pa);
-  const gb = worldGeometry(pb);
-  const ca = ga.connectors.find((c) => c.id === a.id);
-  const cb = gb.connectors.find((c) => c.id === b.id);
-  if (!ca || !cb) return false;
-  const d = Math.hypot(ca.wx - cb.wx, ca.wy - cb.wy);
-  if (d < 1e-9) return false;
-
-  const linksOf = (pieceId) =>
-    (board.connectors || []).filter((c) => c.pieceId === pieceId && c.linked)
-      .length;
-  const la = linksOf(a.pieceId);
-  const lb = linksOf(b.pieceId);
-
-  if (la < lb) {
-    // Move A onto B's port
-    pa.x += cb.wx - ca.wx;
-    pa.y += cb.wy - ca.wy;
-  } else if (lb < la) {
-    pb.x += ca.wx - cb.wx;
-    pb.y += ca.wy - cb.wy;
-  } else {
-    const mx = (ca.wx + cb.wx) / 2;
-    const my = (ca.wy + cb.wy) / 2;
-    pa.x += mx - ca.wx;
-    pa.y += my - ca.wy;
-    pb.x += mx - cb.wx;
-    pb.y += my - cb.wy;
-  }
-  return true;
-}
-
-function collectLinkedPairsWithDist(board) {
-  const out = [];
+  const pairs = [];
   eachLinkedPair(board, (a, b) => {
     const d = Math.hypot(a.wx - b.wx, a.wy - b.wy);
-    out.push({ a, b, d });
+    pairs.push({
+      a,
+      b,
+      d,
+      la: linksOf(board, a.pieceId),
+      lb: linksOf(board, b.pieceId),
+    });
   });
-  out.sort((p, q) => q.d - p.d);
-  return out;
+  pairs.sort((p, q) => {
+    const leafP = (p.la === 1 ? 0 : 1) + (p.lb === 1 ? 0 : 1);
+    const leafQ = (q.la === 1 ? 0 : 1) + (q.lb === 1 ? 0 : 1);
+    if (leafP !== leafQ) return leafP - leafQ;
+    return q.d - p.d;
+  });
+
+  for (const { a, b, la, lb } of pairs) {
+    const pa = getPiece(board, a.pieceId);
+    const pb = getPiece(board, b.pieceId);
+    if (!pa || !pb) continue;
+
+    const ga = worldGeometry(pa);
+    const gb = worldGeometry(pb);
+    const ca = ga.connectors.find((c) => c.id === a.id);
+    const cb = gb.connectors.find((c) => c.id === b.id);
+    if (!ca || !cb) continue;
+    const gap = Math.hypot(ca.wx - cb.wx, ca.wy - cb.wy);
+    if (gap < EPS) continue;
+
+    if (la === 1 && lb >= 1) {
+      if (gap > WELD_LEAF_MAX_PX) continue;
+      pa.x += cb.wx - ca.wx;
+      pa.y += cb.wy - ca.wy;
+      moved = true;
+    } else if (lb === 1 && la >= 1) {
+      if (gap > WELD_LEAF_MAX_PX) continue;
+      pb.x += ca.wx - cb.wx;
+      pb.y += ca.wy - cb.wy;
+      moved = true;
+    } else {
+      // Both multi-linked: only micro midpoint so overconstrained loops
+      // cannot drag the whole board (was the gold-layout warp).
+      if (gap > WELD_HUB_MAX_PX) continue;
+      const mx = (ca.wx + cb.wx) / 2;
+      const my = (ca.wy + cb.wy) / 2;
+      pa.x += mx - ca.wx;
+      pa.y += my - ca.wy;
+      pb.x += mx - cb.wx;
+      pb.y += my - cb.wy;
+      moved = true;
+    }
+  }
+  return moved;
 }
 
 /** Max linked-pair gap after rebuild (for tests / diagnostics). */
@@ -387,32 +375,26 @@ export function maxLinkedPairDistance(board) {
   return maxD;
 }
 
+/** Max |piece pose delta| vs a reference piece list (layout fidelity). */
+export function maxPiecePoseDelta(board, refPieces) {
+  let maxD = 0;
+  for (const raw of refPieces || []) {
+    const p = getPiece(board, raw.id);
+    if (!p) continue;
+    const d = Math.hypot(p.x - raw.x, p.y - raw.y);
+    if (d > maxD) maxD = d;
+  }
+  return maxD;
+}
+
 /**
- * Rebuild world caches + connectivity, then weld linked ports to midpoints
- * so soft-snap / layout drift does not leave multi-pixel joint gaps.
+ * Rebuild world caches + connectivity, then safe-weld linked ports.
  */
 export function rebuild(board) {
-  // 1) Averaged midpoint weld (Jacobi) for multi-link stability
-  for (let i = 0; i < 16; i++) {
+  // Leaf snaps + micro dual-hub welds; a few passes for chains of leaves
+  for (let i = 0; i < 8; i++) {
     rebuildCachesAndPairs(board);
     if (!weldLinkedConnectors(board)) break;
-  }
-  // 2) Sweep largest gaps first: snap freer piece onto mate (or midpoint)
-  let prevMax = Infinity;
-  for (let i = 0; i < 64; i++) {
-    rebuildCachesAndPairs(board);
-    const pairs = collectLinkedPairsWithDist(board);
-    const worst = pairs[0];
-    if (!worst || worst.d < 1e-6) break;
-    if (worst.d >= prevMax - 1e-12) break;
-    prevMax = worst.d;
-    // Weld all pairs above threshold this pass (largest first)
-    let any = false;
-    for (const p of pairs) {
-      if (p.d < 1e-6) break;
-      if (weldOnePairFull(board, p.a, p.b)) any = true;
-    }
-    if (!any) break;
   }
   rebuildCachesAndPairs(board);
 }

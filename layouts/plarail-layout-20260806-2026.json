@@ -1,8 +1,6 @@
 {
   "format": "plarail-meme-layout",
   "version": 1,
-  "name": "Real-2-Sim meme track (20260806-2026)",
-  "source": "plarail-layout-20260806-2026.json",
   "pieces": [
     {
       "id": "p1",
@@ -354,11 +352,5 @@
     "speed": 210
   },
   "speed": 210,
-  "savedAt": "2026-08-06T18:26:25.447Z",
-  "demoCrop": {
-    "minX": 120,
-    "minY": 40,
-    "maxX": 960,
-    "maxY": 780
-  }
+  "savedAt": "2026-08-06T18:26:25.447Z"
 }

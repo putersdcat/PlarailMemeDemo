@@ -11,7 +11,7 @@ import {
   maxLinkedPairDistance,
   getPiece,
 } from "../js/track.js";
-import { UNIT } from "../js/geometry.js";
+import { UNIT, SNAP_DIST } from "../js/geometry.js";
 import { REAL_MEME_LAYOUT } from "../js/presets.js";
 
 test("weldLinkedConnectors moves offset R01 pair to shared midpoint", () => {
@@ -43,16 +43,49 @@ test("rebuild weld does not break perfect joins", () => {
   assertEq(board.connectors.filter((c) => c.linked).length, 2);
 });
 
-test("meme layout linked gaps collapse toward 0 after rebuild weld", () => {
+test("meme layout linked gaps stay within soft-link range after rebuild", () => {
   const board = createBoard();
   const r = loadBoard(board, REAL_MEME_LAYOUT);
   assert(r.ok);
   const maxD = maxLinkedPairDistance(board);
-  // Pre-weld outliers were ~4–12 px. After weld, gaps must be ≤1px (canvas
-  // sub-pixel). Rigid multi-link loops can leave a fraction of a pixel.
+  // User gold may keep intentional soft links (paired under LINK_DIST).
+  // Safe weld must not invent a tighter mesh by warping hubs.
   assert(
-    maxD < 1.0,
-    `meme max linked gap should be ≤1px after weld, got ${maxD}`
+    maxD < SNAP_DIST * 1.15 + 1e-6,
+    `meme max linked gap should stay within link range, got ${maxD}`
+  );
+  // Most joints should be exact; allow a few soft residuals
+  let soft = 0;
+  const seen = new Set();
+  for (const c of board.connectors || []) {
+    if (!c.linked) continue;
+    const key = [c.pieceId + ":" + c.id, c.linked.pieceId + ":" + c.linked.id]
+      .sort()
+      .join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const d = Math.hypot(c.wx - c.linked.wx, c.wy - c.linked.wy);
+    if (d > 1e-3) soft++;
+  }
+  assert(
+    soft <= 3,
+    `expected at most a few soft-linked residuals, got ${soft} (maxD=${maxD})`
+  );
+});
+
+test("meme layout load preserves authored piece poses (no weld warp)", () => {
+  const board = createBoard();
+  const r = loadBoard(board, REAL_MEME_LAYOUT);
+  assert(r.ok);
+  let maxPose = 0;
+  for (const raw of REAL_MEME_LAYOUT.pieces) {
+    const p = getPiece(board, raw.id);
+    assert(p, `missing piece ${raw.id}`);
+    maxPose = Math.max(maxPose, Math.hypot(p.x - raw.x, p.y - raw.y));
+  }
+  assert(
+    maxPose < 1e-6,
+    `load must not move gold pieces, max pose delta ${maxPose}`
   );
 });
 

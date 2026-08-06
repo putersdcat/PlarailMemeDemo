@@ -10,8 +10,8 @@ import { addPiece, clearBoard, rebuild, loadBoard } from "./track.js";
 export const REAL_MEME_LAYOUT = {
   "format": "plarail-meme-layout",
   "version": 1,
-  "name": "Real-2-Sim meme track (WORKING colored)",
-  "source": "plarail-layout-20260805-2105.json",
+  "name": "Real-2-Sim meme track (20260806-2026)",
+  "source": "plarail-layout-20260806-2026.json",
   "pieces": [
     {
       "id": "p1",
@@ -19,17 +19,6 @@ export const REAL_MEME_LAYOUT = {
       "x": 584.5762768884263,
       "y": 495.9059741054823,
       "rotSteps": 1,
-      "flip": true,
-      "branchSide": "R",
-      "switchState": 0,
-      "color": "blue"
-    },
-    {
-      "id": "p2",
-      "type": "R105",
-      "x": 448.8117749006092,
-      "y": 495.9059741054823,
-      "rotSteps": 5,
       "flip": true,
       "branchSide": "R",
       "switchState": 0,
@@ -60,8 +49,8 @@ export const REAL_MEME_LAYOUT = {
     {
       "id": "p5",
       "type": "R02",
-      "x": 281.9942858600508,
-      "y": 595.6645886429949,
+      "x": 285.99428586005087,
+      "y": 596.6645886429949,
       "rotSteps": 1,
       "flip": false,
       "branchSide": "R",
@@ -71,8 +60,8 @@ export const REAL_MEME_LAYOUT = {
     {
       "id": "p6",
       "type": "R08",
-      "x": 231.08259761461943,
-      "y": 544.7529003975634,
+      "x": 235.0825976146195,
+      "y": 545.7529003975634,
       "rotSteps": 1,
       "flip": false,
       "branchSide": "R",
@@ -82,8 +71,8 @@ export const REAL_MEME_LAYOUT = {
     {
       "id": "p7",
       "type": "R02",
-      "x": 180.17090936918802,
-      "y": 493.8412121521319,
+      "x": 184.17090936918808,
+      "y": 494.8412121521319,
       "rotSteps": 1,
       "flip": false,
       "branchSide": "R",
@@ -93,8 +82,8 @@ export const REAL_MEME_LAYOUT = {
     {
       "id": "p8",
       "type": "R105",
-      "x": 231.08259761461943,
-      "y": 408.9883984097462,
+      "x": 235.0825976146195,
+      "y": 409.9883984097462,
       "rotSteps": 3,
       "flip": true,
       "branchSide": "R",
@@ -104,8 +93,8 @@ export const REAL_MEME_LAYOUT = {
     {
       "id": "p9",
       "type": "R01",
-      "x": 265.0237231115737,
-      "y": 239.28277092497484,
+      "x": 269.02372311157376,
+      "y": 240.28277092497484,
       "rotSteps": 3,
       "flip": false,
       "branchSide": "R",
@@ -115,65 +104,10 @@ export const REAL_MEME_LAYOUT = {
     {
       "id": "p10",
       "type": "R17",
-      "x": 338.329697217056,
-      "y": 158.3064940365486,
+      "x": 342.32969721705604,
+      "y": 159.3064940365486,
       "rotSteps": 2,
       "flip": false,
-      "branchSide": "R",
-      "switchState": 0,
-      "color": "blue"
-    },
-    {
-      "id": "p11",
-      "type": "R11",
-      "x": 445.57679681949253,
-      "y": 233.45939443411203,
-      "rotSteps": 4,
-      "flip": false,
-      "branchSide": "R",
-      "switchState": 0,
-      "color": "blue"
-    },
-    {
-      "id": "p12",
-      "type": "R02",
-      "x": 373.57679681949253,
-      "y": 233.45939443411203,
-      "rotSteps": 0,
-      "flip": true,
-      "branchSide": "R",
-      "switchState": 0,
-      "color": "red"
-    },
-    {
-      "id": "p13",
-      "type": "R01",
-      "x": 541.5767968194925,
-      "y": 233.45939443411203,
-      "rotSteps": 0,
-      "flip": true,
-      "branchSide": "R",
-      "switchState": 0,
-      "color": "blue"
-    },
-    {
-      "id": "p14",
-      "type": "R02",
-      "x": 613.5767968194925,
-      "y": 233.45939443411203,
-      "rotSteps": 0,
-      "flip": true,
-      "branchSide": "R",
-      "switchState": 0,
-      "color": "blue"
-    },
-    {
-      "id": "p15",
-      "type": "R14",
-      "x": 733.5767968194925,
-      "y": 233.45939443411203,
-      "rotSteps": 6,
-      "flip": true,
       "branchSide": "R",
       "switchState": 0,
       "color": "blue"
@@ -199,17 +133,6 @@ export const REAL_MEME_LAYOUT = {
       "branchSide": "R",
       "switchState": 0,
       "color": "yellow"
-    },
-    {
-      "id": "p18",
-      "type": "R20",
-      "x": 765.670302782944,
-      "y": 393.32969721705604,
-      "rotSteps": 2,
-      "flip": false,
-      "branchSide": "R",
-      "switchState": 0,
-      "color": "blue"
     },
     {
       "id": "p19",
@@ -245,98 +168,21 @@ export const REAL_MEME_LAYOUT = {
       "color": "blue"
     },
     {
-      "id": "p22",
-      "type": "R02",
-      "x": 926,
-      "y": 533,
-      "rotSteps": 2,
-      "flip": true,
-      "branchSide": "R",
-      "switchState": 0,
-      "color": "blue"
-    },
-    {
-      "id": "p23",
-      "type": "R01",
-      "x": 926,
-      "y": 365,
-      "rotSteps": 2,
-      "flip": true,
-      "branchSide": "R",
-      "switchState": 0,
-      "color": "blue"
-    },
-    {
-      "id": "p24",
-      "type": "R21",
-      "x": 829.5767968194925,
-      "y": 329.459394434112,
-      "rotSteps": 6,
-      "flip": true,
-      "branchSide": "R",
-      "switchState": 0,
-      "color": "red"
-    },
-    {
       "id": "p25",
       "type": "R20",
       "x": 790.8470996024366,
-      "y": 353.7529003975635,
+      "y": 377.7529003975635,
       "rotSteps": 0,
       "flip": true,
       "branchSide": "R",
       "switchState": 0,
-      "color": "blue"
-    },
-    {
-      "id": "p26",
-      "type": "R02",
-      "x": 754.8470996024366,
-      "y": 353.7529003975635,
-      "rotSteps": 0,
-      "flip": true,
-      "branchSide": "R",
-      "switchState": 0,
-      "color": "blue"
-    },
-    {
-      "id": "p27",
-      "type": "R14",
-      "x": 590,
-      "y": 653,
-      "rotSteps": 6,
-      "flip": true,
-      "branchSide": "R",
-      "switchState": 1,
-      "color": "blue"
-    },
-    {
-      "id": "p28",
-      "type": "R04",
-      "x": 802.8470996024366,
-      "y": 488.1529003975635,
-      "rotSteps": 6,
-      "flip": true,
-      "branchSide": "R",
-      "switchState": 0,
-      "color": "blue"
-    },
-    {
-      "id": "p29",
-      "type": "R11",
-      "x": 926,
-      "y": 461,
-      "rotSteps": 6,
-      "flip": false,
-      "branchSide": "L",
-      "switchState": 1,
       "color": "blue"
     },
     {
       "id": "p30",
       "type": "R02",
-      "x": 289.02372311157376,
-      "y": 279.0472729127919,
+      "x": 293.0237231115738,
+      "y": 280.0472729127919,
       "rotSteps": 4,
       "flip": false,
       "branchSide": "R",
@@ -346,18 +192,172 @@ export const REAL_MEME_LAYOUT = {
     {
       "id": "p31",
       "type": "R11",
-      "x": 197.14147211766516,
-      "y": 307.1650219188834,
+      "x": 201.14147211766522,
+      "y": 308.1650219188834,
       "rotSteps": 7,
       "flip": true,
       "branchSide": "R",
       "switchState": 1,
       "color": "blue"
+    },
+    {
+      "id": "p412",
+      "type": "R20",
+      "x": 329.0237231115738,
+      "y": 280.0472729127919,
+      "rotSteps": 4,
+      "flip": false,
+      "branchSide": "R",
+      "switchState": 0,
+      "color": "blue"
+    },
+    {
+      "id": "p417",
+      "type": "R14",
+      "x": 590,
+      "y": 653,
+      "rotSteps": 6,
+      "flip": false,
+      "branchSide": "R",
+      "switchState": 1,
+      "color": "blue"
+    },
+    {
+      "id": "p421",
+      "type": "R20",
+      "x": 926,
+      "y": 545,
+      "rotSteps": 6,
+      "flip": false,
+      "branchSide": "R",
+      "switchState": 0,
+      "color": "blue"
+    },
+    {
+      "id": "p422",
+      "type": "R11",
+      "x": 926,
+      "y": 485,
+      "rotSteps": 6,
+      "flip": false,
+      "branchSide": "L",
+      "switchState": 1,
+      "color": "blue"
+    },
+    {
+      "id": "p423",
+      "type": "R04",
+      "x": 802.8470996024366,
+      "y": 512.1529003975635,
+      "rotSteps": 6,
+      "flip": true,
+      "branchSide": "R",
+      "switchState": 0,
+      "color": "blue"
+    },
+    {
+      "id": "p424",
+      "type": "R02",
+      "x": 754.8470996024366,
+      "y": 377.7529003975635,
+      "rotSteps": 0,
+      "flip": true,
+      "branchSide": "R",
+      "switchState": 0,
+      "color": "blue"
+    },
+    {
+      "id": "p425",
+      "type": "R01",
+      "x": 926,
+      "y": 389,
+      "rotSteps": 2,
+      "flip": true,
+      "branchSide": "R",
+      "switchState": 0,
+      "color": "blue"
+    },
+    {
+      "id": "p426",
+      "type": "R21",
+      "x": 830,
+      "y": 341,
+      "rotSteps": 6,
+      "flip": true,
+      "branchSide": "R",
+      "switchState": 0,
+      "color": "red"
+    },
+    {
+      "id": "p427",
+      "type": "R14",
+      "x": 734,
+      "y": 245.00000000000003,
+      "rotSteps": 6,
+      "flip": true,
+      "branchSide": "R",
+      "switchState": 0,
+      "color": "blue"
+    },
+    {
+      "id": "p428",
+      "type": "R02",
+      "x": 614,
+      "y": 245.00000000000006,
+      "rotSteps": 0,
+      "flip": true,
+      "branchSide": "R",
+      "switchState": 0,
+      "color": "blue"
+    },
+    {
+      "id": "p429",
+      "type": "R01",
+      "x": 542,
+      "y": 245.00000000000006,
+      "rotSteps": 0,
+      "flip": true,
+      "branchSide": "R",
+      "switchState": 0,
+      "color": "blue"
+    },
+    {
+      "id": "p430",
+      "type": "R11",
+      "x": 446,
+      "y": 245.00000000000006,
+      "rotSteps": 4,
+      "flip": false,
+      "branchSide": "R",
+      "switchState": 0,
+      "color": "blue"
+    },
+    {
+      "id": "p432",
+      "type": "R02",
+      "x": 374,
+      "y": 245.00000000000006,
+      "rotSteps": 0,
+      "flip": true,
+      "branchSide": "R",
+      "switchState": 0,
+      "color": "red"
+    },
+    {
+      "id": "p433",
+      "type": "R105",
+      "x": 448.8117749006092,
+      "y": 495.9059741054823,
+      "rotSteps": 5,
+      "flip": true,
+      "branchSide": "R",
+      "switchState": 0,
+      "color": "blue"
     }
   ],
   "train": {
-    "x": 232.00799435903565,
-    "y": 545.6782971419796,
+    "x": 232.4119223098867,
+    "y": 543.0822250928305,
     "ang": 0.7853981633974487,
     "mode": "idle",
     "speed": 210
@@ -372,7 +372,7 @@ export function loadRealMemeTrack(board) {
   const t = REAL_MEME_LAYOUT.train;
   const th = t
     ? { x: t.x, y: t.y, ang: t.ang, speed: t.speed ?? 210 }
-    : {"x":232.00799435903565,"y":545.6782971419796,"ang":0.7853981633974487,"speed":210};
+    : {"x":232.4119223098867,"y":543.0822250928305,"ang":0.7853981633974487,"speed":210};
   return {
     ok: result.ok,
     pieceCount: result.pieceCount,
