@@ -18,15 +18,16 @@ import {
 } from "../geometry.js";
 
 /**
- * Master switch for joint seam polish.
- * false = legacy look (safe fallback if seam work looks wrong).
+ * Master switch for joint seam polish (trim / linked butt / hide tabs).
+ * Default false: weld handles co-location; aggressive trim caused joint gaps.
+ * Set true only to experiment with linked-end butt caps again.
  */
-export const USE_SEAM_JOIN = true;
+export const USE_SEAM_JOIN = false;
 
 const RAIL_BLUE = "#3a8fd6";
 const SELECT = "#f0c040";
-/** Running rail offset from centerline (legacy was 6) */
-export const RAIL_OFFSET = USE_SEAM_JOIN ? 7.5 : 6;
+/** Running rail offset from centerline (slightly wider than original 6) */
+export const RAIL_OFFSET = 7.5;
 const EDGE_INSET = 1;
 
 const PAINT = {

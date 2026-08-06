@@ -207,8 +207,11 @@ export function setPiecePose(board, id, x, y, rotSteps) {
   rebuild(board);
 }
 
-/** Rebuild world caches + connectivity. */
-export function rebuild(board) {
+/**
+ * Build world caches + pair connectors (no piece translation).
+ * @returns {{ pairs: Array<[object, object]> }}
+ */
+function rebuildCachesAndPairs(board) {
   const connectors = [];
   const walls = [];
   const pathIndex = [];
@@ -218,13 +221,11 @@ export function rebuild(board) {
     for (const c of geo.connectors) connectors.push(c);
     for (const w of geo.walls) walls.push(w);
     for (const path of geo.paths) {
-      // Filter inactive switch paths
       if (
         path.switchIndex != null &&
         !geo.tpl.bothPathsActive &&
         path.switchIndex !== piece.switchState
       ) {
-        // Still index for drawing faint routes; mark inactive
         pathIndex.push({ ...path, active: false, piece });
         continue;
       }
@@ -232,7 +233,6 @@ export function rebuild(board) {
     }
   }
 
-  // Pair connectors (slightly forgiving so train graph stays continuous)
   const LINK_DIST = SNAP_DIST * 1.15;
   const LINK_FACE = SNAP_ANGLE * 1.85;
   const used = new Set();
@@ -249,7 +249,6 @@ export function rebuild(board) {
       if (a.gender === b.gender) continue;
       const d = Math.hypot(a.wx - b.wx, a.wy - b.wy);
       if (d > bestD) continue;
-      // Should face each other (~180°)
       const face = angleDiff(a.wang, b.wang + Math.PI);
       if (face > LINK_FACE) continue;
       bestD = d;
@@ -268,6 +267,154 @@ export function rebuild(board) {
   board.walls = walls;
   board.pathIndex = pathIndex;
   board.graph = buildGraph(pathIndex, pairs, board);
+  return { pairs };
+}
+
+function eachLinkedPair(board, fn) {
+  const seen = new Set();
+  for (const c of board.connectors || []) {
+    if (!c.linked) continue;
+    const key = [c.pieceId + ":" + c.id, c.linked.pieceId + ":" + c.linked.id]
+      .sort()
+      .join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    fn(c, c.linked, key);
+  }
+}
+
+/**
+ * Translate pieces so each linked connector pair meets at its midpoint.
+ * Multiple links on one piece average their required translations (Jacobi).
+ * @returns {boolean} true if any piece moved by more than epsilon
+ */
+export function weldLinkedConnectors(board) {
+  if (!board?.connectors?.length) return false;
+
+  /** @type {Map<string, { dx: number, dy: number, n: number }>} */
+  const acc = new Map();
+
+  const add = (pieceId, dx, dy) => {
+    let m = acc.get(pieceId);
+    if (!m) {
+      m = { dx: 0, dy: 0, n: 0 };
+      acc.set(pieceId, m);
+    }
+    m.dx += dx;
+    m.dy += dy;
+    m.n += 1;
+  };
+
+  eachLinkedPair(board, (a, b) => {
+    const mx = (a.wx + b.wx) / 2;
+    const my = (a.wy + b.wy) / 2;
+    add(a.pieceId, mx - a.wx, my - a.wy);
+    add(b.pieceId, mx - b.wx, my - b.wy);
+  });
+
+  const EPS = 1e-9;
+  let moved = false;
+  for (const [pieceId, m] of acc) {
+    const dx = m.dx / m.n;
+    const dy = m.dy / m.n;
+    if (Math.hypot(dx, dy) < EPS) continue;
+    const p = getPiece(board, pieceId);
+    if (!p) continue;
+    p.x += dx;
+    p.y += dy;
+    moved = true;
+  }
+  return moved;
+}
+
+/**
+ * Fully weld one pair: move the freer piece onto the more-anchored mate
+ * (or both halfway if equal link counts). Reduces fighting in multi-link nets.
+ */
+function weldOnePairFull(board, a, b) {
+  const pa = getPiece(board, a.pieceId);
+  const pb = getPiece(board, b.pieceId);
+  if (!pa || !pb) return false;
+  const ga = worldGeometry(pa);
+  const gb = worldGeometry(pb);
+  const ca = ga.connectors.find((c) => c.id === a.id);
+  const cb = gb.connectors.find((c) => c.id === b.id);
+  if (!ca || !cb) return false;
+  const d = Math.hypot(ca.wx - cb.wx, ca.wy - cb.wy);
+  if (d < 1e-9) return false;
+
+  const linksOf = (pieceId) =>
+    (board.connectors || []).filter((c) => c.pieceId === pieceId && c.linked)
+      .length;
+  const la = linksOf(a.pieceId);
+  const lb = linksOf(b.pieceId);
+
+  if (la < lb) {
+    // Move A onto B's port
+    pa.x += cb.wx - ca.wx;
+    pa.y += cb.wy - ca.wy;
+  } else if (lb < la) {
+    pb.x += ca.wx - cb.wx;
+    pb.y += ca.wy - cb.wy;
+  } else {
+    const mx = (ca.wx + cb.wx) / 2;
+    const my = (ca.wy + cb.wy) / 2;
+    pa.x += mx - ca.wx;
+    pa.y += my - ca.wy;
+    pb.x += mx - cb.wx;
+    pb.y += my - cb.wy;
+  }
+  return true;
+}
+
+function collectLinkedPairsWithDist(board) {
+  const out = [];
+  eachLinkedPair(board, (a, b) => {
+    const d = Math.hypot(a.wx - b.wx, a.wy - b.wy);
+    out.push({ a, b, d });
+  });
+  out.sort((p, q) => q.d - p.d);
+  return out;
+}
+
+/** Max linked-pair gap after rebuild (for tests / diagnostics). */
+export function maxLinkedPairDistance(board) {
+  let maxD = 0;
+  eachLinkedPair(board, (a, b) => {
+    const d = Math.hypot(a.wx - b.wx, a.wy - b.wy);
+    if (d > maxD) maxD = d;
+  });
+  return maxD;
+}
+
+/**
+ * Rebuild world caches + connectivity, then weld linked ports to midpoints
+ * so soft-snap / layout drift does not leave multi-pixel joint gaps.
+ */
+export function rebuild(board) {
+  // 1) Averaged midpoint weld (Jacobi) for multi-link stability
+  for (let i = 0; i < 16; i++) {
+    rebuildCachesAndPairs(board);
+    if (!weldLinkedConnectors(board)) break;
+  }
+  // 2) Sweep largest gaps first: snap freer piece onto mate (or midpoint)
+  let prevMax = Infinity;
+  for (let i = 0; i < 64; i++) {
+    rebuildCachesAndPairs(board);
+    const pairs = collectLinkedPairsWithDist(board);
+    const worst = pairs[0];
+    if (!worst || worst.d < 1e-6) break;
+    if (worst.d >= prevMax - 1e-12) break;
+    prevMax = worst.d;
+    // Weld all pairs above threshold this pass (largest first)
+    let any = false;
+    for (const p of pairs) {
+      if (p.d < 1e-6) break;
+      if (weldOnePairFull(board, p.a, p.b)) any = true;
+    }
+    if (!any) break;
+  }
+  rebuildCachesAndPairs(board);
 }
 
 function connKey(pieceId, cid) {

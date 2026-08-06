@@ -186,8 +186,10 @@ test("camera fit/zoom/pan stay finite", () => {
 });
 
 test("RAIL_OFFSET is slightly wider than legacy 6px gauge", async () => {
-  const { RAIL_OFFSET } = await import("../js/render/draw-piece.js");
+  const { RAIL_OFFSET, USE_SEAM_JOIN } = await import("../js/render/draw-piece.js");
   assert(RAIL_OFFSET > 6 && RAIL_OFFSET < 12, `RAIL_OFFSET=${RAIL_OFFSET}`);
+  // Aggressive seam trim off by default (weld owns co-location)
+  assertEq(USE_SEAM_JOIN, false);
 });
 
 test("TRACK_CATALOG has meme track and getTrackById resolves it", () => {
