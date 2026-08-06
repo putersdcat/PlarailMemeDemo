@@ -9,7 +9,7 @@
     />
     <meta name="theme-color" content="#1a2332" />
     <title>Plarail Meme - Real-2-Sim</title>
-    <link rel="stylesheet" href="css/styles.css?v=20260806c" />
+    <link rel="stylesheet" href="css/styles.css?v=20260806e" />
   </head>
   <body>
     <div id="app">
@@ -58,6 +58,16 @@
           <div class="tool-row">
             <button type="button" class="ui" id="btn-walls">Wall debug</button>
             <button type="button" class="ui" id="btn-help">Help</button>
+          </div>
+          <div class="tool-row">
+            <button
+              type="button"
+              class="ui"
+              id="btn-fit"
+              title="Fit whole track in view"
+            >
+              Fit track
+            </button>
           </div>
         </div>
       </aside>
@@ -134,6 +144,15 @@
         <button type="button" class="ui primary" id="btn-start">Start</button>
         <button type="button" class="ui" id="btn-stop">Stop</button>
         <button type="button" class="ui" id="btn-reset-train">Reset train</button>
+        <div class="sep"></div>
+        <button
+          type="button"
+          class="ui"
+          id="btn-fit-toolbar"
+          title="Fit whole track in view (0)"
+        >
+          Fit
+        </button>
         <div class="sep"></div>
         <label>
           Speed
@@ -235,8 +254,14 @@
             then click a piece once — color applies and the cursor returns to normal.
           </li>
           <li>
-            <strong>Sound</strong> is pure Web Audio (no libraries): motor hum on rails,
-            scrape off-rail, clacks on derail / wall / edge. Unlocks after first click.
+            <strong>View:</strong> scroll / pinch to zoom · drag empty floor to pan ·
+            <strong>Fit track</strong> frames the whole layout. Sidebar collapses on
+            narrow screens (› reopens it).
+          </li>
+          <li>
+            <strong>Sound</strong> is pure Web Audio (no libraries): plastic gear
+            mesh (bandpass noise × square AM). Same motor on-rail and off-rail
+            (quieter off-rail; tooth rate follows speed). Unlocks after first click.
           </li>
         </ul>
         <h2>Units (critical)</h2>
@@ -253,6 +278,6 @@
       </div>
     </div>
 
-    <script type="module" src="js/main.js?v=20260806c"></script>
+    <script type="module" src="js/main.js?v=20260806e"></script>
   </body>
 </html>

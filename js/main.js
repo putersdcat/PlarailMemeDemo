@@ -74,8 +74,11 @@ const board = createBoard();
 const train = createTrain();
 let trainPlaced = false;
 
-let view = { w: 800, h: 600, camX: 0, camY: 0 };
+/** Camera: scale is CSS-px per world unit (1 = 1:1). */
+let view = { w: 800, h: 600, camX: 0, camY: 0, scale: 1 };
 let bounds = { minX: 40, minY: 40, maxX: 760, maxY: 560 };
+const SCALE_MIN = 0.32;
+const SCALE_MAX = 2.75;
 
 let running = false;
 /** @type {null | object} ghost piece pose while placing/moving */
@@ -303,6 +306,7 @@ document.getElementById("btn-meme").addEventListener("click", () => {
   placeTrainAtHint(info.trainHint);
   applySpeed(info.speed ?? info.trainHint?.speed ?? 210);
   persistLayout();
+  fitBoardToView(48);
   setHint(info.note || "Meme track loaded.");
 });
 document.getElementById("btn-help").addEventListener("click", () => {
@@ -316,6 +320,16 @@ document.getElementById("help-modal").addEventListener("click", (e) => {
 });
 document.getElementById("btn-walls").addEventListener("click", () => {
   showWalls = !showWalls;
+});
+
+document.getElementById("btn-fit")?.addEventListener("click", () => {
+  fitBoardToView(48);
+  setHint("Fitted track to view. Scroll / pinch to zoom · drag floor to pan.");
+});
+
+document.getElementById("btn-fit-toolbar")?.addEventListener("click", () => {
+  fitBoardToView(48);
+  setHint("Fitted track to view. Scroll / pinch to zoom · drag floor to pan.");
 });
 
 // ── Paint swatches (one-shot paint bucket) ──
@@ -404,6 +418,7 @@ function applyLoadedLayout(data, label = "layout") {
   // Layout / train speed (starter track ships at the working slider setting)
   applySpeed(data.train?.speed ?? data.speed ?? speedSlider?.value ?? 210);
   persistLayout();
+  fitBoardToView(48);
   setHint(`Loaded ${result.pieceCount} pieces from ${label}.`);
   updateStatus();
   return true;
@@ -466,8 +481,9 @@ function dateStamp() {
 btnStart.addEventListener("click", () => {
   unlockAudio();
   if (!trainPlaced) {
-    const cx = view.camX + view.w / 2;
-    const cy = view.camY + view.h / 2;
+    const s = viewScale();
+    const cx = view.camX + view.w / s / 2;
+    const cy = view.camY + view.h / s / 2;
     if (!tryPlaceTrainAt(cx, cy, 2000)) {
       setHint("Drag 🚂 train from the palette onto a rail, then Start.");
       return;
@@ -570,17 +586,46 @@ window.addEventListener("keydown", (e) => {
   } else if (e.key === "s" && (e.ctrlKey || e.metaKey)) {
     e.preventDefault();
     saveLayoutToFile();
+  } else if (e.key === "0" && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    fitBoardToView(48);
+    setHint("Fitted track to view.");
   }
 });
 
+function viewScale() {
+  return view.scale > 0 ? view.scale : 1;
+}
+
+/** Screen (CSS px relative to canvas) → world. */
+function screenToWorld(sx, sy) {
+  const s = viewScale();
+  return {
+    x: sx / s + view.camX,
+    y: sy / s + view.camY,
+  };
+}
+
 function canvasPoint(e) {
   const rect = canvas.getBoundingClientRect();
-  return {
-    x: e.clientX - rect.left + view.camX,
-    y: e.clientY - rect.top + view.camY,
-    sx: e.clientX - rect.left,
-    sy: e.clientY - rect.top,
-  };
+  const sx = e.clientX - rect.left;
+  const sy = e.clientY - rect.top;
+  const w = screenToWorld(sx, sy);
+  return { x: w.x, y: w.y, sx, sy };
+}
+
+function clampScale(s) {
+  return Math.max(SCALE_MIN, Math.min(SCALE_MAX, s));
+}
+
+/** Zoom keeping world point under (sx,sy) fixed. */
+function zoomAtScreen(sx, sy, nextScale) {
+  const before = screenToWorld(sx, sy);
+  view.scale = clampScale(nextScale);
+  const after = screenToWorld(sx, sy);
+  view.camX += before.x - after.x;
+  view.camY += before.y - after.y;
+  updateBounds();
 }
 
 /**
@@ -945,8 +990,9 @@ function onPointerMove(e) {
   const p = canvasPoint(e);
 
   if (drag?.kind === "pan") {
-    view.camX -= e.clientX - drag.lx;
-    view.camY -= e.clientY - drag.ly;
+    const s = viewScale();
+    view.camX -= (e.clientX - drag.lx) / s;
+    view.camY -= (e.clientY - drag.ly) / s;
     drag.lx = e.clientX;
     drag.ly = e.clientY;
     return;
@@ -1330,24 +1376,108 @@ function updateStatus() {
 }
 
 function updateBounds() {
-  const pad = 20;
+  const s = viewScale();
+  const pad = 20 / s;
+  const ww = view.w / s;
+  const wh = view.h / s;
   bounds = {
     minX: view.camX + pad,
     minY: view.camY + pad,
-    maxX: view.camX + view.w - pad,
-    maxY: view.camY + view.h - pad,
+    maxX: view.camX + ww - pad,
+    maxY: view.camY + wh - pad,
   };
 }
+
+/** Last canvas size we auto-fitted for (skip thrash on tiny resizes). */
+let lastAutoFit = { w: 0, h: 0 };
 
 function onResize() {
   const r = resizeCanvas(canvas);
   view.w = r.w;
   view.h = r.h;
   updateBounds();
+  // Big layout change (rotate phone, open sidebar, etc.) → keep track framed
+  const dw = Math.abs(r.w - lastAutoFit.w);
+  const dh = Math.abs(r.h - lastAutoFit.h);
+  if (
+    board.pieces?.length &&
+    lastAutoFit.w > 0 &&
+    (dw > 140 || dh > 140)
+  ) {
+    fitBoardToView(48);
+  } else if (lastAutoFit.w === 0 && r.w > 0) {
+    lastAutoFit = { w: r.w, h: r.h };
+  }
 }
 
 window.addEventListener("resize", onResize);
+// visualViewport catches mobile browser chrome show/hide better than window.resize alone
+if (window.visualViewport) {
+  window.visualViewport.addEventListener("resize", onResize);
+  window.visualViewport.addEventListener("scroll", onResize);
+}
+// Stage size changes when the sidebar opens/closes (grid reflow)
+if (typeof ResizeObserver !== "undefined" && canvas?.parentElement) {
+  const ro = new ResizeObserver(() => onResize());
+  ro.observe(canvas.parentElement);
+}
 onResize();
+
+// Wheel / trackpad zoom toward cursor
+canvas.addEventListener(
+  "wheel",
+  (e) => {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    const factor = e.deltaY > 0 ? 0.9 : 1.11;
+    zoomAtScreen(sx, sy, viewScale() * factor);
+  },
+  { passive: false }
+);
+
+// Light pinch-zoom for touch (two fingers)
+let pinch = null;
+canvas.addEventListener(
+  "touchstart",
+  (e) => {
+    if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      pinch = {
+        dist: Math.hypot(dx, dy),
+        scale: viewScale(),
+        mx: (e.touches[0].clientX + e.touches[1].clientX) / 2,
+        my: (e.touches[0].clientY + e.touches[1].clientY) / 2,
+      };
+    }
+  },
+  { passive: true }
+);
+canvas.addEventListener(
+  "touchmove",
+  (e) => {
+    if (!pinch || e.touches.length !== 2) return;
+    e.preventDefault();
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    const dist = Math.hypot(dx, dy);
+    if (pinch.dist < 8) return;
+    const rect = canvas.getBoundingClientRect();
+    const sx = pinch.mx - rect.left;
+    const sy = pinch.my - rect.top;
+    zoomAtScreen(sx, sy, pinch.scale * (dist / pinch.dist));
+  },
+  { passive: false }
+);
+canvas.addEventListener(
+  "touchend",
+  () => {
+    pinch = null;
+  },
+  { passive: true }
+);
 
 // ── Collapsible left sidebar ──
 const SIDEBAR_LS = "plarail-sidebar-collapsed";
@@ -1387,14 +1517,92 @@ function toggleSidebar() {
 }
 
 btnSidebarToggle?.addEventListener("click", toggleSidebar);
+
+/** Narrow viewports: default sidebar collapsed so the stage gets space. */
+function preferCollapsedSidebar() {
+  return window.matchMedia("(max-width: 900px)").matches;
+}
+
+{
+  let collapsed = false;
+  try {
+    const stored = localStorage.getItem(SIDEBAR_LS);
+    if (stored === "1") collapsed = true;
+    else if (stored === "0") collapsed = false;
+    else collapsed = preferCollapsedSidebar();
+  } catch {
+    collapsed = preferCollapsedSidebar();
+  }
+  setSidebarCollapsed(collapsed);
+}
+
+window.matchMedia("(max-width: 900px)").addEventListener("change", (ev) => {
+  // Only auto-collapse when entering narrow; don't force-open on wide
+  if (ev.matches) setSidebarCollapsed(true);
+});
 btnSidebarOpen?.addEventListener("click", () => setSidebarCollapsed(false));
 
-try {
-  if (localStorage.getItem(SIDEBAR_LS) === "1") {
-    setSidebarCollapsed(true);
+/**
+ * World AABB of placed pieces (walls preferred when present).
+ * @returns {{minX:number,minY:number,maxX:number,maxY:number}|null}
+ */
+function computeBoardBounds() {
+  if (board.walls?.length) {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const w of board.walls) {
+      minX = Math.min(minX, w.x1, w.x2);
+      minY = Math.min(minY, w.y1, w.y2);
+      maxX = Math.max(maxX, w.x1, w.x2);
+      maxY = Math.max(maxY, w.y1, w.y2);
+    }
+    if (Number.isFinite(minX)) return { minX, minY, maxX, maxY };
   }
-} catch {
-  /* ignore */
+  if (!board.pieces?.length) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  const pad = UNIT * 0.85;
+  for (const p of board.pieces) {
+    const piv = worldPivot(p);
+    minX = Math.min(minX, piv.x - pad, p.x - pad);
+    minY = Math.min(minY, piv.y - pad, p.y - pad);
+    maxX = Math.max(maxX, piv.x + pad, p.x + pad);
+    maxY = Math.max(maxY, piv.y + pad, p.y + pad);
+  }
+  return Number.isFinite(minX) ? { minX, minY, maxX, maxY } : null;
+}
+
+/**
+ * Fit + center a world rect in the canvas (sets scale + pan).
+ * @param {{minX:number,minY:number,maxX:number,maxY:number}} rect
+ * @param {number} pad world padding
+ */
+function fitWorldRect(rect, pad = 40) {
+  if (!rect || !(view.w > 0 && view.h > 0)) return;
+  const minX = Number(rect.minX) - pad;
+  const minY = Number(rect.minY) - pad;
+  const maxX = Number(rect.maxX) + pad;
+  const maxY = Number(rect.maxY) + pad;
+  const bw = Math.max(40, maxX - minX);
+  const bh = Math.max(40, maxY - minY);
+  const sx = view.w / bw;
+  const sy = view.h / bh;
+  view.scale = clampScale(Math.min(sx, sy));
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  view.camX = cx - view.w / view.scale / 2;
+  view.camY = cy - view.h / view.scale / 2;
+  updateBounds();
+}
+
+function fitBoardToView(pad = 48) {
+  const b = computeBoardBounds();
+  if (b) fitWorldRect(b, pad);
+  lastAutoFit = { w: view.w, h: view.h };
 }
 
 /** Demo / recording hooks (camera fit, mode probes). */
@@ -1403,19 +1611,8 @@ window.__plarailDemo = {
   getMode: () => train.mode,
   isRunning: () => running,
   setSidebarCollapsed,
-  /** Pan so world rect is centered in the canvas (no zoom). */
-  fitWorldRect(rect, pad = 24) {
-    if (!rect) return;
-    const minX = Number(rect.minX) - pad;
-    const minY = Number(rect.minY) - pad;
-    const maxX = Number(rect.maxX) + pad;
-    const maxY = Number(rect.maxY) + pad;
-    const cx = (minX + maxX) / 2;
-    const cy = (minY + maxY) / 2;
-    view.camX = cx - view.w / 2;
-    view.camY = cy - view.h / 2;
-    updateBounds();
-  },
+  fitWorldRect,
+  fitBoardToView,
   /** Hide chrome for clean capture. */
   setRecordChrome(hidden) {
     document.getElementById("app")?.classList.toggle("demo-record", !!hidden);
@@ -1425,8 +1622,9 @@ window.__plarailDemo = {
   start() {
     unlockAudio();
     if (!trainPlaced) {
-      const cx = view.camX + view.w / 2;
-      const cy = view.camY + view.h / 2;
+      const s = viewScale();
+      const cx = view.camX + view.w / s / 2;
+      const cy = view.camY + view.h / s / 2;
       if (!tryPlaceTrainAt(cx, cy, 2000)) return false;
     }
     if (train.mode === TrainMode.STOPPED) return false;
@@ -1473,11 +1671,16 @@ window.__plarailDemo = {
     );
   } else {
     setHint(
-      "Restored autosaved layout. 🚂 train · box-select multi-move · Save downloads JSON."
+      "Restored autosaved layout. 🚂 train · box-select multi-move · Save downloads JSON. Scroll to zoom."
     );
   }
+  // Fit whole track after layout settles (sidebar width, canvas size)
+  requestAnimationFrame(() => {
+    onResize();
+    fitBoardToView(48);
+  });
   // Visible build stamp so cache issues are obvious
-  console.info("[Plarail] build 20260806c — modules loaded");
+  console.info("[Plarail] build 20260806e — plastic gear motor (user graph)");
 }
 
 function frame(t) {

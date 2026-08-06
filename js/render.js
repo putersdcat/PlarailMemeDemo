@@ -37,36 +37,43 @@ export function resizeCanvas(canvas) {
 
 export function drawScene(ctx, view, board, train, ghost, opts = {}) {
   const { w, h, camX, camY } = view;
+  const scale = view.scale > 0 ? view.scale : 1;
   ctx.save();
   ctx.clearRect(0, 0, w, h);
 
-  // Floor
+  // Floor fills the viewport (screen space)
   ctx.fillStyle = FLOOR;
   ctx.fillRect(0, 0, w, h);
+
+  // World transform: zoom then pan
+  ctx.scale(scale, scale);
+  ctx.translate(-camX, -camY);
+
+  // Grid in world space so it stays stable under zoom
   ctx.strokeStyle = FLOOR_LINE;
-  ctx.lineWidth = 1;
+  ctx.lineWidth = 1 / scale;
   const grid = 48;
-  const ox = -((camX % grid) + grid) % grid;
-  const oy = -((camY % grid) + grid) % grid;
+  const worldW = w / scale;
+  const worldH = h / scale;
+  const x0 = Math.floor(camX / grid) * grid;
+  const y0 = Math.floor(camY / grid) * grid;
   ctx.beginPath();
-  for (let x = ox; x < w; x += grid) {
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, h);
+  for (let x = x0; x < camX + worldW + grid; x += grid) {
+    ctx.moveTo(x, camY);
+    ctx.lineTo(x, camY + worldH);
   }
-  for (let y = oy; y < h; y += grid) {
-    ctx.moveTo(0, y);
-    ctx.lineTo(w, y);
+  for (let y = y0; y < camY + worldH + grid; y += grid) {
+    ctx.moveTo(camX, y);
+    ctx.lineTo(camX + worldW, y);
   }
   ctx.stroke();
 
-  ctx.translate(-camX, -camY);
-
-  // Soft playfield edge
+  // Soft playfield edge (screen-constant stroke under zoom)
   if (opts.bounds) {
     const b = opts.bounds;
     ctx.strokeStyle = "rgba(220, 80, 80, 0.35)";
-    ctx.lineWidth = 3;
-    ctx.setLineDash([8, 6]);
+    ctx.lineWidth = 3 / scale;
+    ctx.setLineDash([8 / scale, 6 / scale]);
     ctx.strokeRect(b.minX, b.minY, b.maxX - b.minX, b.maxY - b.minY);
     ctx.setLineDash([]);
   }
