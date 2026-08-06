@@ -153,6 +153,46 @@ test("solid walls: all four corners escape without STOPPED", () => {
   }
 });
 
+test("solid walls: slide along bottom into BR does not freeze (rear-axle trap)", () => {
+  const board = createBoard();
+  rebuild(board);
+  const bounds = { minX: 0, minY: 0, maxX: 400, maxY: 300 };
+  // Same failure mode as the user screenshot path: along floor into lower-right
+  const train = makeOffRailTrain(200, 290, 0, 280);
+  const samples = [];
+  for (let i = 0; i < 400; i++) {
+    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+    if (i % 40 === 0) samples.push({ x: train.x, y: train.y, ang: train.ang });
+  }
+  assertEq(train.mode, TrainMode.OFF_RAIL);
+  // Must not sit frozen at one pose for the whole second half
+  const late = samples.slice(5);
+  const xs = new Set(late.map((s) => s.x.toFixed(0)));
+  const ys = new Set(late.map((s) => s.y.toFixed(0)));
+  assert(
+    xs.size > 1 || ys.size > 1,
+    `frozen near BR: ${JSON.stringify(late.slice(-3))}`
+  );
+  // And should not remain pinned in the BR pocket forever
+  const dCorner = Math.hypot(train.x - 400, train.y - 300);
+  assert(dCorner > 25, `still pinned in BR pocket d=${dCorner}`);
+});
+
+test("solid walls: slide along right into BR does not freeze", () => {
+  const board = createBoard();
+  rebuild(board);
+  const bounds = { minX: 0, minY: 0, maxX: 400, maxY: 300 };
+  const train = makeOffRailTrain(390, 150, Math.PI / 2, 280);
+  const positions = [];
+  for (let i = 0; i < 400; i++) {
+    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+    if (i >= 200 && i % 20 === 0) positions.push([train.x, train.y]);
+  }
+  assertEq(train.mode, TrainMode.OFF_RAIL);
+  const uniq = new Set(positions.map(([x, y]) => `${x.toFixed(0)},${y.toFixed(0)}`));
+  assert(uniq.size >= 3, `stuck on right/BR: ${[...uniq].join(" | ")}`);
+});
+
 test("track-style walls (no cornerRedirect): single wall slide still stable", () => {
   // Synthetic long horizontal wall (no cornerRedirect) — like track plastic
   const board = createBoard();

@@ -148,30 +148,54 @@ export function stepOffRail(train, board, dt, bounds, opts = {}) {
       return;
     }
 
-    // Playfield geometric corner: vector redirect before segment thrash
+    // Playfield geometric corner: vector redirect before segment thrash.
+    // Margin must clear FRONT/REAR axles or the rear hangs outside the wall,
+    // soft-clamp fights the step, and the train looks "stuck flapping".
+    const axleReach = Math.max(
+      Math.abs(FRONT_AXLE_OFFSET),
+      Math.abs(REAR_AXLE_OFFSET)
+    );
+    const playfieldMargin = WHEEL_RADIUS + axleReach + 2;
+
     if (solidPlayfield && bounds) {
-      const corner = nearestPlayfieldCorner(x, y, bounds, WHEEL_RADIUS * 3.5);
+      const corner = nearestPlayfieldCorner(
+        x,
+        y,
+        bounds,
+        playfieldMargin * 1.35
+      );
       if (corner) {
         hitAny = true;
-        const { tx, ty } = cornerExitDir(
-          corner.n1x,
-          corner.n1y,
-          corner.n2x,
-          corner.n2y,
-          ux,
-          uy,
-          preferAng
+        // Only pick a new exit when not already locked — avoids re-steering thrash
+        if (!(train.cornerLockSteps > 0 && train.cornerLockUx != null)) {
+          const { tx, ty } = cornerExitDir(
+            corner.n1x,
+            corner.n1y,
+            corner.n2x,
+            corner.n2y,
+            ux,
+            uy,
+            preferAng
+          );
+          ux = tx;
+          uy = ty;
+          ang = Math.atan2(uy, ux);
+          train.cornerLockUx = ux;
+          train.cornerLockUy = uy;
+          train.cornerLockSteps = 36;
+        } else {
+          ux = train.cornerLockUx;
+          uy = train.cornerLockUy;
+          ang = Math.atan2(uy, ux);
+        }
+        x = Math.max(
+          bounds.minX + playfieldMargin,
+          Math.min(bounds.maxX - playfieldMargin, x)
         );
-        ux = tx;
-        uy = ty;
-        ang = Math.atan2(uy, ux);
-        train.cornerLockUx = ux;
-        train.cornerLockUy = uy;
-        train.cornerLockSteps = Math.max(train.cornerLockSteps || 0, 24);
-        // Seat body just inside the free quadrant of the corner
-        const m = WHEEL_RADIUS + 1.5;
-        x = Math.max(bounds.minX + m, Math.min(bounds.maxX - m, x));
-        y = Math.max(bounds.minY + m, Math.min(bounds.maxY - m, y));
+        y = Math.max(
+          bounds.minY + playfieldMargin,
+          Math.min(bounds.maxY - playfieldMargin, y)
+        );
       }
     }
 
@@ -248,11 +272,16 @@ export function stepOffRail(train, board, dt, bounds, opts = {}) {
       if (!rearHit && frontHits.length === 0) break;
     }
 
-    // Soft containment after resolve
+    // Soft containment after resolve (full wheelbase, not just body radius)
     if (solidPlayfield && bounds) {
-      const m = WHEEL_RADIUS + 1;
-      x = Math.max(bounds.minX + m, Math.min(bounds.maxX - m, x));
-      y = Math.max(bounds.minY + m, Math.min(bounds.maxY - m, y));
+      x = Math.max(
+        bounds.minX + playfieldMargin,
+        Math.min(bounds.maxX - playfieldMargin, x)
+      );
+      y = Math.max(
+        bounds.minY + playfieldMargin,
+        Math.min(bounds.maxY - playfieldMargin, y)
+      );
     }
 
     const len = Math.hypot(ux, uy);
