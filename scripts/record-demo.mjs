@@ -1,6 +1,10 @@
 /**
- * Record 1080p demo (cleaned track, framed to demo crop), then 480p loop.
- * Setup (load / center / chrome) is trimmed out so the clip starts already framed.
+ * Record 1080p + 480p demo loop with tight track framing.
+ *
+ * Clip content: already-framed start → derail → re-rail → return near start pose.
+ * Playwright recordVideo is video-only (Web Audio does not land in the webm);
+ * audio limitation is logged to last-record.json and console.
+ *
  * Usage: node scripts/record-demo.mjs [baseUrl]
  */
 import { chromium } from "playwright";
@@ -14,6 +18,7 @@ import {
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { spawnSync } from "child_process";
+import { loopCloseState } from "../js/app/demo-loop.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
@@ -22,15 +27,30 @@ const docsDir = join(root, "docs");
 const baseUrlArg = process.argv[2] || "http://127.0.0.1:8765/";
 const WIDTH = 1920;
 const HEIGHT = 1080;
-/** Hard cap while waiting for derail + re-rail */
+/** Safety cap for the whole run */
 const MAX_MS = 90_000;
-/** Keep rolling after re-rail so the loop is visible (was 2.8s — too short) */
-const POST_RERAIL_MS = 14_000;
-/** Minimum content length after the train starts (regardless of re-rail timing) */
-const MIN_RUN_MS = 28_000;
-/** World pad for camera fit — large enough that stubs/ends stay inside the frame */
-const FRAME_PAD = 72;
+/** After re-rail, ignore start-pose matches for this long (leave the re-rail mouth) */
+const POST_RERAIL_GRACE_MS = 2_500;
+/** Must get this far from start after re-rail before a return counts (full loop) */
+const LOOP_AWAY_DIST = 140;
+/** How close (px) to the start pose counts as loop close */
+const LOOP_POS_TOL = 40;
+/** Optional heading match (radians); loose so we catch either direction */
+const LOOP_ANG_TOL = 0.85;
+/** Hard minimum on-rails time after re-rail even if already near start */
+const POST_RERAIL_MIN_MS = 6_000;
+/** World pad around demoCrop for camera fit + screen crop (keep stubs, stay tight) */
+const FRAME_PAD = 18;
+const FULL_SPEED = 280;
 const BUST = `rec=${Date.now()}`;
+
+/**
+ * Playwright recordVideo cannot capture Web Audio / page synth.
+ * Documented for every run so we never pretend audio is present.
+ */
+const AUDIO_NOTE =
+  "AUDIO: Playwright headless recordVideo is video-only; Web Audio motor/SFX " +
+  "are not mixed into the capture. Shipped MP4s are silent by design in this env.";
 
 mkdirSync(outDir, { recursive: true });
 mkdirSync(docsDir, { recursive: true });
@@ -58,18 +78,20 @@ function loadCrop() {
     readFileSync(join(root, "layouts/real-meme-track.json"), "utf8")
   );
   if (layout.demoCrop) return layout.demoCrop;
-  try {
-    return JSON.parse(readFileSync(join(outDir, "demo-crop.json"), "utf8"));
-  } catch {
-    return { minX: 80, minY: 20, maxX: 990, maxY: 790 };
-  }
+  return { minX: 120, minY: 40, maxX: 960, maxY: 780 };
+}
+
+function evenDim(n) {
+  const v = Math.max(2, Math.floor(n));
+  return v % 2 ? v - 1 : v;
 }
 
 async function main() {
   const crop = loadCrop();
   const baseUrl = withBust(baseUrlArg);
   console.log("Recording from", baseUrl, `${WIDTH}x${HEIGHT}`);
-  console.log("World crop", crop);
+  console.log("World crop", crop, "FRAME_PAD", FRAME_PAD);
+  console.log(AUDIO_NOTE);
 
   const browser = await chromium.launch({
     headless: true,
@@ -79,13 +101,13 @@ async function main() {
     viewport: { width: WIDTH, height: HEIGHT },
     deviceScaleFactor: 1,
     storageState: undefined,
+    // Video only — no audio stream available from Web Audio via recordVideo
     recordVideo: {
       dir: outDir,
       size: { width: WIDTH, height: HEIGHT },
     },
   });
   const page = await context.newPage();
-  /** Wall-clock when Playwright starts capturing this page (≈ video t=0) */
   const videoT0 = Date.now();
 
   const cdp = await context.newCDPSession(page);
@@ -106,20 +128,23 @@ async function main() {
   await page.reload({ waitUntil: "networkidle" });
 
   const buildInfo = await page.evaluate(async () => {
-    const r = await fetch(`./js/train.js?${Date.now()}`);
-    const text = await r.text();
+    const bust = Date.now();
+    const [trainJs, offRailJs] = await Promise.all([
+      fetch(`./js/train.js?${bust}`).then((r) => r.text()),
+      fetch(`./js/train/off-rail.js?${bust}`).then((r) => r.text()),
+    ]);
     return {
-      hasPreferLock: text.includes("offRailPreferAng"),
-      hasDeepestWall: text.includes("deepestWallHit"),
-      hasSlideDir: text.includes("wallSlideDir"),
-      hasFixedDs: text.includes("OFF_RAIL_DS"),
+      hasPreferLock: trainJs.includes("offRailPreferAng") || offRailJs.includes("offRailPreferAng"),
+      hasDeepestWall: offRailJs.includes("deepestWallHit"),
+      hasSlideDir: offRailJs.includes("wallSlideDir"),
+      hasFixedDs: trainJs.includes("OFF_RAIL_DS") || offRailJs.includes("OFF_RAIL_DS"),
+      hasGetTrainPose: typeof window.__plarailDemo?.getTrainPose === "function",
     };
   });
   console.log("Module check", buildInfo);
-  if (!buildInfo.hasPreferLock || !buildInfo.hasDeepestWall) {
-    throw new Error("Recording env loaded stale train.js — aborting");
+  if (!buildInfo.hasPreferLock || !buildInfo.hasDeepestWall || !buildInfo.hasFixedDs) {
+    throw new Error("Recording env loaded stale train modules — aborting");
   }
-
   if (
     !(await page.evaluate(() => typeof window.__plarailDemo?.start === "function"))
   ) {
@@ -129,7 +154,6 @@ async function main() {
   await page.click("#btn-meme");
   await sleep(600);
 
-  const FULL_SPEED = 280;
   await page.evaluate((sp) => {
     const d = window.__plarailDemo;
     d.setSidebarCollapsed(true);
@@ -142,21 +166,16 @@ async function main() {
   }, FULL_SPEED);
   await sleep(400);
 
-  // Frame once, settle layout/resize, frame again so first exported frame is stable
-  await page.evaluate(
-    ({ c, pad }) => {
-      window.__plarailDemo.fitWorldRect(c, pad);
-    },
-    { c: crop, pad: FRAME_PAD }
-  );
-  await sleep(350);
-  await page.evaluate(
-    ({ c, pad }) => {
-      window.__plarailDemo.fitWorldRect(c, pad);
-    },
-    { c: crop, pad: FRAME_PAD }
-  );
-  await sleep(250);
+  // Fit tight to demoCrop so track fills the viewport height as much as possible
+  for (let i = 0; i < 2; i++) {
+    await page.evaluate(
+      ({ c, pad }) => {
+        window.__plarailDemo.fitWorldRect(c, pad);
+      },
+      { c: crop, pad: FRAME_PAD }
+    );
+    await sleep(280);
+  }
 
   const map = await page.evaluate(
     ({ c, pad }) => {
@@ -165,10 +184,11 @@ async function main() {
       const v = d.getView();
       const canvas = document.getElementById("stage");
       const r = canvas.getBoundingClientRect();
-      const x1 = r.x + (c.minX - pad - v.camX);
-      const y1 = r.y + (c.minY - pad - v.camY);
-      const x2 = r.x + (c.maxX + pad - v.camX);
-      const y2 = r.y + (c.maxY + pad - v.camY);
+      // Screen rect of padded world crop (for ffmpeg crop → fill 1080p)
+      const x1 = r.x + (c.minX - pad - v.camX) * (v.scale || 1);
+      const y1 = r.y + (c.minY - pad - v.camY) * (v.scale || 1);
+      const x2 = r.x + (c.maxX + pad - v.camX) * (v.scale || 1);
+      const y2 = r.y + (c.maxY + pad - v.camY) * (v.scale || 1);
       return {
         x1,
         y1,
@@ -185,42 +205,40 @@ async function main() {
   );
   console.log("Screen map", map, "record speed", recSpeed);
 
-  // Centered full-track still for README (before motion, after framing)
-  const shotPath = join(docsDir, "demo-screenshot.jpg");
-  await page.screenshot({
-    path: shotPath,
-    type: "jpeg",
-    quality: 88,
-    fullPage: false,
-  });
-  console.log("Screenshot", shotPath);
-
-  // Everything before this is setup; trim it from the export
+  // Content starts after framing (trim setup pan from export)
   const contentStartMs = Date.now() - videoT0;
-  // Small cushion so the first frame is fully painted after fit
-  const trimSs = Math.max(0, (contentStartMs - 80) / 1000);
+  const trimSs = Math.max(0, (contentStartMs - 60) / 1000);
   console.log(
     `Content starts at ~${trimSs.toFixed(2)}s (setup ${contentStartMs}ms)`
   );
 
   const started = await page.evaluate(() => window.__plarailDemo.start());
   if (!started) throw new Error("Failed to start train via __plarailDemo.start()");
-  await sleep(200);
+  await sleep(250);
+
+  const startPose = await page.evaluate(() =>
+    window.__plarailDemo.getTrainPose?.()
+  );
+  console.log("Start pose", startPose);
 
   const runT0 = Date.now();
   let sawOff = false;
   let sawRerail = false;
   let last = "";
   let rerailAt = 0;
+  let loopClosed = false;
+  let stopReason = "max_ms";
+  /** After re-rail, train must leave start before a return counts */
+  let sawAwayAfterRerail = false;
 
   while (Date.now() - runT0 < MAX_MS) {
-    const mode = await page.evaluate(
-      () => window.__plarailDemo?.getMode?.() || ""
-    );
-    const badge = (
-      await page.locator("#mode-badge").innerText().catch(() => mode)
-    ).trim();
-    const label = badge || mode;
+    const snap = await page.evaluate(() => ({
+      mode: window.__plarailDemo?.getMode?.() || "",
+      pose: window.__plarailDemo?.getTrainPose?.() || null,
+      badge: document.getElementById("mode-badge")?.innerText || "",
+    }));
+    const mode = snap.mode;
+    const label = (snap.badge || mode).trim();
     if (label !== last) {
       console.log(`[${((Date.now() - runT0) / 1000).toFixed(1)}s] ${label}`);
       last = label;
@@ -236,31 +254,50 @@ async function main() {
     ) {
       sawRerail = true;
       rerailAt = Date.now();
-      console.log("→ re-railed");
+      sawAwayAfterRerail = false;
+      console.log("→ re-railed; waiting for leave-then-return to start pose");
     }
-    // After re-rail: hold long enough for the loop; also enforce min run length
-    if (sawRerail) {
-      const afterRerail = Date.now() - rerailAt;
-      const runLen = Date.now() - runT0;
-      if (afterRerail >= POST_RERAIL_MS && runLen >= MIN_RUN_MS) break;
+    if (sawRerail && mode === "on_rail" && snap.pose && startPose) {
+      const after = Date.now() - rerailAt;
+      const d = Math.hypot(snap.pose.x - startPose.x, snap.pose.y - startPose.y);
+      const st = loopCloseState({
+        pose: snap.pose,
+        start: startPose,
+        afterRerailMs: after,
+        sawAwayAfterRerail,
+        graceMs: POST_RERAIL_GRACE_MS,
+        minMs: POST_RERAIL_MIN_MS,
+        awayDist: LOOP_AWAY_DIST,
+        posTol: LOOP_POS_TOL,
+        angTol: LOOP_ANG_TOL,
+      });
+      if (st.away && !sawAwayAfterRerail) {
+        sawAwayAfterRerail = true;
+        console.log(`→ left start after re-rail (d=${d.toFixed(0)}px)`);
+      }
+      sawAwayAfterRerail = st.away;
+      if (st.close) {
+        loopClosed = true;
+        stopReason = "loop_start_pose";
+        console.log(
+          `→ loop closed near start (d=${d.toFixed(1)}px) after ${(after / 1000).toFixed(1)}s post-rerail`
+        );
+        await sleep(250);
+        break;
+      }
     }
     if (mode === "stopped" || /Stopped/i.test(label)) {
-      console.warn("Stopped at edge before re-rail");
-      await sleep(2000);
+      console.warn("Stopped at edge");
+      stopReason = "stopped_edge";
+      await sleep(800);
       break;
     }
-    await sleep(100);
-  }
-
-  if (!sawRerail) {
-    // Partial run: still pad so the clip isn't a stub
-    const remain = Math.max(0, MIN_RUN_MS - (Date.now() - runT0));
-    if (remain > 0) await sleep(remain);
+    await sleep(80);
   }
 
   const runMs = Date.now() - runT0;
   console.log(
-    `Run length ${(runMs / 1000).toFixed(1)}s off=${sawOff} rerail=${sawRerail}`
+    `Run length ${(runMs / 1000).toFixed(1)}s off=${sawOff} rerail=${sawRerail} loop=${loopClosed} reason=${stopReason}`
   );
 
   const video = page.video();
@@ -270,17 +307,23 @@ async function main() {
   await browser.close();
   console.log("Raw:", webmPath);
 
-  // Always export the full viewport: fitWorldRect already centers the track.
-  // A second tight crop was clipping stubs and looking off-center on GitHub.
-  const useFullFrame = true;
-  console.log("ffmpeg export full frame, trimSs=", trimSs);
+  // Tight crop of track region → scale into 1920x1080 with beige letterbox
+  let cx = Math.max(0, Math.floor(map.x1));
+  let cy = Math.max(0, Math.floor(map.y1));
+  let cw = Math.min(WIDTH - cx, Math.ceil(map.x2 - map.x1));
+  let ch = Math.min(HEIGHT - cy, Math.ceil(map.y2 - map.y1));
+  cw = evenDim(cw);
+  ch = evenDim(ch);
+  // Clamp crop fully inside frame
+  if (cx + cw > WIDTH) cx = Math.max(0, WIDTH - cw);
+  if (cy + ch > HEIGHT) cy = Math.max(0, HEIGHT - ch);
+  console.log("ffmpeg crop", { cx, cy, cw, ch, trimSs });
 
   const raw1080 = join(outDir, "_raw-1080p.mp4");
-  const trimmed = join(outDir, "_trimmed-1080p.mp4");
   const out1080 = join(outDir, "plarail-meme-demo-1080p.mp4");
   const out480 = join(outDir, "plarail-meme-demo-480p.mp4");
+  const shotPath = join(docsDir, "demo-screenshot.jpg");
 
-  // Decode webm → mp4 first (more reliable seek)
   runFfmpeg([
     "-i",
     webmPath,
@@ -292,14 +335,15 @@ async function main() {
     raw1080,
   ]);
 
-  // Drop setup so frame 0 is already centered; scale to exact 1080p
+  const vf = `crop=${cw}:${ch}:${cx}:${cy},scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=0xe8e4dc,setsar=1`;
+
   runFfmpeg([
     "-ss",
     String(trimSs.toFixed(3)),
     "-i",
     raw1080,
     "-vf",
-    "scale=1920:1080:flags=lanczos,setsar=1",
+    vf,
     "-c:v",
     "libx264",
     "-preset",
@@ -339,9 +383,7 @@ async function main() {
     out480,
   ]);
 
-  // Also pull a mid-run frame into screenshot if full-page shot is empty/odd
-  // Prefer the framed still we already took; re-export a clean JPEG via ffmpeg
-  // from t≈1.5s of final video as a second opinion only if needed.
+  // Screenshot from early on-rails framed frame (same crop as video)
   try {
     const probe = spawnSync(
       "ffprobe",
@@ -358,9 +400,8 @@ async function main() {
     );
     const dur = parseFloat((probe.stdout || "").trim());
     console.log("Final 1080p duration", dur, "s");
-    if (Number.isFinite(dur) && dur > 2) {
-      // Early on-rails frame for README: full track + train, already centered
-      const stillT = Math.min(2.0, Math.max(0.8, dur * 0.08));
+    if (Number.isFinite(dur) && dur > 0.5) {
+      const stillT = Math.min(1.5, Math.max(0.4, dur * 0.06));
       const midShot = join(outDir, "_mid-screenshot.jpg");
       runFfmpeg([
         "-ss",
@@ -379,13 +420,13 @@ async function main() {
       } catch {
         /* ignore */
       }
-      console.log("Updated screenshot from on-rails frame @", stillT.toFixed(2), "s");
+      console.log("Screenshot from framed frame @", stillT.toFixed(2), "s");
     }
   } catch (e) {
-    console.warn("Screenshot mid-frame skipped", e.message);
+    console.warn("Screenshot extract failed", e.message);
   }
 
-  for (const p of [webmPath, raw1080, trimmed]) {
+  for (const p of [webmPath, raw1080]) {
     try {
       unlinkSync(p);
     } catch {
@@ -393,39 +434,46 @@ async function main() {
     }
   }
 
-  writeFileSync(
-    join(outDir, "last-record.json"),
-    JSON.stringify(
-      {
-        crop,
-        map,
-        sawOff,
-        sawRerail,
-        buildInfo,
-        bust: BUST,
-        trimSs,
-        runMs,
-        postRerailMs: POST_RERAIL_MS,
-        minRunMs: MIN_RUN_MS,
-        framePad: FRAME_PAD,
-        useFullFrame,
-        out1080,
-        out480,
-        shotPath,
-      },
-      null,
-      2
-    ) + "\n"
-  );
+  const meta = {
+    crop,
+    map,
+    sawOff,
+    sawRerail,
+    loopClosed,
+    stopReason,
+    startPose,
+    buildInfo,
+    bust: BUST,
+    trimSs,
+    runMs,
+    framePad: FRAME_PAD,
+    loopPosTol: LOOP_POS_TOL,
+    postRerailGraceMs: POST_RERAIL_GRACE_MS,
+    fullSpeed: FULL_SPEED,
+    audio: {
+      included: false,
+      note: AUDIO_NOTE,
+    },
+    out1080,
+    out480,
+    shotPath,
+  };
+  writeFileSync(join(outDir, "last-record.json"), JSON.stringify(meta, null, 2) + "\n");
 
   console.log("Wrote", out1080);
   console.log("Wrote", out480);
   console.log("Wrote", shotPath);
-  console.log(
-    sawOff && sawRerail
-      ? "SUCCESS: derail + re-rail"
-      : `PARTIAL: off=${sawOff} rerail=${sawRerail}`
-  );
+  console.log(AUDIO_NOTE);
+  if (sawOff && sawRerail && loopClosed) {
+    console.log("SUCCESS: derail + re-rail + loop-to-start");
+  } else if (sawOff && sawRerail) {
+    console.log(
+      `PARTIAL_LOOP: derail+rerail but stopReason=${stopReason} (clip still usable)`
+    );
+  } else {
+    console.log(`PARTIAL: off=${sawOff} rerail=${sawRerail} loop=${loopClosed}`);
+    process.exitCode = 2;
+  }
 }
 
 main().catch((e) => {

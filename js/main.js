@@ -1453,6 +1453,17 @@ function fitBoardToView(pad = 48) {
 window.__plarailDemo = {
   getView: () => ({ ...view }),
   getMode: () => train.mode,
+  /** World pose for loop-cut / demos (x,y,ang,s,mode). */
+  getTrainPose: () => ({
+    x: train.x,
+    y: train.y,
+    ang: train.ang,
+    s: train.s,
+    mode: train.mode,
+    speed: train.speed,
+    pieceId: train.pathRef?.pieceId ?? null,
+    pathId: train.pathRef?.pathId ?? null,
+  }),
   isRunning: () => running,
   setSidebarCollapsed,
   fitWorldRect,
@@ -1512,7 +1523,7 @@ window.__plarailDemo = {
     onResize();
     fitBoardToView(48);
   });
-  console.info("[Plarail] build 20260806f — polish: modules + tests");
+  console.info("[Plarail] build 20260806i — demo getTrainPose + tight record crop");
 }
 
 function frame(t) {
@@ -1545,9 +1556,11 @@ function frame(t) {
   updateStatus();
 
   const ctx = canvas.getContext("2d");
+  const recordChrome = document.getElementById("app")?.classList.contains("demo-record");
   drawScene(ctx, view, board, train, ghost, {
-    bounds,
-    showWalls,
+    // Hide red playfield edge during demo capture for a cleaner fill-frame still/video
+    bounds: recordChrome ? null : bounds,
+    showWalls: recordChrome ? false : showWalls,
     trainVisible: trainPlaced || !!trainGhost,
     hidePieceId,
     selectedIds,
