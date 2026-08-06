@@ -11,6 +11,7 @@ import {
   pickCornerPair,
   wallSlideDir,
   playfieldWallSegments,
+  resolvePlayfieldAabb,
   OFF_RAIL_DS,
 } from "../js/train.js";
 import { createBoard, rebuild } from "../js/track.js";
@@ -151,6 +152,96 @@ test("solid walls: all four corners escape without STOPPED", () => {
     assert(train.x >= bounds.minX - 2 && train.x <= bounds.maxX + 2);
     assert(train.y >= bounds.minY - 2 && train.y <= bounds.maxY + 2);
   }
+});
+
+test("resolvePlayfieldAabb: vertical wall keeps slide, kills into-wall only", () => {
+  const bounds = { minX: 0, minY: 0, maxX: 400, maxY: 300 };
+  const R = 9;
+  // On right wall, heading down — must keep uy, kill any +ux
+  let r = resolvePlayfieldAabb(400 - R, 150, 0.5, 1, Math.PI / 2, bounds, R);
+  assert(r.x <= 400 - R + 0.01, "seated on right");
+  assert(r.ux <= 0.01, "no into-right velocity");
+  assert(r.uy > 0.9, `keep sliding down, uy=${r.uy}`);
+
+  // On right wall, heading up
+  r = resolvePlayfieldAabb(400 - R, 150, 0, -1, -Math.PI / 2, bounds, R);
+  assert(r.uy < -0.9, `keep sliding up, uy=${r.uy}`);
+
+  // On left wall, heading down
+  r = resolvePlayfieldAabb(R, 150, 0, 1, Math.PI / 2, bounds, R);
+  assert(r.ux >= -0.01, "no into-left");
+  assert(r.uy > 0.9, "slide down on left");
+
+  // Head-on into right wall at exact boundary (equality trap)
+  r = resolvePlayfieldAabb(400 - R, 150, 1, 0, 0, bounds, R);
+  assert(Math.abs(r.ux) < 0.1, "kill head-on into right");
+  assert(Math.abs(r.uy) > 0.9, `must inject vertical slide, got uy=${r.uy} ang=${r.ang}`);
+});
+
+test("resolvePlayfieldAabb: BR corner from vertical does not jam", () => {
+  const bounds = { minX: 0, minY: 0, maxX: 400, maxY: 300 };
+  const R = 9;
+  // Exactly on BR seat, still trying to go down (the old stuck case)
+  const r = resolvePlayfieldAabb(400 - R, 300 - R, 0, 1, Math.PI / 2, bounds, R);
+  assert(r.uy <= 0.01, `must kill down into bottom, uy=${r.uy}`);
+  // Should leave along free axis (left or up)
+  assert(
+    (r.ux < -0.9 && Math.abs(r.uy) < 0.1) || (r.uy < -0.9 && Math.abs(r.ux) < 0.1),
+    `free-axis exit expected, got ux=${r.ux} uy=${r.uy}`
+  );
+});
+
+test("solid walls: ride full right wall down then around BR without freeze", () => {
+  const board = createBoard();
+  rebuild(board);
+  const bounds = { minX: 0, minY: 0, maxX: 400, maxY: 300 };
+  const train = makeOffRailTrain(391, 40, Math.PI / 2, 220);
+  const ys = [];
+  const angs = [];
+  for (let i = 0; i < 350; i++) {
+    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+    assertEq(train.mode, TrainMode.OFF_RAIL);
+    ys.push(train.y);
+    angs.push(train.ang);
+  }
+  // Reached bottom region
+  assert(Math.max(...ys) > 250, `should reach bottom, maxY=${Math.max(...ys)}`);
+  // Late motion still changing position (not frozen)
+  const lateX = [];
+  const t2x = train.x;
+  for (let i = 0; i < 40; i++) {
+    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+    lateX.push(train.x);
+  }
+  assert(
+    Math.abs(train.x - t2x) > 5 || new Set(lateX.map((v) => v.toFixed(0))).size > 2,
+    `frozen after vertical ride: x=${train.x} y=${train.y} ang=${train.ang}`
+  );
+});
+
+test("solid walls: ride full left wall up without 180 jam", () => {
+  const board = createBoard();
+  rebuild(board);
+  const bounds = { minX: 0, minY: 0, maxX: 400, maxY: 300 };
+  const train = makeOffRailTrain(9, 250, -Math.PI / 2, 220);
+  let minY = train.y;
+  for (let i = 0; i < 200; i++) {
+    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+    minY = Math.min(minY, train.y);
+    assertEq(train.mode, TrainMode.OFF_RAIL);
+  }
+  assert(minY < 80, `should climb left wall toward top, minY=${minY}`);
+  // Heading should stay roughly vertical while on left, or become horizontal after corner
+  // — never sit still with nose into the wall for long
+  const x0 = train.x;
+  const y0 = train.y;
+  for (let i = 0; i < 30; i++) {
+    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+  }
+  assert(
+    Math.hypot(train.x - x0, train.y - y0) > 8,
+    `stuck after left-wall climb: ${train.x},${train.y}`
+  );
 });
 
 test("solid walls: 90° mid-edge hit aligns parallel and keeps moving", () => {

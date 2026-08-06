@@ -74,47 +74,48 @@ export function resolvePlayfieldAabb(
   const hiX = bounds.maxX - radius;
   const loY = bounds.minY + radius;
   const hiY = bounds.maxY - radius;
+  /** On-boundary tolerance — strict > after clamp never fired, so vertical
+   *  walls kept into-wall velocity and jammed (180° / stuck). */
+  const on = 0.75;
   let hit = false;
 
-  if (x < loX) {
-    x = loX;
-    if (ux < 0) {
-      ux = 0;
-      hit = true;
-    }
-  } else if (x > hiX) {
-    x = hiX;
-    if (ux > 0) {
-      ux = 0;
-      hit = true;
-    }
+  // Always seat inside the inner rect first
+  if (x < loX) x = loX;
+  if (x > hiX) x = hiX;
+  if (y < loY) y = loY;
+  if (y > hiY) y = hiY;
+
+  // Kill velocity *into* any wall we're on (inclusive edges)
+  if (x <= loX + on && ux < -1e-6) {
+    ux = 0;
+    hit = true;
   }
-  if (y < loY) {
-    y = loY;
-    if (uy < 0) {
-      uy = 0;
-      hit = true;
-    }
-  } else if (y > hiY) {
-    y = hiY;
-    if (uy > 0) {
-      uy = 0;
-      hit = true;
-    }
+  if (x >= hiX - on && ux > 1e-6) {
+    ux = 0;
+    hit = true;
+  }
+  if (y <= loY + on && uy < -1e-6) {
+    uy = 0;
+    hit = true;
+  }
+  if (y >= hiY - on && uy > 1e-6) {
+    uy = 0;
+    hit = true;
   }
 
   const hx = Math.cos(preferAng);
   const hy = Math.sin(preferAng);
   let sp = Math.hypot(ux, uy);
 
-  if (hit && sp < 0.08) {
-    // Stopped into wall(s): start sliding along free axes using prefer
-    const free = [];
-    // At each edge, free direction is inward along the free axis
-    if (x <= loX + 0.5) free.push({ ux: 1, uy: 0 }); // on left → free right is wrong for slide
-    // Free *tangents* while on a wall:
-    // on bottom (y>=hiY): free tangents ±X, and free normal -Y already zeroed
-    // Build candidate unit slides that don't go into a currently touching wall
+  // Also treat "sitting on wall with free tangent motion" as contact for SFX
+  const onLeft = x <= loX + on;
+  const onRight = x >= hiX - on;
+  const onTop = y <= loY + on;
+  const onBottom = y >= hiY - on;
+  if (onLeft || onRight || onTop || onBottom) hit = true;
+
+  if (sp < 0.08 && (onLeft || onRight || onTop || onBottom)) {
+    // Fully stopped into wall(s): pick slide along free tangents via prefer
     const cands = [
       { ux: 1, uy: 0 },
       { ux: -1, uy: 0 },
@@ -124,39 +125,35 @@ export function resolvePlayfieldAabb(
     let best = null;
     let bestScore = -Infinity;
     for (const c of cands) {
-      // Reject if that direction goes into a wall we're sitting on
-      if (x <= loX + 0.5 && c.ux < 0) continue;
-      if (x >= hiX - 0.5 && c.ux > 0) continue;
-      if (y <= loY + 0.5 && c.uy < 0) continue;
-      if (y >= hiY - 0.5 && c.uy > 0) continue;
+      if (onLeft && c.ux < 0) continue;
+      if (onRight && c.ux > 0) continue;
+      if (onTop && c.uy < 0) continue;
+      if (onBottom && c.uy > 0) continue;
       const score = c.ux * hx + c.uy * hy;
       if (score > bestScore) {
         bestScore = score;
         best = c;
       }
     }
-    if (best) {
-      ux = best.ux;
-      uy = best.uy;
-    } else {
-      // True corner: only free directions are into the interior
+    if (!best) {
+      // Corner: free dirs are into the room (away from both walls)
       const inward = [];
-      if (x >= hiX - 0.5) inward.push({ ux: -1, uy: 0 });
-      if (x <= loX + 0.5) inward.push({ ux: 1, uy: 0 });
-      if (y >= hiY - 0.5) inward.push({ ux: 0, uy: -1 });
-      if (y <= loY + 0.5) inward.push({ ux: 0, uy: 1 });
+      if (onRight) inward.push({ ux: -1, uy: 0 });
+      if (onLeft) inward.push({ ux: 1, uy: 0 });
+      if (onBottom) inward.push({ ux: 0, uy: -1 });
+      if (onTop) inward.push({ ux: 0, uy: 1 });
       best = inward[0] || { ux: hx, uy: hy };
-      let bs = -Infinity;
+      bestScore = -Infinity;
       for (const c of inward) {
         const s = c.ux * hx + c.uy * hy;
-        if (s > bs) {
-          bs = s;
+        if (s > bestScore) {
+          bestScore = s;
           best = c;
         }
       }
-      ux = best.ux;
-      uy = best.uy;
     }
+    ux = best.ux;
+    uy = best.uy;
     sp = 1;
   }
 
@@ -164,11 +161,23 @@ export function resolvePlayfieldAabb(
     ux /= sp;
     uy /= sp;
   } else {
+    // Last resort: free axis from prefer
     ux = hx;
     uy = hy;
-    const L = Math.hypot(ux, uy) || 1;
-    ux /= L;
-    uy /= L;
+    if (onLeft && ux < 0) ux = 0;
+    if (onRight && ux > 0) ux = 0;
+    if (onTop && uy < 0) uy = 0;
+    if (onBottom && uy > 0) uy = 0;
+    sp = Math.hypot(ux, uy);
+    if (sp < 1e-6) {
+      if (!onRight) ux = 1;
+      else if (!onLeft) ux = -1;
+      else if (!onBottom) uy = 1;
+      else uy = -1;
+      sp = 1;
+    }
+    ux /= sp;
+    uy /= sp;
   }
 
   return { x, y, ux, uy, ang: Math.atan2(uy, ux), hit };
