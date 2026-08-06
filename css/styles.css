@@ -258,6 +258,45 @@ body {
   gap: 6px;
 }
 
+/* Built-in track picker: dropdown + Load */
+.track-load-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.track-load-row select {
+  min-width: 0;
+  width: 100%;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.track-load-row select:hover,
+.track-load-row select:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.track-load-row #btn-load-track {
+  white-space: nowrap;
+  padding-left: 14px;
+  padding-right: 14px;
+}
+
+#btn-solid-walls.active {
+  border-color: #c9a66b;
+  background: #3a3428;
+  box-shadow: 0 0 0 1px rgba(201, 166, 107, 0.35);
+}
+
 button.ui,
 .tool-row button {
   background: var(--panel-2);

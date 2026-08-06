@@ -30,7 +30,12 @@ import {
   OFF_RAIL_DS,
   OFF_RAIL_REF_SPEED,
 } from "../js/train.js";
-import { REAL_MEME_LAYOUT, loadRealMemeTrack } from "../js/presets.js";
+import {
+  REAL_MEME_LAYOUT,
+  loadRealMemeTrack,
+  TRACK_CATALOG,
+  getTrackById,
+} from "../js/presets.js";
 import {
   createView,
   fitWorldRect,
@@ -178,6 +183,17 @@ test("camera fit/zoom/pan stay finite", () => {
   loadBoard(board, REAL_MEME_LAYOUT);
   const bb = computeBoardBounds(board, UNIT);
   assert(bb && bb.maxX > bb.minX);
+});
+
+test("TRACK_CATALOG has meme track and getTrackById resolves it", () => {
+  assert(TRACK_CATALOG.length >= 1);
+  assert(TRACK_CATALOG.some((t) => t.id === "real-meme"));
+  const t = getTrackById("real-meme");
+  assert(t && typeof t.load === "function");
+  const board = createBoard();
+  const info = t.load(board);
+  assert(info.ok);
+  assert(info.pieceCount >= 30);
 });
 
 test("sound module exports motor API (no AudioContext required)", async () => {

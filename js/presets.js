@@ -382,7 +382,23 @@ export function loadRealMemeTrack(board) {
   };
 }
 
-/** Alias used by the Load Real-2-Sim track button. */
+/**
+ * Built-in tracks for the Load dropdown (more entries will land here later).
+ * @type {{ id: string, name: string, load: (board: object) => object }[]}
+ */
+export const TRACK_CATALOG = [
+  {
+    id: "real-meme",
+    name: "Real-2-Sim meme track",
+    load: loadRealMemeTrack,
+  },
+];
+
+export function getTrackById(id) {
+  return TRACK_CATALOG.find((t) => t.id === id) || TRACK_CATALOG[0] || null;
+}
+
+/** Alias used by older call sites. */
 export function loadMemeStyle(board, _cx, _cy) {
   return loadRealMemeTrack(board);
 }

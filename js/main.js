@@ -49,7 +49,7 @@ import {
   TrainMode,
 } from "./train.js";
 import { resizeCanvas, drawScene, drawPaletteIcon } from "./render.js";
-import { loadRealMemeTrack } from "./presets.js";
+import { loadRealMemeTrack, TRACK_CATALOG, getTrackById } from "./presets.js";
 import {
   unlockAudio,
   syncTrainAudio,
@@ -102,7 +102,11 @@ let selectedIds = new Set();
 let marquee = null;
 /** Train ghost while dragging train tool (world xy). */
 let trainGhost = null;
+/** Debug: draw track wall segments */
 let showWalls = false;
+/** Feature: solid wood playfield border — bounce instead of STOPPED */
+let solidPlayfield = false;
+const SOLID_WALLS_LS = "plarail-solid-playfield";
 let lastT = performance.now();
 let hidePieceId = null;
 /** Mutable audio transition memory for syncTrainAudio */
@@ -307,15 +311,38 @@ document.getElementById("btn-clear").addEventListener("click", () => {
   }
   setHint("Board cleared.");
 });
-document.getElementById("btn-meme").addEventListener("click", () => {
-  const info = loadRealMemeTrack(board);
+// Built-in track dropdown + Load
+const trackSelect = document.getElementById("track-select");
+if (trackSelect) {
+  trackSelect.innerHTML = "";
+  for (const t of TRACK_CATALOG) {
+    const opt = document.createElement("option");
+    opt.value = t.id;
+    opt.textContent = t.name;
+    trackSelect.appendChild(opt);
+  }
+}
+
+function loadSelectedTrack() {
+  const id = trackSelect?.value || TRACK_CATALOG[0]?.id;
+  const entry = getTrackById(id);
+  if (!entry?.load) {
+    setHint("No track selected.");
+    return;
+  }
+  const info = entry.load(board);
   clearSelection();
   placeTrainAtHint(info.trainHint);
   applySpeed(info.speed ?? info.trainHint?.speed ?? 210);
   persistLayout();
   fitBoardToView(48);
-  setHint(info.note || "Meme track loaded.");
+  setHint(info.note || `Loaded ${entry.name}.`);
+}
+
+document.getElementById("btn-load-track")?.addEventListener("click", () => {
+  loadSelectedTrack();
 });
+
 document.getElementById("btn-help").addEventListener("click", () => {
   document.getElementById("help-modal").classList.add("open");
 });
@@ -328,6 +355,37 @@ document.getElementById("help-modal").addEventListener("click", (e) => {
 document.getElementById("btn-walls").addEventListener("click", () => {
   showWalls = !showWalls;
 });
+
+function setSolidPlayfield(on) {
+  solidPlayfield = !!on;
+  const btn = document.getElementById("btn-solid-walls");
+  if (btn) {
+    btn.classList.toggle("active", solidPlayfield);
+    btn.setAttribute("aria-pressed", solidPlayfield ? "true" : "false");
+    btn.title = solidPlayfield
+      ? "Playfield walls ON — bounce at the wood edge (click to turn off)"
+      : "Playfield walls OFF — train stops at the red dashed edge (click to enable bounce)";
+  }
+  try {
+    localStorage.setItem(SOLID_WALLS_LS, solidPlayfield ? "1" : "0");
+  } catch {
+    /* ignore */
+  }
+  setHint(
+    solidPlayfield
+      ? "🧱 Playfield walls on — wood border, train bounces at the edge."
+      : "Playfield walls off — train stops if it leaves the dashed edge."
+  );
+}
+
+document.getElementById("btn-solid-walls")?.addEventListener("click", () => {
+  setSolidPlayfield(!solidPlayfield);
+});
+try {
+  if (localStorage.getItem(SOLID_WALLS_LS) === "1") setSolidPlayfield(true);
+} catch {
+  /* ignore */
+}
 
 document.getElementById("btn-fit")?.addEventListener("click", () => {
   fitBoardToView(48);
@@ -1523,7 +1581,7 @@ window.__plarailDemo = {
     onResize();
     fitBoardToView(48);
   });
-  console.info("[Plarail] build 20260806i — demo getTrainPose + tight record crop");
+  console.info("[Plarail] build 20260806j — solid playfield walls + track dropdown");
 }
 
 function frame(t) {
@@ -1531,11 +1589,13 @@ function frame(t) {
   lastT = t;
 
   if (running) {
-    updateTrain(train, board, dt, bounds);
+    updateTrain(train, board, dt, bounds, { solidPlayfield });
     if (train.mode === TrainMode.STOPPED) {
       running = false;
       setHint(
-        "Train left the playfield. Reset Train, place on rail, then Start."
+        solidPlayfield
+          ? "Train stopped. Reset Train, place on rail, then Start."
+          : "Train left the playfield. Reset Train, place on rail, then Start. (Or turn on 🧱 walls to bounce.)"
       );
     }
   }
@@ -1558,8 +1618,9 @@ function frame(t) {
   const ctx = canvas.getContext("2d");
   const recordChrome = document.getElementById("app")?.classList.contains("demo-record");
   drawScene(ctx, view, board, train, ghost, {
-    // Hide red playfield edge during demo capture for a cleaner fill-frame still/video
+    // Hide playfield chrome during demo capture for a cleaner still/video
     bounds: recordChrome ? null : bounds,
+    solidPlayfield: recordChrome ? false : solidPlayfield,
     showWalls: recordChrome ? false : showWalls,
     trainVisible: trainPlaced || !!trainGhost,
     hidePieceId,

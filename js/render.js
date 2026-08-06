@@ -11,6 +11,9 @@ export { drawPiece } from "./render/draw-piece.js";
 
 const FLOOR = "#e8e4dc";
 const FLOOR_LINE = "#d9d3c8";
+/** Solid playfield “wood” — blond/light brown, a few shades darker than floor */
+const WOOD = "#c9a66b";
+const WOOD_EDGE = "#b08d52";
 
 export function resizeCanvas(canvas) {
   const parent = canvas.parentElement;
@@ -29,44 +32,91 @@ export function resizeCanvas(canvas) {
 export function drawScene(ctx, view, board, train, ghost, opts = {}) {
   const { w, h, camX, camY } = view;
   const scale = view.scale > 0 ? view.scale : 1;
+  const solidPlayfield = !!(opts.solidPlayfield && opts.bounds);
   ctx.save();
   ctx.clearRect(0, 0, w, h);
 
-  // Floor fills the viewport (screen space)
-  ctx.fillStyle = FLOOR;
+  // Outside playfield: wood when solid walls on; otherwise full floor
+  ctx.fillStyle = solidPlayfield ? WOOD : FLOOR;
   ctx.fillRect(0, 0, w, h);
 
   // World transform: zoom then pan
   ctx.scale(scale, scale);
   ctx.translate(-camX, -camY);
 
-  // Grid in world space so it stays stable under zoom
-  ctx.strokeStyle = FLOOR_LINE;
-  ctx.lineWidth = 1 / scale;
-  const grid = 48;
   const worldW = w / scale;
   const worldH = h / scale;
-  const x0 = Math.floor(camX / grid) * grid;
-  const y0 = Math.floor(camY / grid) * grid;
-  ctx.beginPath();
-  for (let x = x0; x < camX + worldW + grid; x += grid) {
-    ctx.moveTo(x, camY);
-    ctx.lineTo(x, camY + worldH);
-  }
-  for (let y = y0; y < camY + worldH + grid; y += grid) {
-    ctx.moveTo(camX, y);
-    ctx.lineTo(camX + worldW, y);
-  }
-  ctx.stroke();
+  const grid = 48;
 
-  // Soft playfield edge (screen-constant stroke under zoom)
+  // Inner playfield floor + grid
   if (opts.bounds) {
     const b = opts.bounds;
-    ctx.strokeStyle = "rgba(220, 80, 80, 0.35)";
-    ctx.lineWidth = 3 / scale;
-    ctx.setLineDash([8 / scale, 6 / scale]);
-    ctx.strokeRect(b.minX, b.minY, b.maxX - b.minX, b.maxY - b.minY);
-    ctx.setLineDash([]);
+    const bw = b.maxX - b.minX;
+    const bh = b.maxY - b.minY;
+    if (solidPlayfield) {
+      ctx.fillStyle = FLOOR;
+      ctx.fillRect(b.minX, b.minY, bw, bh);
+    }
+    ctx.save();
+    if (solidPlayfield) {
+      ctx.beginPath();
+      ctx.rect(b.minX, b.minY, bw, bh);
+      ctx.clip();
+    }
+    ctx.strokeStyle = FLOOR_LINE;
+    ctx.lineWidth = 1 / scale;
+    const x0 = Math.floor(b.minX / grid) * grid;
+    const y0 = Math.floor(b.minY / grid) * grid;
+    const x1 = solidPlayfield ? b.maxX : camX + worldW;
+    const y1 = solidPlayfield ? b.maxY : camY + worldH;
+    const gx0 = solidPlayfield ? x0 : Math.floor(camX / grid) * grid;
+    const gy0 = solidPlayfield ? y0 : Math.floor(camY / grid) * grid;
+    ctx.beginPath();
+    for (let x = gx0; x < x1 + grid; x += grid) {
+      ctx.moveTo(x, solidPlayfield ? b.minY : camY);
+      ctx.lineTo(x, solidPlayfield ? b.maxY : camY + worldH);
+    }
+    for (let y = gy0; y < y1 + grid; y += grid) {
+      ctx.moveTo(solidPlayfield ? b.minX : camX, y);
+      ctx.lineTo(solidPlayfield ? b.maxX : camX + worldW, y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  } else {
+    ctx.strokeStyle = FLOOR_LINE;
+    ctx.lineWidth = 1 / scale;
+    const x0 = Math.floor(camX / grid) * grid;
+    const y0 = Math.floor(camY / grid) * grid;
+    ctx.beginPath();
+    for (let x = x0; x < camX + worldW + grid; x += grid) {
+      ctx.moveTo(x, camY);
+      ctx.lineTo(x, camY + worldH);
+    }
+    for (let y = y0; y < camY + worldH + grid; y += grid) {
+      ctx.moveTo(camX, y);
+      ctx.lineTo(camX + worldW, y);
+    }
+    ctx.stroke();
+  }
+
+  // Playfield edge: solid wood rim, or soft dashed red danger line
+  if (opts.bounds) {
+    const b = opts.bounds;
+    if (solidPlayfield) {
+      ctx.strokeStyle = WOOD_EDGE;
+      ctx.lineWidth = 10 / scale;
+      ctx.lineJoin = "round";
+      ctx.strokeRect(b.minX, b.minY, b.maxX - b.minX, b.maxY - b.minY);
+      ctx.strokeStyle = WOOD;
+      ctx.lineWidth = 4 / scale;
+      ctx.strokeRect(b.minX, b.minY, b.maxX - b.minX, b.maxY - b.minY);
+    } else {
+      ctx.strokeStyle = "rgba(220, 80, 80, 0.35)";
+      ctx.lineWidth = 3 / scale;
+      ctx.setLineDash([8 / scale, 6 / scale]);
+      ctx.strokeRect(b.minX, b.minY, b.maxX - b.minX, b.maxY - b.minY);
+      ctx.setLineDash([]);
+    }
   }
 
   const freeIds = new Set(

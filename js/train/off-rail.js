@@ -33,13 +33,32 @@ export function leaveRails(train) {
 }
 
 /**
+ * Four segments of the playfield rectangle (for solid outer walls).
+ * Same segment format as board.walls.
+ */
+export function playfieldWallSegments(bounds) {
+  if (!bounds) return [];
+  const { minX, minY, maxX, maxY } = bounds;
+  return [
+    { x1: minX, y1: minY, x2: maxX, y2: minY }, // top
+    { x1: maxX, y1: minY, x2: maxX, y2: maxY }, // right
+    { x1: maxX, y1: maxY, x2: minX, y2: maxY }, // bottom
+    { x1: minX, y1: maxY, x2: minX, y2: minY }, // left
+  ];
+}
+
+/**
  * Off-rail: fixed-distance steps (speed-invariant geometry).
  * Curve flip-flop fix: only the *deepest* front wall steers, and travel
  * never reverses more than 90° in one step (inner/outer rail thrashing).
+ *
+ * @param {object} [opts]
+ * @param {boolean} [opts.solidPlayfield] — bounce on playfield rect instead of STOPPED
  */
-export function stepOffRail(train, board, dt, bounds) {
+export function stepOffRail(train, board, dt, bounds, opts = {}) {
   train.wallHit = false;
   const speed = Math.max(1, train.speed);
+  const solidPlayfield = !!opts.solidPlayfield;
 
   train.offRailDistAcc = (train.offRailDistAcc || 0) + speed * dt;
   const targetSteps = Math.floor(train.offRailDistAcc / OFF_RAIL_DS + 1e-9);
@@ -61,6 +80,11 @@ export function stepOffRail(train, board, dt, bounds) {
     train.offRailPreferAng != null ? train.offRailPreferAng : ang;
   let hitAny = false;
 
+  // Track walls + optional solid playfield perimeter (same collision as rails)
+  const walls = solidPlayfield
+    ? [...(board.walls || []), ...playfieldWallSegments(bounds)]
+    : board.walls || [];
+
   while ((train.offRailStepsDone || 0) < targetSteps) {
     train.offRailStepsDone = (train.offRailStepsDone || 0) + 1;
     if (train.reRailDistLeft > 0) {
@@ -71,10 +95,11 @@ export function stepOffRail(train, board, dt, bounds) {
     y += uy * OFF_RAIL_DS;
 
     if (
-      x < bounds.minX ||
-      x > bounds.maxX ||
-      y < bounds.minY ||
-      y > bounds.maxY
+      !solidPlayfield &&
+      (x < bounds.minX ||
+        x > bounds.maxX ||
+        y < bounds.minY ||
+        y > bounds.maxY)
     ) {
       train.x = Math.max(bounds.minX, Math.min(bounds.maxX, x));
       train.y = Math.max(bounds.minY, Math.min(bounds.maxY, y));
@@ -83,6 +108,13 @@ export function stepOffRail(train, board, dt, bounds) {
       train.ang = ang;
       train.mode = TrainMode.STOPPED;
       return;
+    }
+
+    // Soft clamp if solid walls somehow tunnel past the perimeter
+    if (solidPlayfield) {
+      const m = WHEEL_RADIUS + 1;
+      x = Math.max(bounds.minX + m, Math.min(bounds.maxX - m, x));
+      y = Math.max(bounds.minY + m, Math.min(bounds.maxY - m, y));
     }
 
     // A few settle passes — each pass uses only deepest contact per axle
@@ -96,14 +128,14 @@ export function stepOffRail(train, board, dt, bounds) {
         y: y + Math.sin(ang) * REAR_AXLE_OFFSET,
       };
 
-      const rearHit = deepestWallHit(ra.x, ra.y, board.walls);
+      const rearHit = deepestWallHit(ra.x, ra.y, walls);
       if (rearHit) {
         hitAny = true;
         x += (rearHit.x - ra.x) * 0.55;
         y += (rearHit.y - ra.y) * 0.55;
       }
 
-      const frontHit = deepestWallHit(fa.x, fa.y, board.walls);
+      const frontHit = deepestWallHit(fa.x, fa.y, walls);
       if (frontHit) {
         hitAny = true;
         x += (frontHit.x - fa.x) * 0.75;

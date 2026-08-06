@@ -9,7 +9,7 @@
     />
     <meta name="theme-color" content="#1a2332" />
     <title>Plarail Meme - Real-2-Sim</title>
-    <link rel="stylesheet" href="css/styles.css?v=20260806i" />
+    <link rel="stylesheet" href="css/styles.css?v=20260806j" />
   </head>
   <body>
     <div id="app">
@@ -52,9 +52,14 @@
             accept="application/json,.json"
             hidden
           />
-          <button type="button" class="ui primary" id="btn-meme">
-            Load Real-2-Sim track
-          </button>
+          <div class="track-load-row" role="group" aria-label="Built-in tracks">
+            <select id="track-select" title="Choose a built-in track" aria-label="Track layout">
+              <!-- Populated by main.js from TRACK_CATALOG -->
+            </select>
+            <button type="button" class="ui primary" id="btn-load-track" title="Load selected track">
+              Load
+            </button>
+          </div>
           <div class="tool-row">
             <button type="button" class="ui" id="btn-walls">Wall debug</button>
             <button type="button" class="ui" id="btn-help">Help</button>
@@ -138,6 +143,16 @@
             aria-label="Clear board"
           >
             ✕
+          </button>
+          <button
+            type="button"
+            class="icon-btn icon-btn-emoji"
+            id="btn-solid-walls"
+            title="Playfield walls: bounce at the edge (off = stop at edge)"
+            aria-label="Toggle solid playfield walls"
+            aria-pressed="false"
+          >
+            🧱
           </button>
         </div>
         <div class="sep"></div>
@@ -259,6 +274,14 @@
             narrow screens (› reopens it).
           </li>
           <li>
+            <strong>🧱 Walls:</strong> solid wood playfield border — train bounces at
+            the edge instead of stopping. Toggle on the bottom toolbar.
+          </li>
+          <li>
+            <strong>Tracks:</strong> pick a built-in layout in the sidebar dropdown,
+            then <strong>Load</strong>.
+          </li>
+          <li>
             <strong>Sound</strong> is pure Web Audio (no libraries): plastic gear
             mesh (bandpass noise × square AM). Same motor on-rail and off-rail
             (quieter off-rail; tooth rate follows speed). Unlocks after first click.
@@ -278,6 +301,6 @@
       </div>
     </div>
 
-    <script type="module" src="js/main.js?v=20260806i"></script>
+    <script type="module" src="js/main.js?v=20260806j"></script>
   </body>
 </html>

@@ -48,6 +48,7 @@ export {
   OFF_RAIL_REF_SPEED,
   leaveRails,
   stepOffRail,
+  playfieldWallSegments,
 } from "./train/off-rail.js";
 
 export function placeTrainOnPath(train, hit, opts = {}) {
@@ -154,7 +155,11 @@ export function resetTrainHard(train) {
 }
 
 
-export function updateTrain(train, board, dt, bounds) {
+/**
+ * @param {object} [opts]
+ * @param {boolean} [opts.solidPlayfield] bounce on playfield perimeter instead of STOPPED
+ */
+export function updateTrain(train, board, dt, bounds, opts = {}) {
   if (train.mode === TrainMode.IDLE || train.mode === TrainMode.STOPPED) return;
 
   if (train.reRailCooldown > 0) train.reRailCooldown -= dt;
@@ -162,7 +167,7 @@ export function updateTrain(train, board, dt, bounds) {
   if (train.mode === TrainMode.ON_RAIL) {
     stepOnRail(train, board, dt);
   } else if (train.mode === TrainMode.OFF_RAIL) {
-    stepOffRail(train, board, dt, bounds);
+    stepOffRail(train, board, dt, bounds, opts);
   }
 }
 

@@ -97,3 +97,48 @@ test("open-ended R01 derails eventually", () => {
     `expected derail, got ${train.mode}`
   );
 });
+
+test("solid playfield walls bounce instead of STOPPED", () => {
+  const board = createBoard();
+  // No track walls — only the playfield box
+  rebuild(board);
+  const train = createTrain();
+  train.mode = TrainMode.OFF_RAIL;
+  train.speed = 200;
+  train.x = 50;
+  train.y = 100;
+  train.ang = Math.PI; // head left toward minX
+  train.vx = Math.cos(train.ang) * train.speed;
+  train.vy = Math.sin(train.ang) * train.speed;
+  train.offRailPreferAng = train.ang;
+  train.reRailDistLeft = 9999; // don't re-rail
+  const bounds = { minX: 0, minY: 0, maxX: 400, maxY: 300 };
+  for (let i = 0; i < 240; i++) {
+    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+  }
+  assertEq(train.mode, TrainMode.OFF_RAIL);
+  assert(
+    train.x >= bounds.minX - 1 && train.x <= bounds.maxX + 1,
+    `x stayed in box, got ${train.x}`
+  );
+  assert(
+    train.y >= bounds.minY - 1 && train.y <= bounds.maxY + 1,
+    `y stayed in box, got ${train.y}`
+  );
+  // Without solid walls, same setup hits STOPPED at the edge
+  const train2 = createTrain();
+  train2.mode = TrainMode.OFF_RAIL;
+  train2.speed = 200;
+  train2.x = 50;
+  train2.y = 100;
+  train2.ang = Math.PI;
+  train2.vx = Math.cos(train2.ang) * train2.speed;
+  train2.vy = Math.sin(train2.ang) * train2.speed;
+  train2.offRailPreferAng = train2.ang;
+  train2.reRailDistLeft = 9999;
+  for (let i = 0; i < 240; i++) {
+    updateTrain(train2, board, 1 / 60, bounds, { solidPlayfield: false });
+    if (train2.mode === TrainMode.STOPPED) break;
+  }
+  assertEq(train2.mode, TrainMode.STOPPED);
+});
