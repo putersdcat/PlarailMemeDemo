@@ -9,6 +9,41 @@
 **[1080p video](recordings/plarail-meme-demo-1080p.mp4)** ·
 **[480p video](recordings/plarail-meme-demo-480p.mp4)**
 
+## Inspiration
+
+The layout and vibe come from this meme / layout energy (the primal pitch deck):
+
+[![Demo screenshot — on rails → derail → re-rail](docs/InspirationScreenshot.png)](docs/InspirationScreenshot.png)
+
+> [how my codebase written entirely with claude code runs](https://t.co/sPDmqn63I2)
+> — Markov ([@MarkovMagnifico](https://x.com/MarkovMagnifico)), 18 Jan 2026
+
+## Develop Please it's buggy slop!
+
+```bash
+npm test          # node tests/run.mjs
+npm run serve     # python -m http.server 8765
+```
+
+Hard-refresh after JS changes (cache-busted `?v=` on entry assets).
+
+## Thanks
+
+Endless thanks to my wife **Denise** — for patience, floor space, and not declaring the living room a staging environment.
+
+Thank you, **Japan**, for inventing (and endlessly iterating) the plastic rail universe that made childhood and this repo possible.
+
+Dimensional and structural reality checks were made possible by the excellent community references at Parlorfleur:
+
+- [Normal Rail](https://parlorfleur-pm.com/Normal_Rail.html)
+- [Rail Structure List](https://parlorfleur-pm.com/Rail_Structure_List.html)
+
+And by the internet’s long memory — the Internet Archive’s Plarail catalog scan:
+
+- [Plarail Catalogue 2014 (archive.org)](https://archive.org/details/catalogue-plarail-catalogue-2014_202208/%5Bcatalogue%5D_plarail_catalogue_2014/page/n9/mode/2up)
+
+If you measured a curve with a ruler at 1 a.m. so a stranger on the web wouldn’t have to: you’re the real unit of track.
+
 ## Intro (synergistic rail-forward value proposition)
 
 In today’s rapidly evolving multi-modal plastic ecosystem, stakeholders increasingly demand a **holistic end-to-end train-shaped experience** that empowers builders to *leverage* magnetic adjacency, *unlock* paint-adjacent brand moments, and *operationalize* derailment as a first-class citizen of the joy funnel.
@@ -56,93 +91,6 @@ python -m http.server 8765
 ```
 
 Then open [http://127.0.0.1:8765/](http://127.0.0.1:8765/).
-
-## Inspiration
-
-The layout and vibe come from this meme / layout energy (the primal pitch deck):
-
-<blockquote class="twitter-tweet"><p lang="en" dir="ltr">how my codebase written entirely with claude code runs <a href="https://t.co/sPDmqn63I2">pic.twitter.com/sPDmqn63I2</a></p>&mdash; Markov (@MarkovMagnifico) <a href="https://x.com/MarkovMagnifico/status/2012930198354764058?ref_src=twsrc%5Etfw">January 18, 2026</a></blockquote>
-<script async src="https://platform.x.com/widgets.js" charset="utf-8"></script>
-
-Fallback link (GitHub.com strips widgets.js; the [live demo](https://putersdcat.github.io/PlarailMemeDemo/) page can load the widget):  
-[https://x.com/MarkovMagnifico/status/2012930198354764058](https://x.com/MarkovMagnifico/status/2012930198354764058)
-
-> how my codebase written entirely with claude code runs  
-> — Markov ([@MarkovMagnifico](https://x.com/MarkovMagnifico)), 18 Jan 2026
-
-## Controls
-
-| Input | Action |
-|-------|--------|
-| **Left-drag** from palette | Place track; **magnetic snap** when open ends get close |
-| **Left-drag** a placed piece | Move with the same snap |
-| **Box-select** / multi-drag | Move groups with group snap |
-| **Right-click rail** / train tool | Place or seat the train |
-| **Right-click piece** | Rotate 45° |
-| **Yellow lever** | Cycle switch |
-| **Paint swatches** | One-shot color a piece (blue / green / red / yellow / gray) |
-| **Save JSON / Load JSON** | Download layout (+ browser autosave) |
-| **R** / **F** / **Del** | Rotate / flip / delete |
-| **Space** | Start / stop |
-
-## Behaviour
-
-1. **On rails** — follows the connected path graph (switches respected).
-2. **Open end** — derails onto the floor with the same heading.
-3. **Off rails** — soft wall-slide on track outer edges (compact physics wheelbase).
-4. **Re-rail** — tight alignment window so drive-bys past perpendicular track do not steal the train.
-5. **Canvas edge** — free train hits the playfield bound → **Stopped**; reset and place again.
-
-Motor SFX is a synth “tiny coffee grinder” (Web Audio, no sample packs).
-
-## Project layout
-
-| Path | Role |
-|------|------|
-| `index.html` | Shell UI |
-| `css/styles.css` | Layout / toolbar |
-| `js/main.js` | Wiring, loop, I/O |
-| `js/track.js` | Board, snap, serialize |
-| `js/train.js` | Path follow, derail, wall glide |
-| `js/sound.js` | Web Audio motor + impacts |
-| `js/geometry/` | Piece templates + units |
-| `layouts/real-meme-track.json` | Default gold-standard layout (with paint) |
-| `tests/` | Node unit tests (`npm test`) |
-
-## Docs
-
-| File | Contents |
-|------|----------|
-| `DESIGN.md` | States, snapping, on/off-rail physics |
-| `plarail_meme_track_components.md` | Piece inventory / product notes |
-| `plarail_r01_to_r17_table.md` | Dimensional table |
-| `js/README.md` | Module map |
-
-## Develop
-
-```bash
-npm test          # node tests/run.mjs
-npm run serve     # python -m http.server 8765
-```
-
-Hard-refresh after JS changes (cache-busted `?v=` on entry assets).
-
-## Thanks
-
-Endless thanks to my wife **Denise** — for patience, floor space, and not declaring the living room a staging environment.
-
-Thank you, **Japan**, for inventing (and endlessly iterating) the plastic rail universe that made childhood and this repo possible.
-
-Dimensional and structural reality checks were made possible by the excellent community references at Parlorfleur:
-
-- [Normal Rail](https://parlorfleur-pm.com/Normal_Rail.html)
-- [Rail Structure List](https://parlorfleur-pm.com/Rail_Structure_List.html)
-
-And by the internet’s long memory — the Internet Archive’s Plarail catalog scan:
-
-- [Plarail Catalogue 2014 (archive.org)](https://archive.org/details/catalogue-plarail-catalogue-2014_202208/%5Bcatalogue%5D_plarail_catalogue_2014/page/n9/mode/2up)
-
-If you measured a curve with a ruler at 1 a.m. so a stranger on the web wouldn’t have to: you’re the real unit of track.
 
 ## License
 
