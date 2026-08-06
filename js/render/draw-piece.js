@@ -1,8 +1,13 @@
 /**
  * Track piece drawing (rails, connectors, webbing, levers).
  *
- * Joined ends: clip to connector midline so mates share the seam (no double bed),
- * butt-cap strokes, continuous running rails. Free ends keep round mouths.
+ * ── SEAM JOIN POLISH (revert-friendly) ─────────────────────────────
+ * Introduced for “no double bed / continuous rails at snaps”.
+ * Toggle off with USE_SEAM_JOIN = false to restore pre-union drawing
+ * (round caps everywhere, always show gender tabs, rail offset 6).
+ * Full revert: git show 41611fe^:js/render/draw-piece.js  (pre-change)
+ * or git revert 41611fe / later seam commits touching this file.
+ * ──────────────────────────────────────────────────────────────────
  */
 import {
   HALF_W,
@@ -12,11 +17,16 @@ import {
   worldPivot,
 } from "../geometry.js";
 
+/**
+ * Master switch for joint seam polish.
+ * false = legacy look (safe fallback if seam work looks wrong).
+ */
+export const USE_SEAM_JOIN = true;
+
 const RAIL_BLUE = "#3a8fd6";
 const SELECT = "#f0c040";
-/** Running rail distance from path centerline (was 6 — push slightly outward) */
-const RAIL_OFFSET = 7.5;
-/** Outer bed edge inset from HALF_W */
+/** Running rail offset from centerline (legacy was 6) */
+export const RAIL_OFFSET = USE_SEAM_JOIN ? 7.5 : 6;
 const EDGE_INSET = 1;
 
 const PAINT = {
@@ -34,7 +44,7 @@ function piecePaintHex(piece) {
 
 /**
  * @param {object} opts
- * @param {Set<string>} [opts.freeConnectorIds] pieceId:connId that are free
+ * @param {Set<string>} [opts.freeConnectorIds] free pieceId:connId
  * @param {boolean} [opts.highlightPorts]
  * @param {boolean} [opts.snapped]
  */
@@ -43,20 +53,7 @@ export function drawPiece(ctx, piece, selected = false, opts = {}) {
   const color = piecePaintHex(piece);
   const freeIds = opts.freeConnectorIds;
 
-  const linkedConns = geo.connectors.filter((c) => {
-    const key = `${piece.id}:${c.id}`;
-    // freeIds set = free ends; missing ⇒ linked (or ghost without board)
-    if (!freeIds) return false;
-    return !freeIds.has(key);
-  });
-
-  ctx.save();
-  // Clip drawing to interior of each linked seam (share midline)
-  for (const c of linkedConns) {
-    clipHalfPlane(ctx, c.wx, c.wy, Math.cos(c.wang), Math.sin(c.wang));
-  }
-
-  // Solid body webbing under rails
+  // Solid body webbing under rails — never clipped (whole-piece clips caused mayhem)
   if (geo.tpl.webbingPolys?.length) {
     drawWebbingPolys(ctx, piece, geo.tpl.webbingPolys, color);
   } else if (geo.tpl.webbing) {
@@ -73,39 +70,37 @@ export function drawPiece(ctx, piece, selected = false, opts = {}) {
       geo.tpl.bothPathsActive ||
       path.switchIndex === (piece.switchState ?? 0);
 
-    const startLinked = path.fromC
-      ? linkedConns.some((c) => c.id === path.fromC)
-      : false;
-    const endLinked = path.toC
-      ? linkedConns.some((c) => c.id === path.toC)
-      : false;
-
-    // Snap path ends exactly to connector world points when linked (seamless midline)
-    let pts = path.points;
-    if ((startLinked || endLinked) && pts.length >= 2) {
-      pts = pts.map((p) => ({ x: p.x, y: p.y }));
-      if (startLinked) {
-        const c = geo.connectors.find((x) => x.id === path.fromC);
-        if (c) pts[0] = { x: c.wx, y: c.wy };
+    let startLinked = false;
+    let endLinked = false;
+    if (USE_SEAM_JOIN && freeIds) {
+      // Only treat as linked when we *know* the port is not free.
+      // Loose / orphan pieces: all their ports are free → no special casing.
+      if (path.fromC && !freeIds.has(`${piece.id}:${path.fromC}`)) {
+        startLinked = true;
       }
-      if (endLinked) {
-        const c = geo.connectors.find((x) => x.id === path.toC);
-        if (c) pts[pts.length - 1] = { x: c.wx, y: c.wy };
+      if (path.toC && !freeIds.has(`${piece.id}:${path.toC}`)) {
+        endLinked = true;
       }
     }
 
+    // Mild end trim only on this path (not a piece-wide clip): pull back half a
+    // stroke radius so thick beds meet at the seam instead of double-stacking.
+    // Free ends / unsnapped stubs: full geometry, round caps.
+    const pts =
+      USE_SEAM_JOIN && (startLinked || endLinked)
+        ? trimPathForSeam(path.points, startLinked, endLinked, TRACK_W * 0.08)
+        : path.points;
+
     drawRailPolyline(ctx, pts, active, selected, color, {
-      startLinked,
-      endLinked,
+      startLinked: USE_SEAM_JOIN && startLinked,
+      endLinked: USE_SEAM_JOIN && endLinked,
     });
   }
 
-  ctx.restore();
-
-  // Connectors — only free ends (linked seams are seamless, no tabs)
+  // Gender tabs: hide only when joined and seam polish is on
   for (const c of geo.connectors) {
-    const free = freeIds?.has?.(`${piece.id}:${c.id}`);
-    if (!free && freeIds && !opts.highlightPorts) continue;
+    const free = !freeIds || freeIds.has(`${piece.id}:${c.id}`);
+    if (USE_SEAM_JOIN && freeIds && !free && !opts.highlightPorts) continue;
     drawConnector(
       ctx,
       c.wx,
@@ -161,28 +156,30 @@ export function drawPiece(ctx, piece, selected = false, opts = {}) {
 }
 
 /**
- * Keep interior half-plane of a connector: (p - c) · outward ≤ eps
- * (seam midline shared; mates face opposite outward normals).
+ * Shorten path ends slightly toward the interior so thick strokes meet mid-seam
+ * without round-cap double blobs. Does not change free ends.
  */
-function clipHalfPlane(ctx, cx, cy, nx, ny) {
-  const L = Math.hypot(nx, ny) || 1;
-  nx /= L;
-  ny /= L;
-  const tx = -ny;
-  const ty = nx;
-  const BIG = 12000;
-  // Tiny bias past the seam so hairline gaps vanish; both mates still meet mid-joint
-  const eps = 0.4;
-  const ox = cx + nx * eps;
-  const oy = cy + ny * eps;
-  ctx.beginPath();
-  // Boundary along seam, then far into piece interior (−outward)
-  ctx.moveTo(ox + tx * BIG, oy + ty * BIG);
-  ctx.lineTo(ox - tx * BIG, oy - ty * BIG);
-  ctx.lineTo(ox - tx * BIG - nx * BIG, oy - ty * BIG - ny * BIG);
-  ctx.lineTo(ox + tx * BIG - nx * BIG, oy + ty * BIG - ny * BIG);
-  ctx.closePath();
-  ctx.clip();
+function trimPathForSeam(pts, startLinked, endLinked, trimPx) {
+  if (!pts || pts.length < 2 || trimPx <= 0) return pts;
+  const out = pts.map((p) => ({ x: p.x, y: p.y }));
+  if (startLinked) {
+    const dx = out[1].x - out[0].x;
+    const dy = out[1].y - out[0].y;
+    const L = Math.hypot(dx, dy) || 1;
+    const t = Math.min(trimPx, L * 0.35);
+    out[0].x += (dx / L) * t;
+    out[0].y += (dy / L) * t;
+  }
+  if (endLinked) {
+    const n = out.length - 1;
+    const dx = out[n - 1].x - out[n].x;
+    const dy = out[n - 1].y - out[n].y;
+    const L = Math.hypot(dx, dy) || 1;
+    const t = Math.min(trimPx, L * 0.35);
+    out[n].x += (dx / L) * t;
+    out[n].y += (dy / L) * t;
+  }
+  return out;
 }
 
 function drawRailPolyline(
@@ -198,9 +195,9 @@ function drawRailPolyline(
   const bed = color || RAIL_BLUE;
   const edge = shade(bed, -0.18);
   const { startLinked, endLinked } = ends;
-  // Butt at seams for continuous join; round only when both ends free
-  const cap =
-    startLinked || endLinked ? "butt" : "round";
+  // Butt only when an end is joined — continuous seam without round-cap stack
+  const anyLinked = startLinked || endLinked;
+  const cap = anyLinked ? "butt" : "round";
 
   ctx.lineJoin = "round";
   ctx.lineCap = cap;
@@ -211,34 +208,33 @@ function drawRailPolyline(
   for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
   ctx.stroke();
 
-  // Free-end round mouths (butt alone looks flat)
-  if (!startLinked) drawEndCap(ctx, pts[0], pts[1], TRACK_W, bed, active);
-  if (!endLinked) {
-    drawEndCap(
-      ctx,
-      pts[pts.length - 1],
-      pts[pts.length - 2],
-      TRACK_W,
-      bed,
-      active
-    );
+  // Round mouths only on free ends (when path uses butt for the other end)
+  if (anyLinked) {
+    if (!startLinked) drawEndCap(ctx, pts[0], pts[1], TRACK_W, bed, active);
+    if (!endLinked) {
+      drawEndCap(
+        ctx,
+        pts[pts.length - 1],
+        pts[pts.length - 2],
+        TRACK_W,
+        bed,
+        active
+      );
+    }
   }
 
-  // Edge lines
   ctx.strokeStyle = active ? edge : withAlpha(edge, 0.25);
   ctx.lineWidth = 2;
   ctx.lineCap = cap;
   strokeOffsetPolyline(ctx, pts, HALF_W - EDGE_INSET);
   strokeOffsetPolyline(ctx, pts, -(HALF_W - EDGE_INSET));
 
-  // Running rails — slightly wider gauge than before
   ctx.strokeStyle = active ? "#1a4a72" : "rgba(26,74,114,0.2)";
   ctx.lineWidth = 2;
-  ctx.lineCap = startLinked || endLinked ? "butt" : "round";
+  ctx.lineCap = anyLinked ? "butt" : "round";
   strokeOffsetPolyline(ctx, pts, RAIL_OFFSET);
   strokeOffsetPolyline(ctx, pts, -RAIL_OFFSET);
 
-  // Center dashed
   if (active) {
     ctx.strokeStyle = "rgba(255,255,255,0.25)";
     ctx.lineWidth = 1;
@@ -262,7 +258,6 @@ function drawRailPolyline(
   }
 }
 
-/** Half-disk cap at a free path end so mouths stay rounded. */
 function drawEndCap(ctx, tip, prev, width, color, active) {
   const dx = tip.x - prev.x;
   const dy = tip.y - prev.y;
@@ -417,5 +412,3 @@ function drawStopBump(ctx, piece, color = RAIL_BLUE) {
   ctx.strokeStyle = withAlpha(shade(color, -0.25), 0.5);
   ctx.stroke();
 }
-
-export { RAIL_OFFSET };

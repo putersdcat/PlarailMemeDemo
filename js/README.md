@@ -16,7 +16,7 @@ No npm runtime dependencies. Browser loads ES modules; tests run with Node.
 | `train/pose.js` | Create train, axles, hit-test |
 | `train/off-rail.js` | Wall glide (fixed steps) + re-rail |
 | `render.js` | Scene, palette icons |
-| `render/draw-piece.js` | Track piece drawing |
+| `render/draw-piece.js` | Track piece drawing (seam join polish: `USE_SEAM_JOIN`) |
 | `render/draw-train.js` | Bullet-train sprite |
 | `sound.js` | Web Audio plastic gear motor + clacks |
 | `presets.js` | Gold-standard layout + oval helpers |
@@ -33,6 +33,14 @@ node tests/run.mjs
 ```
 
 Smoke tests cover: full catalog templates, meme layout round-trip, derail motion, camera math, sound API surface.
+
+## Seam join polish (visual only)
+
+`js/render/draw-piece.js` — joint bed/rail meeting + slightly wider rails.
+
+- Kill-switch: set `USE_SEAM_JOIN = false` in that file for legacy look.
+- Full revert of first draft: `git show 41611fe^:js/render/draw-piece.js`
+- Commits in this series: `41611fe` (first draft, half-plane clips), later “v2” soften.
 
 ## Tooling
 
