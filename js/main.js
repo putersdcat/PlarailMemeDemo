@@ -33,8 +33,6 @@ import {
   closestPathPoint,
   getPiece,
   rebuild,
-  serializeBoard,
-  loadBoard,
   normalizePieceColor,
 } from "./track.js";
 import {
@@ -51,7 +49,7 @@ import {
   TrainMode,
 } from "./train.js";
 import { resizeCanvas, drawScene, drawPaletteIcon } from "./render.js";
-import { loadMemeStyle, loadRealMemeTrack } from "./presets.js";
+import { loadRealMemeTrack } from "./presets.js";
 import {
   unlockAudio,
   syncTrainAudio,
@@ -60,6 +58,17 @@ import {
   stopMotor,
 } from "./sound.js";
 import { createPaintController } from "./app/paint.js";
+import { createIo } from "./app/io.js";
+import {
+  createView,
+  viewScale as camViewScale,
+  screenToWorld,
+  zoomAtScreen,
+  panByScreen,
+  playfieldBounds,
+  fitBoardToView as camFitBoard,
+  fitWorldRect as camFitWorldRect,
+} from "./app/camera.js";
 
 const canvas = document.getElementById("stage");
 const badgeEl = document.getElementById("mode-badge");
@@ -75,10 +84,8 @@ const train = createTrain();
 let trainPlaced = false;
 
 /** Camera: scale is CSS-px per world unit (1 = 1:1). */
-let view = { w: 800, h: 600, camX: 0, camY: 0, scale: 1 };
+let view = createView(800, 600);
 let bounds = { minX: 40, minY: 40, maxX: 760, maxY: 560 };
-const SCALE_MIN = 0.32;
-const SCALE_MAX = 2.75;
 
 let running = false;
 /** @type {null | object} ghost piece pose while placing/moving */
@@ -345,43 +352,6 @@ const paint = createPaintController({
 paint.bindUi();
 const clearPaintMode = () => paint.clearPaintMode();
 
-// ── Save / Load layout JSON ──
-document.getElementById("btn-save").addEventListener("click", () => {
-  saveLayoutToFile();
-});
-document.getElementById("btn-load").addEventListener("click", () => {
-  document.getElementById("file-load").click();
-});
-document.getElementById("file-load").addEventListener("change", async (e) => {
-  const file = e.target.files?.[0];
-  e.target.value = "";
-  if (!file) return;
-  try {
-    const text = await file.text();
-    const data = JSON.parse(text);
-    applyLoadedLayout(data, file.name);
-  } catch (err) {
-    setHint(`Load failed: ${err.message || err}`);
-  }
-});
-
-function buildSavePayload() {
-  const payload = serializeBoard(board);
-  if (trainPlaced) {
-    payload.train = {
-      x: train.x,
-      y: train.y,
-      ang: train.ang,
-      mode: train.mode,
-      speed: train.speed,
-    };
-  }
-  // Always persist speed so starter / autosave keep the sweet spot
-  payload.speed = train.speed;
-  payload.savedAt = new Date().toISOString();
-  return payload;
-}
-
 function applySpeed(speed) {
   const n = Number(speed);
   if (!Number.isFinite(n)) return;
@@ -389,76 +359,6 @@ function applySpeed(speed) {
   train.speed = clamped;
   if (speedSlider) speedSlider.value = String(clamped);
   setMotorSpeed(train.speed / 140);
-}
-
-function persistLayout() {
-  try {
-    localStorage.setItem(LS_KEY, JSON.stringify(buildSavePayload()));
-  } catch (err) {
-    console.warn("localStorage save failed", err);
-  }
-}
-
-function applyLoadedLayout(data, label = "layout") {
-  const result = loadBoard(board, data);
-  if (!result.ok) {
-    setHint(result.error || "Could not load layout.");
-    return false;
-  }
-  running = false;
-  resetTrainHard(train);
-  trainPlaced = false;
-  clearSelection();
-  if (data.train && data.train.x != null) {
-    tryPlaceTrainAt(data.train.x, data.train.y);
-  } else {
-    // Fallback seat (gold-standard train pose)
-    placeTrainAtHint({ x: 528.73, y: 653 });
-  }
-  // Layout / train speed (starter track ships at the working slider setting)
-  applySpeed(data.train?.speed ?? data.speed ?? speedSlider?.value ?? 210);
-  persistLayout();
-  fitBoardToView(48);
-  setHint(`Loaded ${result.pieceCount} pieces from ${label}.`);
-  updateStatus();
-  return true;
-}
-
-/**
- * Save always uses a real browser download + localStorage.
- * (showSaveFilePicker was leaving a stuck file dialog and losing saves.)
- */
-function saveLayoutToFile() {
-  try {
-    const payload = buildSavePayload();
-    const json = JSON.stringify(payload, null, 2);
-    const defaultName = `plarail-layout-${dateStamp()}.json`;
-    persistLayout();
-    downloadJsonFile(json, defaultName);
-    setHint(
-      `Saved ${board.pieces.length} pieces → Downloads/${defaultName} (+ browser autosave).`
-    );
-  } catch (err) {
-    console.error("Save failed:", err);
-    setHint(`Save failed: ${err?.message || err}`);
-  }
-}
-
-/** Reliable blob download (must attach <a> for some browsers). */
-function downloadJsonFile(json, filename) {
-  const blob = new Blob([json], { type: "application/json;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.rel = "noopener";
-  a.style.display = "none";
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => {
-    URL.revokeObjectURL(url);
-    a.remove();
-  }, 1500);
 }
 
 function tryPlaceTrainAt(x, y, maxDist = 48) {
@@ -472,11 +372,64 @@ function tryPlaceTrainAt(x, y, maxDist = 48) {
   return false;
 }
 
-function dateStamp() {
-  const d = new Date();
-  const p = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+function placeTrainAtHint(hint) {
+  if (!hint) return;
+  const hit = closestPathPoint(board, hint.x, hint.y, 80);
+  if (hit) {
+    let dir = 1;
+    if (typeof hint.ang === "number" && Number.isFinite(hint.ang)) {
+      const d1 = Math.abs(
+        ((hint.ang - hit.ang + Math.PI * 3) % (Math.PI * 2)) - Math.PI
+      );
+      const d2 = Math.abs(
+        ((hint.ang - (hit.ang + Math.PI) + Math.PI * 3) % (Math.PI * 2)) -
+          Math.PI
+      );
+      dir = d1 <= d2 ? 1 : -1;
+    }
+    placeTrainOnPath(train, hit, { dir });
+    trainPlaced = true;
+    train.selected = false;
+    running = false;
+    updateStatus();
+  }
 }
+
+function setHint(text) {
+  hintEl.textContent = text;
+}
+
+// ── Save / Load (app/io.js) ──
+const io = createIo({
+  board,
+  train,
+  getTrainPlaced: () => trainPlaced,
+  setTrainPlaced: (v) => {
+    trainPlaced = v;
+  },
+  setRunning: (v) => {
+    running = v;
+  },
+  tryPlaceTrainAt,
+  placeTrainAtHint,
+  resetTrainHard,
+  applySpeed,
+  fitBoardToView: () => fitBoardToView(48),
+  setHint,
+  updateStatus,
+  clearSelection,
+  lsKey: LS_KEY,
+  defaultSpeed: 210,
+});
+const {
+  buildSavePayload,
+  persistLayout,
+  applyLoadedLayout,
+  saveLayoutToFile,
+  tryLoadAutosave,
+  bindFileUi,
+} = io;
+bindFileUi();
 
 btnStart.addEventListener("click", () => {
   unlockAudio();
@@ -594,37 +547,19 @@ window.addEventListener("keydown", (e) => {
 });
 
 function viewScale() {
-  return view.scale > 0 ? view.scale : 1;
-}
-
-/** Screen (CSS px relative to canvas) → world. */
-function screenToWorld(sx, sy) {
-  const s = viewScale();
-  return {
-    x: sx / s + view.camX,
-    y: sy / s + view.camY,
-  };
+  return camViewScale(view);
 }
 
 function canvasPoint(e) {
   const rect = canvas.getBoundingClientRect();
   const sx = e.clientX - rect.left;
   const sy = e.clientY - rect.top;
-  const w = screenToWorld(sx, sy);
+  const w = screenToWorld(view, sx, sy);
   return { x: w.x, y: w.y, sx, sy };
 }
 
-function clampScale(s) {
-  return Math.max(SCALE_MIN, Math.min(SCALE_MAX, s));
-}
-
-/** Zoom keeping world point under (sx,sy) fixed. */
-function zoomAtScreen(sx, sy, nextScale) {
-  const before = screenToWorld(sx, sy);
-  view.scale = clampScale(nextScale);
-  const after = screenToWorld(sx, sy);
-  view.camX += before.x - after.x;
-  view.camY += before.y - after.y;
+function zoomAt(sx, sy, nextScale) {
+  zoomAtScreen(view, sx, sy, nextScale);
   updateBounds();
 }
 
@@ -990,9 +925,7 @@ function onPointerMove(e) {
   const p = canvasPoint(e);
 
   if (drag?.kind === "pan") {
-    const s = viewScale();
-    view.camX -= (e.clientX - drag.lx) / s;
-    view.camY -= (e.clientY - drag.ly) / s;
+    panByScreen(view, e.clientX - drag.lx, e.clientY - drag.ly);
     drag.lx = e.clientX;
     drag.ly = e.clientY;
     return;
@@ -1315,34 +1248,6 @@ function onPointerUp(e) {
   canvas.classList.remove("dragging");
 }
 
-function placeTrainAtHint(hint) {
-  if (!hint) return;
-  const hit = closestPathPoint(board, hint.x, hint.y, 80);
-  if (hit) {
-    // Prefer saved facing when present (layout.train.ang)
-    let dir = 1;
-    if (typeof hint.ang === "number" && Number.isFinite(hint.ang)) {
-      const d1 = Math.abs(
-        ((hint.ang - hit.ang + Math.PI * 3) % (Math.PI * 2)) - Math.PI
-      );
-      const d2 = Math.abs(
-        ((hint.ang - (hit.ang + Math.PI) + Math.PI * 3) % (Math.PI * 2)) -
-          Math.PI
-      );
-      dir = d1 <= d2 ? 1 : -1;
-    }
-    placeTrainOnPath(train, hit, { dir });
-    trainPlaced = true;
-    train.selected = false;
-    running = false;
-    updateStatus();
-  }
-}
-
-function setHint(text) {
-  hintEl.textContent = text;
-}
-
 function updateStatus() {
   const mode = trainPlaced
     ? running
@@ -1376,16 +1281,7 @@ function updateStatus() {
 }
 
 function updateBounds() {
-  const s = viewScale();
-  const pad = 20 / s;
-  const ww = view.w / s;
-  const wh = view.h / s;
-  bounds = {
-    minX: view.camX + pad,
-    minY: view.camY + pad,
-    maxX: view.camX + ww - pad,
-    maxY: view.camY + wh - pad,
-  };
+  bounds = playfieldBounds(view, 20);
 }
 
 /** Last canvas size we auto-fitted for (skip thrash on tiny resizes). */
@@ -1432,7 +1328,7 @@ canvas.addEventListener(
     const sx = e.clientX - rect.left;
     const sy = e.clientY - rect.top;
     const factor = e.deltaY > 0 ? 0.9 : 1.11;
-    zoomAtScreen(sx, sy, viewScale() * factor);
+    zoomAt(sx, sy, viewScale() * factor);
   },
   { passive: false }
 );
@@ -1467,7 +1363,7 @@ canvas.addEventListener(
     const rect = canvas.getBoundingClientRect();
     const sx = pinch.mx - rect.left;
     const sy = pinch.my - rect.top;
-    zoomAtScreen(sx, sy, pinch.scale * (dist / pinch.dist));
+    zoomAt(sx, sy, pinch.scale * (dist / pinch.dist));
   },
   { passive: false }
 );
@@ -1542,66 +1438,14 @@ window.matchMedia("(max-width: 900px)").addEventListener("change", (ev) => {
 });
 btnSidebarOpen?.addEventListener("click", () => setSidebarCollapsed(false));
 
-/**
- * World AABB of placed pieces (walls preferred when present).
- * @returns {{minX:number,minY:number,maxX:number,maxY:number}|null}
- */
-function computeBoardBounds() {
-  if (board.walls?.length) {
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    for (const w of board.walls) {
-      minX = Math.min(minX, w.x1, w.x2);
-      minY = Math.min(minY, w.y1, w.y2);
-      maxX = Math.max(maxX, w.x1, w.x2);
-      maxY = Math.max(maxY, w.y1, w.y2);
-    }
-    if (Number.isFinite(minX)) return { minX, minY, maxX, maxY };
-  }
-  if (!board.pieces?.length) return null;
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  const pad = UNIT * 0.85;
-  for (const p of board.pieces) {
-    const piv = worldPivot(p);
-    minX = Math.min(minX, piv.x - pad, p.x - pad);
-    minY = Math.min(minY, piv.y - pad, p.y - pad);
-    maxX = Math.max(maxX, piv.x + pad, p.x + pad);
-    maxY = Math.max(maxY, piv.y + pad, p.y + pad);
-  }
-  return Number.isFinite(minX) ? { minX, minY, maxX, maxY } : null;
-}
-
-/**
- * Fit + center a world rect in the canvas (sets scale + pan).
- * @param {{minX:number,minY:number,maxX:number,maxY:number}} rect
- * @param {number} pad world padding
- */
 function fitWorldRect(rect, pad = 40) {
-  if (!rect || !(view.w > 0 && view.h > 0)) return;
-  const minX = Number(rect.minX) - pad;
-  const minY = Number(rect.minY) - pad;
-  const maxX = Number(rect.maxX) + pad;
-  const maxY = Number(rect.maxY) + pad;
-  const bw = Math.max(40, maxX - minX);
-  const bh = Math.max(40, maxY - minY);
-  const sx = view.w / bw;
-  const sy = view.h / bh;
-  view.scale = clampScale(Math.min(sx, sy));
-  const cx = (minX + maxX) / 2;
-  const cy = (minY + maxY) / 2;
-  view.camX = cx - view.w / view.scale / 2;
-  view.camY = cy - view.h / view.scale / 2;
+  camFitWorldRect(view, rect, pad);
   updateBounds();
 }
 
 function fitBoardToView(pad = 48) {
-  const b = computeBoardBounds();
-  if (b) fitWorldRect(b, pad);
+  camFitBoard(view, board, pad, UNIT);
+  updateBounds();
   lastAutoFit = { w: view.w, h: view.h };
 }
 
@@ -1648,18 +1492,7 @@ window.__plarailDemo = {
 
 // Startup: localStorage autosave → else real meme track (never the circle)
 {
-  let loaded = false;
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (raw) {
-      const data = JSON.parse(raw);
-      if (data?.pieces?.length) {
-        loaded = applyLoadedLayout(data, "autosave");
-      }
-    }
-  } catch (err) {
-    console.warn("autosave load failed", err);
-  }
+  const loaded = tryLoadAutosave();
   if (!loaded) {
     const info = loadRealMemeTrack(board);
     placeTrainAtHint(info.trainHint);
@@ -1679,8 +1512,7 @@ window.__plarailDemo = {
     onResize();
     fitBoardToView(48);
   });
-  // Visible build stamp so cache issues are obvious
-  console.info("[Plarail] build 20260806e — plastic gear motor (user graph)");
+  console.info("[Plarail] build 20260806f — polish: modules + tests");
 }
 
 function frame(t) {

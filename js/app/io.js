@@ -1,7 +1,7 @@
 /**
  * Save / load / localStorage persistence for layouts.
  */
-import { serializeBoard, loadBoard, closestPathPoint } from "../track.js";
+import { serializeBoard, loadBoard } from "../track.js";
 
 /**
  * @param {{
@@ -9,14 +9,17 @@ import { serializeBoard, loadBoard, closestPathPoint } from "../track.js";
  *   train: object,
  *   getTrainPlaced: () => boolean,
  *   setTrainPlaced: (v: boolean) => void,
- *   placeTrainOnPath: Function,
+ *   setRunning: (v: boolean) => void,
+ *   tryPlaceTrainAt: (x: number, y: number, maxDist?: number) => boolean,
+ *   placeTrainAtHint: (hint: object) => void,
  *   resetTrainHard: Function,
- *   tryPlaceTrainAt: Function,
- *   placeTrainAtHint: Function,
+ *   applySpeed: (speed: number|string) => void,
+ *   fitBoardToView: () => void,
  *   setHint: Function,
  *   updateStatus: Function,
  *   clearSelection: Function,
  *   lsKey: string,
+ *   defaultSpeed?: number,
  * }} deps
  */
 export function createIo(deps) {
@@ -25,21 +28,18 @@ export function createIo(deps) {
     train,
     getTrainPlaced,
     setTrainPlaced,
-    placeTrainOnPath,
-    resetTrainHard,
+    setRunning,
     tryPlaceTrainAt,
     placeTrainAtHint,
+    resetTrainHard,
+    applySpeed,
+    fitBoardToView,
     setHint,
     updateStatus,
     clearSelection,
     lsKey,
+    defaultSpeed = 210,
   } = deps;
-
-  let runningFlag = null; // set by host if needed
-
-  function setRunningRef(ref) {
-    runningFlag = ref;
-  }
 
   function buildSavePayload() {
     const payload = serializeBoard(board);
@@ -49,8 +49,10 @@ export function createIo(deps) {
         y: train.y,
         ang: train.ang,
         mode: train.mode,
+        speed: train.speed,
       };
     }
+    payload.speed = train.speed;
     payload.savedAt = new Date().toISOString();
     return payload;
   }
@@ -69,7 +71,7 @@ export function createIo(deps) {
       setHint(result.error || "Could not load layout.");
       return false;
     }
-    if (runningFlag) runningFlag.value = false;
+    setRunning(false);
     resetTrainHard(train);
     setTrainPlaced(false);
     clearSelection();
@@ -78,7 +80,11 @@ export function createIo(deps) {
     } else {
       placeTrainAtHint({ x: 528.73, y: 653 });
     }
+    applySpeed(
+      data.train?.speed ?? data.speed ?? defaultSpeed
+    );
     persistLayout();
+    fitBoardToView();
     setHint(`Loaded ${result.pieceCount} pieces from ${label}.`);
     updateStatus();
     return true;
@@ -87,7 +93,9 @@ export function createIo(deps) {
   function dateStamp() {
     const d = new Date();
     const p = (n) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(
+      d.getHours()
+    )}${p(d.getMinutes())}`;
   }
 
   function downloadJsonFile(json, filename) {
@@ -142,18 +150,20 @@ export function createIo(deps) {
     document.getElementById("btn-load")?.addEventListener("click", () => {
       document.getElementById("file-load")?.click();
     });
-    document.getElementById("file-load")?.addEventListener("change", async (e) => {
-      const file = e.target.files?.[0];
-      e.target.value = "";
-      if (!file) return;
-      try {
-        const text = await file.text();
-        const data = JSON.parse(text);
-        applyLoadedLayout(data, file.name);
-      } catch (err) {
-        setHint(`Load failed: ${err.message || err}`);
-      }
-    });
+    document
+      .getElementById("file-load")
+      ?.addEventListener("change", async (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = "";
+        if (!file) return;
+        try {
+          const text = await file.text();
+          const data = JSON.parse(text);
+          applyLoadedLayout(data, file.name);
+        } catch (err) {
+          setHint(`Load failed: ${err.message || err}`);
+        }
+      });
   }
 
   return {
@@ -163,6 +173,5 @@ export function createIo(deps) {
     saveLayoutToFile,
     tryLoadAutosave,
     bindFileUi,
-    setRunningRef,
   };
 }

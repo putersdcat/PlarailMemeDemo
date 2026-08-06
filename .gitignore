@@ -31,3 +31,7 @@ recordings/*.webm
 # Local layout dumps (canonical defaults live under layouts/)
 plarail-layout-*.json
 !layouts/**/*.json
+
+# One-shot extract helpers
+scripts/_extract*.mjs
+

@@ -24,6 +24,8 @@
   ],
   "scripts": {
     "test": "node tests/run.mjs",
-    "serve": "python -m http.server 8765"
+    "serve": "python -m http.server 8765",
+    "gen:presets": "node scripts/gen-presets.mjs",
+    "record:demo": "node scripts/record-demo.mjs"
   }
 }

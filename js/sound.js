@@ -340,11 +340,6 @@ export function playRerail() {
   noiseBurst({ dur: 0.05, freq: 1100, vol: 0.12, q: 1.1 });
 }
 
-/** @deprecated */
-export function startScrape() {}
-/** @deprecated */
-export function stopScrape() {}
-
 /**
  * Frame sync: same gear motor on-rail / off-rail; quieter off-rail.
  */
