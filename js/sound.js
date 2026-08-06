@@ -13,7 +13,7 @@ let unlocked = false;
 
 /** @type {null | { bus: GainNode, sets: GearSet[], sources: AudioScheduledSourceNode[] }} */
 let motorNodes = null;
-/** 1 = on-rail, ~0.38 = off-rail */
+/** Relative motor bus level (see MOTOR_LEVEL_ON / MOTOR_LEVEL_OFF). */
 let motorLevel = 1;
 let lastSpeedNorm = 1;
 
@@ -28,10 +28,14 @@ const GEAR_BASE = [
 ];
 
 /**
- * Bus gain matches the user's master (0.18) so on-rail level sounds like the snippet.
- * Off-rail multiplies this down.
+ * Bus gain matches the user's master (0.18).
+ * Each balance pass raises on/off by +0.62 (the original on−off gap):
+ *   pass1: off 0.38→1.0, on 1.0→1.62
+ *   pass2: off 1.0→1.62, on 1.62→2.24
  */
 const MOTOR_BUS_BASE = 0.18;
+const MOTOR_LEVEL_ON = 2.24;
+const MOTOR_LEVEL_OFF = 1.62;
 
 /** @typedef {{ noise: AudioBufferSourceNode, teeth: OscillatorNode, filter: BiquadFilterNode, gearVolume: GainNode, modulation: GainNode, base: typeof GEAR_BASE[0] }} GearSet */
 
@@ -141,14 +145,14 @@ function speedFactor(speedNorm) {
 /**
  * Same motor on rails and carpet; level scales bus gain only.
  * @param {number} speedNorm roughly train.speed / 140
- * @param {number} level 1 on-rail, ~0.38 off-rail
+ * @param {number} level MOTOR_LEVEL_ON / MOTOR_LEVEL_OFF (bus multiplier)
  */
-export function startMotor(speedNorm = 1, level = 1) {
+export function startMotor(speedNorm = 1, level = MOTOR_LEVEL_ON) {
   const c = ensureReady();
   if (!c || !master) return;
 
   lastSpeedNorm = speedNorm;
-  motorLevel = Math.max(0.12, Math.min(1, level));
+  motorLevel = Math.max(0.12, Math.min(3, level));
 
   if (motorNodes) {
     setMotorSpeed(speedNorm);
@@ -182,9 +186,9 @@ export function startMotor(speedNorm = 1, level = 1) {
   setMotorLevel(motorLevel);
 }
 
-/** Volume scale for same motor (1 on-rail, quieter off-rail). */
-export function setMotorLevel(level = 1) {
-  motorLevel = Math.max(0.12, Math.min(1, level));
+/** Volume scale for same motor (higher on-rail, quieter off-rail). */
+export function setMotorLevel(level = MOTOR_LEVEL_ON) {
+  motorLevel = Math.max(0.12, Math.min(3, level));
   if (!motorNodes || !ctx) return;
   const t = ctx.currentTime;
   const target = MOTOR_BUS_BASE * motorLevel;
@@ -323,13 +327,15 @@ export function playCollision(kind = "derail") {
     noiseBurst({ dur: 0.18, freq: 700, vol: 0.24, q: 0.7 });
     beep({ freq: 180, dur: 0.24, type: "triangle", vol: 0.28, slideTo: 70 });
   } else if (kind === "wall") {
-    noiseBurst({ dur: 0.07, freq: 1100, vol: 0.38, q: 0.75 });
-    noiseBurst({ dur: 0.05, freq: 1800, vol: 0.16, q: 0.9 });
-    beep({ freq: 460, dur: 0.05, type: "triangle", vol: 0.1, slideTo: 220 });
+    // another ~10% quieter (0.342→0.308, etc.)
+    noiseBurst({ dur: 0.07, freq: 1100, vol: 0.308, q: 0.75 });
+    noiseBurst({ dur: 0.05, freq: 1800, vol: 0.13, q: 0.9 });
+    beep({ freq: 460, dur: 0.05, type: "triangle", vol: 0.081, slideTo: 220 });
   } else {
-    noiseBurst({ dur: 0.14, freq: 900, vol: 0.48, q: 0.7 });
-    noiseBurst({ dur: 0.1, freq: 1500, vol: 0.22, q: 0.95 });
-    beep({ freq: 300, dur: 0.12, type: "triangle", vol: 0.2, slideTo: 100 });
+    // derail / off-track drop — another ~10% quieter
+    noiseBurst({ dur: 0.14, freq: 900, vol: 0.389, q: 0.7 });
+    noiseBurst({ dur: 0.1, freq: 1500, vol: 0.178, q: 0.95 });
+    beep({ freq: 300, dur: 0.12, type: "triangle", vol: 0.162, slideTo: 100 });
   }
 }
 
@@ -377,9 +383,9 @@ export function syncTrainAudio(state, mem = {}) {
 
   const speedNorm = (state.speed || 140) / 140;
   if (running && mode === "on_rail") {
-    startMotor(speedNorm, 1);
+    startMotor(speedNorm, MOTOR_LEVEL_ON);
   } else if (running && mode === "off_rail") {
-    startMotor(speedNorm, 0.38);
+    startMotor(speedNorm, MOTOR_LEVEL_OFF);
   } else {
     stopMotor();
   }
