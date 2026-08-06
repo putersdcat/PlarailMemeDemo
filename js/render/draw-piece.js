@@ -1,5 +1,8 @@
 /**
  * Track piece drawing (rails, connectors, webbing, levers).
+ *
+ * Joined ends: clip to connector midline so mates share the seam (no double bed),
+ * butt-cap strokes, continuous running rails. Free ends keep round mouths.
  */
 import {
   HALF_W,
@@ -11,6 +14,10 @@ import {
 
 const RAIL_BLUE = "#3a8fd6";
 const SELECT = "#f0c040";
+/** Running rail distance from path centerline (was 6 — push slightly outward) */
+const RAIL_OFFSET = 7.5;
+/** Outer bed edge inset from HALF_W */
+const EDGE_INSET = 1;
 
 const PAINT = {
   blue: "#3a8fd6",
@@ -25,38 +32,90 @@ function piecePaintHex(piece) {
   return PAINT[key];
 }
 
+/**
+ * @param {object} opts
+ * @param {Set<string>} [opts.freeConnectorIds] pieceId:connId that are free
+ * @param {boolean} [opts.highlightPorts]
+ * @param {boolean} [opts.snapped]
+ */
 export function drawPiece(ctx, piece, selected = false, opts = {}) {
   const geo = worldGeometry(piece);
   const color = piecePaintHex(piece);
+  const freeIds = opts.freeConnectorIds;
 
-  // Solid body webbing (R-14 plate, R-17 leg fills) under rails
+  const linkedConns = geo.connectors.filter((c) => {
+    const key = `${piece.id}:${c.id}`;
+    // freeIds set = free ends; missing ⇒ linked (or ghost without board)
+    if (!freeIds) return false;
+    return !freeIds.has(key);
+  });
+
+  ctx.save();
+  // Clip drawing to interior of each linked seam (share midline)
+  for (const c of linkedConns) {
+    clipHalfPlane(ctx, c.wx, c.wy, Math.cos(c.wang), Math.sin(c.wang));
+  }
+
+  // Solid body webbing under rails
   if (geo.tpl.webbingPolys?.length) {
     drawWebbingPolys(ctx, piece, geo.tpl.webbingPolys, color);
   } else if (geo.tpl.webbing) {
     drawWebbing(ctx, piece, geo.tpl.webbing, color);
   }
 
-  // Stop-rail bump
   if (geo.tpl.bump) {
     drawStopBump(ctx, piece, color);
   }
 
-  // Draw each path as rail bed
   for (const path of geo.paths) {
     const active =
       path.switchIndex == null ||
       geo.tpl.bothPathsActive ||
       path.switchIndex === (piece.switchState ?? 0);
-    drawRailPolyline(ctx, path.points, active, selected, color);
+
+    const startLinked = path.fromC
+      ? linkedConns.some((c) => c.id === path.fromC)
+      : false;
+    const endLinked = path.toC
+      ? linkedConns.some((c) => c.id === path.toC)
+      : false;
+
+    // Snap path ends exactly to connector world points when linked (seamless midline)
+    let pts = path.points;
+    if ((startLinked || endLinked) && pts.length >= 2) {
+      pts = pts.map((p) => ({ x: p.x, y: p.y }));
+      if (startLinked) {
+        const c = geo.connectors.find((x) => x.id === path.fromC);
+        if (c) pts[0] = { x: c.wx, y: c.wy };
+      }
+      if (endLinked) {
+        const c = geo.connectors.find((x) => x.id === path.toC);
+        if (c) pts[pts.length - 1] = { x: c.wx, y: c.wy };
+      }
+    }
+
+    drawRailPolyline(ctx, pts, active, selected, color, {
+      startLinked,
+      endLinked,
+    });
   }
 
-  // Connectors — free ends slightly larger / brighter for snap targets
+  ctx.restore();
+
+  // Connectors — only free ends (linked seams are seamless, no tabs)
   for (const c of geo.connectors) {
-    const free = opts.freeConnectorIds?.has?.(`${piece.id}:${c.id}`);
-    drawConnector(ctx, c.wx, c.wy, c.wang, c.gender, free || opts.highlightPorts);
+    const free = freeIds?.has?.(`${piece.id}:${c.id}`);
+    if (!free && freeIds && !opts.highlightPorts) continue;
+    drawConnector(
+      ctx,
+      c.wx,
+      c.wy,
+      c.wang,
+      c.gender,
+      free || opts.highlightPorts
+    );
   }
 
-  // Yellow levers
   if (geo.tpl.switchable) {
     const lvs = geo.levers?.length ? geo.levers : geo.lever ? [geo.lever] : [];
     for (const lv of lvs) {
@@ -77,7 +136,6 @@ export function drawPiece(ctx, piece, selected = false, opts = {}) {
     }
   }
 
-  // Selection / snap rings at the *visual* rail center (not model origin)
   const piv =
     piece.pivotX != null
       ? { x: piece.pivotX, y: piece.pivotY }
@@ -102,15 +160,50 @@ export function drawPiece(ctx, piece, selected = false, opts = {}) {
   }
 }
 
-function drawRailPolyline(ctx, pts, active, selected, color = null) {
+/**
+ * Keep interior half-plane of a connector: (p - c) · outward ≤ eps
+ * (seam midline shared; mates face opposite outward normals).
+ */
+function clipHalfPlane(ctx, cx, cy, nx, ny) {
+  const L = Math.hypot(nx, ny) || 1;
+  nx /= L;
+  ny /= L;
+  const tx = -ny;
+  const ty = nx;
+  const BIG = 12000;
+  // Tiny bias past the seam so hairline gaps vanish; both mates still meet mid-joint
+  const eps = 0.4;
+  const ox = cx + nx * eps;
+  const oy = cy + ny * eps;
+  ctx.beginPath();
+  // Boundary along seam, then far into piece interior (−outward)
+  ctx.moveTo(ox + tx * BIG, oy + ty * BIG);
+  ctx.lineTo(ox - tx * BIG, oy - ty * BIG);
+  ctx.lineTo(ox - tx * BIG - nx * BIG, oy - ty * BIG - ny * BIG);
+  ctx.lineTo(ox + tx * BIG - nx * BIG, oy + ty * BIG - ny * BIG);
+  ctx.closePath();
+  ctx.clip();
+}
+
+function drawRailPolyline(
+  ctx,
+  pts,
+  active,
+  selected,
+  color = null,
+  ends = { startLinked: false, endLinked: false }
+) {
   if (pts.length < 2) return;
 
   const bed = color || RAIL_BLUE;
   const edge = shade(bed, -0.18);
+  const { startLinked, endLinked } = ends;
+  // Butt at seams for continuous join; round only when both ends free
+  const cap =
+    startLinked || endLinked ? "butt" : "round";
 
-  // Bed
   ctx.lineJoin = "round";
-  ctx.lineCap = "round";
+  ctx.lineCap = cap;
   ctx.strokeStyle = active ? bed : withAlpha(bed, 0.28);
   ctx.lineWidth = TRACK_W;
   ctx.beginPath();
@@ -118,22 +211,38 @@ function drawRailPolyline(ctx, pts, active, selected, color = null) {
   for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
   ctx.stroke();
 
+  // Free-end round mouths (butt alone looks flat)
+  if (!startLinked) drawEndCap(ctx, pts[0], pts[1], TRACK_W, bed, active);
+  if (!endLinked) {
+    drawEndCap(
+      ctx,
+      pts[pts.length - 1],
+      pts[pts.length - 2],
+      TRACK_W,
+      bed,
+      active
+    );
+  }
+
   // Edge lines
   ctx.strokeStyle = active ? edge : withAlpha(edge, 0.25);
   ctx.lineWidth = 2;
-  strokeOffsetPolyline(ctx, pts, HALF_W - 1);
-  strokeOffsetPolyline(ctx, pts, -(HALF_W - 1));
+  ctx.lineCap = cap;
+  strokeOffsetPolyline(ctx, pts, HALF_W - EDGE_INSET);
+  strokeOffsetPolyline(ctx, pts, -(HALF_W - EDGE_INSET));
 
-  // Running rails
+  // Running rails — slightly wider gauge than before
   ctx.strokeStyle = active ? "#1a4a72" : "rgba(26,74,114,0.2)";
   ctx.lineWidth = 2;
-  strokeOffsetPolyline(ctx, pts, 6);
-  strokeOffsetPolyline(ctx, pts, -6);
+  ctx.lineCap = startLinked || endLinked ? "butt" : "round";
+  strokeOffsetPolyline(ctx, pts, RAIL_OFFSET);
+  strokeOffsetPolyline(ctx, pts, -RAIL_OFFSET);
 
   // Center dashed
   if (active) {
     ctx.strokeStyle = "rgba(255,255,255,0.25)";
     ctx.lineWidth = 1;
+    ctx.lineCap = "butt";
     ctx.setLineDash([4, 6]);
     ctx.beginPath();
     ctx.moveTo(pts[0].x, pts[0].y);
@@ -145,11 +254,26 @@ function drawRailPolyline(ctx, pts, active, selected, color = null) {
   if (selected) {
     ctx.strokeStyle = SELECT;
     ctx.lineWidth = 1;
+    ctx.lineCap = "round";
     ctx.setLineDash([3, 3]);
     strokeOffsetPolyline(ctx, pts, HALF_W + 3);
     strokeOffsetPolyline(ctx, pts, -(HALF_W + 3));
     ctx.setLineDash([]);
   }
+}
+
+/** Half-disk cap at a free path end so mouths stay rounded. */
+function drawEndCap(ctx, tip, prev, width, color, active) {
+  const dx = tip.x - prev.x;
+  const dy = tip.y - prev.y;
+  const ang = Math.atan2(dy, dx);
+  ctx.save();
+  ctx.fillStyle = active ? color : withAlpha(color, 0.28);
+  ctx.beginPath();
+  ctx.arc(tip.x, tip.y, width / 2, ang - Math.PI / 2, ang + Math.PI / 2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
 }
 
 function withAlpha(hex, a) {
@@ -273,7 +397,6 @@ function drawWebbingPolys(ctx, piece, polys, color = RAIL_BLUE) {
 }
 
 function drawStopBump(ctx, piece, color = RAIL_BLUE) {
-  // R-08 stop bump on +Y of a 1-unit straight
   const len = UNIT;
   const bx0 = -len * 0.22;
   const bx1 = len * 0.22;
@@ -295,3 +418,4 @@ function drawStopBump(ctx, piece, color = RAIL_BLUE) {
   ctx.stroke();
 }
 
+export { RAIL_OFFSET };

@@ -185,6 +185,11 @@ test("camera fit/zoom/pan stay finite", () => {
   assert(bb && bb.maxX > bb.minX);
 });
 
+test("RAIL_OFFSET is slightly wider than legacy 6px gauge", async () => {
+  const { RAIL_OFFSET } = await import("../js/render/draw-piece.js");
+  assert(RAIL_OFFSET > 6 && RAIL_OFFSET < 12, `RAIL_OFFSET=${RAIL_OFFSET}`);
+});
+
 test("TRACK_CATALOG has meme track and getTrackById resolves it", () => {
   assert(TRACK_CATALOG.length >= 1);
   assert(TRACK_CATALOG.some((t) => t.id === "real-meme"));
