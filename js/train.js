@@ -49,6 +49,7 @@ export {
   leaveRails,
   stepOffRail,
   playfieldWallSegments,
+  resolvePlayfieldAabb,
   nearestPlayfieldCorner,
   cornerExitDir,
   pickCornerPair,

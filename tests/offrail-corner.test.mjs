@@ -153,6 +153,45 @@ test("solid walls: all four corners escape without STOPPED", () => {
   }
 });
 
+test("solid walls: 90° mid-edge hit aligns parallel and keeps moving", () => {
+  const board = createBoard();
+  rebuild(board);
+  const bounds = { minX: 0, minY: 0, maxX: 400, maxY: 300 };
+  // Head straight into bottom wall mid-span
+  const train = makeOffRailTrain(200, 250, Math.PI / 2, 220);
+  for (let i = 0; i < 90; i++) {
+    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+  }
+  assertEq(train.mode, TrainMode.OFF_RAIL);
+  // Carriage should be roughly parallel to bottom wall (heading ±X)
+  assert(
+    Math.abs(Math.cos(train.ang)) > 0.85,
+    `expected parallel to bottom, ang=${train.ang}`
+  );
+  // Not frozen at impact point
+  const x0 = train.x;
+  for (let i = 0; i < 60; i++) {
+    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+  }
+  assert(Math.abs(train.x - x0) > 10, `should slide along wall, dx=${train.x - x0}`);
+});
+
+test("solid walls: 45° into wall ends up sliding aligned", () => {
+  const board = createBoard();
+  rebuild(board);
+  const bounds = { minX: 0, minY: 0, maxX: 400, maxY: 300 };
+  const train = makeOffRailTrain(200, 240, Math.PI / 4, 220);
+  for (let i = 0; i < 120; i++) {
+    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+  }
+  assertEq(train.mode, TrainMode.OFF_RAIL);
+  // After contact, should be nearly axis-aligned to a wall (0, ±90, 180)
+  const a = ((train.ang % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+  const nearAxis =
+    Math.min(a, Math.abs(a - Math.PI / 2), Math.abs(a - Math.PI), Math.abs(a - 1.5 * Math.PI), Math.abs(a - 2 * Math.PI)) < 0.35;
+  assert(nearAxis, `expected wall-aligned heading, ang=${train.ang}`);
+});
+
 test("solid walls: slide along bottom into BR does not freeze (rear-axle trap)", () => {
   const board = createBoard();
   rebuild(board);
