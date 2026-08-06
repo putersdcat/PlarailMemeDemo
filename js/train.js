@@ -106,10 +106,14 @@ export function placeTrainOnPath(train, hit, opts = {}) {
   train.offRailDistAcc = 0;
   train.offRailStepsDone = 0;
   train.reRailDistLeft = 0;
-  // Seat multi-car chain behind lead
+  // Seat multi-car chain behind lead — hard trail so stale poses cannot jackknife
   if (train.consistSpec?.length || train.cars?.length > 1) {
-    ensureConsist(train);
-    placeFollowers(train);
+    if (train.consistSpec?.length) {
+      train.cars = null;
+      ensureConsist(train, train.consistSpec, { hard: true });
+    } else {
+      placeFollowers(train, { hard: true });
+    }
   }
   return true;
 }

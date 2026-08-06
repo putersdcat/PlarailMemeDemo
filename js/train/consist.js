@@ -25,9 +25,15 @@ export const POT_RADIUS = 22;
 /**
  * Build a 3-unit consist: powered lead, middle car, trailing pulled engine.
  * Lead pose mirrors train.x/y/ang.
+ * @param {object|null} spec  If provided, rebuild cars from this spec (fresh trail).
+ * @param {{ hard?: boolean }} [opts] hard: always rebuild poses from lead (ignore stale).
  */
-export function ensureConsist(train, spec = null) {
-  if (train.cars && train.cars.length >= 1 && !spec) return train.cars;
+export function ensureConsist(train, spec = null, opts = {}) {
+  const hard = !!opts.hard;
+  // Keep existing cars only when not forcing a hard re-lay and no new spec
+  if (train.cars && train.cars.length >= 1 && !spec && !hard) {
+    return train.cars;
+  }
 
   const carsSpec =
     spec ||
@@ -56,21 +62,27 @@ export function ensureConsist(train, spec = null) {
     kind: c.kind || (c.role === "lead" || c.role === "trail" ? "engine" : "mid"),
   }));
 
+  // Fresh trail poses from lead — never keep jackknifed x/y from a prior seat
   train.cars = train.consistSpec.map((c, i) => ({
     id: c.role === "lead" ? "lead" : `car${i}`,
-    role: c.role || (i === 0 ? "lead" : i === train.consistSpec.length - 1 ? "trail" : "mid"),
+    role:
+      c.role ||
+      (i === 0
+        ? "lead"
+        : i === train.consistSpec.length - 1
+          ? "trail"
+          : "mid"),
     kind: c.kind || "mid",
     x: train.x - Math.cos(train.ang || 0) * COUPLER_DIST * i,
     y: train.y - Math.sin(train.ang || 0) * COUPLER_DIST * i,
     ang: train.ang || 0,
   }));
-  // Ensure first is lead
   if (train.cars[0]) {
     train.cars[0].role = "lead";
     train.cars[0].kind = train.cars[0].kind || "engine";
     train.cars[0].id = "lead";
   }
-  placeFollowers(train);
+  placeFollowers(train, { hard: true });
   return train.cars;
 }
 
@@ -86,11 +98,21 @@ export function threeCarConsistSpec() {
 /**
  * Place followers behind the lead using a simple trailer hitch model.
  * Lead is always train.x / train.y / train.ang (driven by path physics).
+ *
+ * @param {object} train
+ * @param {{ hard?: boolean }} [opts]
+ *   hard: pure trail from lead (ang = prev.ang). Use on seat/place so stale
+ *   car poses cannot jackknife the chain. Soft blend only while rolling.
  * @returns {{ spacingOk: boolean, minSpacing: number }}
  */
-export function placeFollowers(train) {
+export function placeFollowers(train, opts = {}) {
   if (!train) return { spacingOk: true, minSpacing: 0 };
-  ensureConsist(train);
+  const hard = !!opts.hard;
+  // Do not call ensureConsist here without hard — would early-return stale cars
+  if (!train.cars?.length) {
+    if (train.consistSpec?.length) ensureConsist(train, train.consistSpec, { hard: true });
+    else return { spacingOk: true, minSpacing: 0 };
+  }
   const cars = train.cars;
   if (!cars.length) return { spacingOk: true, minSpacing: 0 };
 
@@ -108,14 +130,20 @@ export function placeFollowers(train) {
     const hitchX = prev.x - Math.cos(prev.ang) * REAR_HITCH;
     const hitchY = prev.y - Math.sin(prev.ang) * REAR_HITCH;
 
-    // Preferred: car faces toward hitch (same travel sense as lead)
     let ang = prev.ang;
-    if (car.x != null && car.y != null) {
+    // Soft trailer lag only when rolling with a sane prior pose (not on seat)
+    if (
+      !hard &&
+      car.x != null &&
+      car.y != null &&
+      Number.isFinite(car.x) &&
+      Number.isFinite(car.y)
+    ) {
       const dx = hitchX - car.x;
       const dy = hitchY - car.y;
       const d = Math.hypot(dx, dy);
-      if (d > 1e-3) {
-        // Blend toward hitch direction so trailers lag on curves
+      // Only blend if follower is already near the hitch trail (not teleported)
+      if (d > 1e-3 && d < COUPLER_DIST * 2.5) {
         const hitchAng = Math.atan2(dy, dx);
         let da = hitchAng - ang;
         while (da > Math.PI) da -= Math.PI * 2;

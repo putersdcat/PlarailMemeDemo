@@ -330,18 +330,22 @@ function applyTrackLoadInfo(info) {
   // Multi-car consist (lead + mid + trailing pulled engine)
   if (info?.consist?.length) {
     train.consistSpec = info.consist;
-    ensureConsist(train, info.consist);
+    train.cars = null; // drop stale poses before seat
+    ensureConsist(train, info.consist, { hard: true });
   } else {
     train.consistSpec = null;
     train.cars = null;
   }
-  // This layout wants solid outer walls (not-enough-rails chaos)
-  if (info?.solidPlayfield) setSolidPlayfield(true);
+  // Explicit true/false so switching back from arntenoughrails turns walls off
+  if (info && Object.prototype.hasOwnProperty.call(info, "solidPlayfield")) {
+    setSolidPlayfield(!!info.solidPlayfield);
+  }
   clearSelection();
   placeTrainAtHint(info.trainHint);
   if (train.consistSpec?.length) {
-    ensureConsist(train);
-    placeFollowers(train);
+    train.cars = null;
+    ensureConsist(train, train.consistSpec, { hard: true });
+    placeFollowers(train, { hard: true });
   }
   applySpeed(info.speed ?? info.trainHint?.speed ?? 210);
   persistLayout();

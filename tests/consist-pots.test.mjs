@@ -68,7 +68,7 @@ test("three-car placeFollowers keeps non-zero spacing", () => {
   train.y = 200;
   train.ang = 0;
   ensureConsist(train, threeCarConsistSpec());
-  const r = placeFollowers(train);
+  const r = placeFollowers(train, { hard: true });
   assertEq(train.cars.length, 3);
   assert(r.minSpacing > COUPLER_DIST * 0.35, `minSpacing ${r.minSpacing}`);
   assert(r.spacingOk, "spacing ok");
@@ -78,6 +78,59 @@ test("three-car placeFollowers keeps non-zero spacing", () => {
   // Lead mirrors train
   assertEq(train.cars[0].x, train.x);
   assertEq(train.cars[0].y, train.y);
+});
+
+test("placeTrainOnPath after ensureConsist seats full coupler spacing (no frames)", () => {
+  // Skeptic: catalog load left jackknifed ~56px spacing until updateTrain ran.
+  // placeTrainOnPath must hard-trail from lead so idle spacing ≈ COUPLER_DIST.
+  const board = createBoard();
+  for (let i = 0; i < 4; i++) addPiece(board, "R01", i * UNIT, 0, 0);
+  rebuild(board);
+  const hit = closestPathPoint(board, UNIT, 0, 40);
+  assert(hit, "path hit");
+
+  const train = createTrain();
+  // Poison with a prior wrong seat (as if load called ensureConsist before place)
+  train.x = 0;
+  train.y = 0;
+  train.ang = Math.PI / 2;
+  train.consistSpec = threeCarConsistSpec();
+  ensureConsist(train, train.consistSpec);
+  // Deliberately scramble followers (stale poses from old seat)
+  train.cars[1].x = train.x + 20;
+  train.cars[1].y = train.y + 40;
+  train.cars[1].ang = Math.PI;
+  train.cars[2].x = train.x - 10;
+  train.cars[2].y = train.y + 80;
+  train.cars[2].ang = -Math.PI / 2;
+
+  placeTrainOnPath(train, hit, { dir: 1 });
+  // NO updateTrain frames — spacing must be correct immediately
+  assert(train.cars?.length === 3, "3 cars after place");
+  const d01 = Math.hypot(
+    train.cars[0].x - train.cars[1].x,
+    train.cars[0].y - train.cars[1].y
+  );
+  const d12 = Math.hypot(
+    train.cars[1].x - train.cars[2].x,
+    train.cars[1].y - train.cars[2].y
+  );
+  assert(
+    Math.abs(d01 - COUPLER_DIST) < COUPLER_DIST * 0.2,
+    `lead–mid spacing ${d01} should be near COUPLER_DIST ${COUPLER_DIST}`
+  );
+  assert(
+    Math.abs(d12 - COUPLER_DIST) < COUPLER_DIST * 0.2,
+    `mid–trail spacing ${d12} should be near COUPLER_DIST ${COUPLER_DIST}`
+  );
+  // Not jackknifed: all roughly colinear with lead heading
+  const leadAng = train.ang;
+  for (let i = 1; i < 3; i++) {
+    let da = train.cars[i].ang - leadAng;
+    while (da > Math.PI) da -= Math.PI * 2;
+    while (da < -Math.PI) da += Math.PI * 2;
+    assert(Math.abs(da) < 0.35, `car${i} ang lag ${da} too large (jackknife)`);
+  }
 });
 
 test("updateTrain moves trailing cars when lead advances on rail", () => {
