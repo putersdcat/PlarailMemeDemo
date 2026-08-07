@@ -332,3 +332,46 @@ test("real-meme still loads as single-engine default", () => {
   assert(info.pieceCount >= 30);
   assert(!info.consist);
 });
+
+test("placeTrainOnPath re-seat preserves uncouple and active engine", () => {
+  // Skeptic: placeTrainOnPath nulling cars + ensureConsist undid uncouple/power.
+  const board = createBoard();
+  for (let i = 0; i < 5; i++) addPiece(board, "R01", i * UNIT, 0, 0);
+  rebuild(board);
+  const hit = closestPathPoint(board, UNIT, 0, 40);
+  assert(hit);
+  const train = createTrain();
+  train.consistSpec = threeCarConsistSpec();
+  placeTrainOnPath(train, hit, { dir: 1, hardReset: true });
+  assertEq(train.cars.length, 3);
+  const midId = train.cars[1].id;
+  const trailId = train.cars[2].id;
+  const trailX = train.cars[2].x;
+
+  assert(uncoupleCar(train, midId));
+  assertEq(train.cars.find((c) => c.id === midId).coupled, false);
+  assertEq(train.cars.find((c) => c.id === trailId).coupled, false);
+
+  // Re-seat powered engine further down the rail
+  const hit2 = closestPathPoint(board, UNIT * 2.5, 0, 40);
+  assert(hit2);
+  placeTrainOnPath(train, hit2, { dir: 1, keepDir: true });
+  // Free cars must still exist and stay free — not rebuilt from consistSpec
+  assert(train.cars.some((c) => c.id === midId), "mid car id preserved");
+  assert(train.cars.some((c) => c.id === trailId), "trail car id preserved");
+  assertEq(train.cars.find((c) => c.id === midId).coupled, false);
+  assertEq(train.cars.find((c) => c.id === trailId).coupled, false);
+
+  // Power switch then re-seat must keep poweredId
+  // First recouple for a full chain, then switch power
+  train.cars.forEach((c) => {
+    c.coupled = true;
+  });
+  placeFollowers(train, { hard: true });
+  assert(setActiveEngine(train, trailId));
+  assertEq(train.poweredId, trailId);
+  const hit3 = closestPathPoint(board, UNIT * 3, 0, 40);
+  placeTrainOnPath(train, hit3, { dir: 1, keepDir: true });
+  assertEq(train.poweredId, trailId);
+  assert(train.cars.find((c) => c.id === trailId).powered);
+});

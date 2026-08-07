@@ -442,8 +442,7 @@ function applyTrackLoadInfo(info) {
   // Multi-car consist (lead + mid + trailing reverse-facing engine)
   if (info?.consist?.length) {
     train.consistSpec = info.consist;
-    train.cars = null; // drop stale poses before seat
-    ensureConsist(train, info.consist, { hard: true });
+    train.cars = null; // fresh template only on layout load
   } else {
     train.consistSpec = null;
     train.cars = null;
@@ -457,10 +456,11 @@ function applyTrackLoadInfo(info) {
     northAlignBoardToWall(56);
   }
   clearSelection();
-  placeTrainAtHint(info.trainHint);
-  if (train.consistSpec?.length) {
-    train.cars = null;
-    ensureConsist(train, train.consistSpec, { hard: true });
+  // placeTrainAtHint → placeTrainOnPath: hardReset only when cars still null
+  placeTrainAtHint(info.trainHint, {
+    hardReset: !!(info?.consist?.length),
+  });
+  if (train.cars?.length) {
     placeFollowers(train, { hard: true });
   }
   applySpeed(info.speed ?? info.trainHint?.speed ?? 210);
@@ -571,7 +571,7 @@ function tryPlaceTrainAt(x, y, maxDist = 48) {
   return false;
 }
 
-function placeTrainAtHint(hint) {
+function placeTrainAtHint(hint, opts = {}) {
   if (!hint) return;
   const hit = closestPathPoint(board, hint.x, hint.y, 80);
   if (hit) {
@@ -586,7 +586,10 @@ function placeTrainAtHint(hint) {
       );
       dir = d1 <= d2 ? 1 : -1;
     }
-    placeTrainOnPath(train, hit, { dir });
+    placeTrainOnPath(train, hit, {
+      dir,
+      hardReset: !!opts.hardReset,
+    });
     trainPlaced = true;
     train.selected = false;
     running = false;
@@ -1370,6 +1373,7 @@ function onPointerUp(e) {
             setHint("Car re-seated on rail (still uncoupled).");
           }
         } else {
+          // Powered engine re-seat — preserve consist state (uncoupled cars, active engine)
           placeTrainOnPath(train, trainGhost.hit, {
             dir: train.dir || 1,
             keepDir: true,
@@ -1379,18 +1383,18 @@ function onPointerUp(e) {
         trainPlaced = true;
         train.selected = true;
       } else {
+        // New engine place: only hard-reset consist if no cars yet
+        const firstMulti =
+          !train.cars?.length && train.consistSpec?.length;
         placeTrainOnPath(train, trainGhost.hit, {
           dir: train.dir || 1,
           keepDir: true,
+          hardReset: !!firstMulti,
         });
         trainPlaced = true;
         train.selected = true;
         running = false;
         clearSelection();
-        if (train.consistSpec?.length) {
-          ensureConsist(train, train.consistSpec, { hard: true });
-          placeFollowers(train, { hard: true });
-        }
         setHint(
           "Engine on rails. 🦄 / F flips direction (or switches powered engine when a car is selected) · Start runs."
         );

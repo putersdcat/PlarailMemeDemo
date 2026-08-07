@@ -118,14 +118,18 @@ export function placeTrainOnPath(train, hit, opts = {}) {
   train.offRailDistAcc = 0;
   train.offRailStepsDone = 0;
   train.reRailDistLeft = 0;
-  // Seat multi-car chain behind lead — hard trail so stale poses cannot jackknife
-  if (train.consistSpec?.length || train.cars?.length > 1) {
-    if (train.consistSpec?.length) {
-      train.cars = null;
-      ensureConsist(train, train.consistSpec, { hard: true });
-    } else {
-      placeFollowers(train, { hard: true });
-    }
+  // Multi-car: re-seat must NOT rebuild from consistSpec (that undoes uncouple /
+  // setActiveEngine). Only build from template when no cars exist yet, or
+  // opts.hardReset is set (layout load / hard reset).
+  if (opts.hardReset && train.consistSpec?.length) {
+    train.cars = null;
+    ensureConsist(train, train.consistSpec, { hard: true });
+  } else if (train.cars?.length) {
+    // Preserve free/coupled/powered; only hitch the still-coupled chain
+    placeFollowers(train, { hard: true });
+  } else if (train.consistSpec?.length) {
+    // First seat of a multi-car layout
+    ensureConsist(train, train.consistSpec, { hard: true });
   }
   return true;
 }
