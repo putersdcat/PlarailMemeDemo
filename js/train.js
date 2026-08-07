@@ -122,17 +122,18 @@ export function placeTrainOnPath(train, hit, opts = {}) {
   // setActiveEngine). Only build from template when no cars exist yet, or
   // opts.hardReset is set (layout load / hard reset).
   const board = opts.board || null;
+  const railOpts = { hard: true, onRail: !!board, board };
   if (opts.hardReset && train.consistSpec?.length) {
     train.cars = null;
     ensureConsist(train, train.consistSpec, { hard: true });
-    placeFollowers(train, { hard: true, board });
+    placeFollowers(train, railOpts);
   } else if (train.cars?.length) {
-    // Preserve free/coupled/powered; snap coupled cars onto rails
-    placeFollowers(train, { hard: true, board });
+    // Preserve free/coupled/powered; on-rail seat for coupled cars
+    placeFollowers(train, railOpts);
   } else if (train.consistSpec?.length) {
     // First seat of a multi-car layout
     ensureConsist(train, train.consistSpec, { hard: true });
-    placeFollowers(train, { hard: true, board });
+    placeFollowers(train, railOpts);
   }
   return true;
 }
@@ -240,14 +241,16 @@ export function updateTrain(train, board, dt, bounds, opts = {}) {
     stepOffRail(train, board, dt, bounds, opts);
   }
 
-  // Coupled followers: rigid hitch always.
-  // On-rail → hard (fixed bar behind lead).
-  // Off-rail → whip (trailer swings when lead turns at walls).
+  // Coupled followers:
+  // On-rail → snap mid/trail onto the path behind the lead (follow curves).
+  // Off-rail → trailer whip (swing when lead turns at walls).
   if (train.cars?.length > 1 || train.consistSpec?.length > 1) {
     const off = train.mode === TrainMode.OFF_RAIL;
     placeFollowers(train, {
       hard: !off,
       whip: off,
+      onRail: !off,
+      board: !off ? board : null,
     });
   }
 }

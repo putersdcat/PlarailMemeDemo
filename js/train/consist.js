@@ -9,16 +9,71 @@ import {
   REAR_AXLE_OFFSET,
 } from "./constants.js";
 import { normalizeAngle } from "../geometry.js";
+import { closestPathPoint } from "../track.js";
 
 /**
  * Rigid coupler: fixed center-to-center = body length + short air gap.
- * (Shorter gap than first pass; never stretch/compress — fixed hitch length.)
  */
 export const COUPLER_AIR_GAP = 12;
 export const COUPLER_DIST = TRAIN_LENGTH + COUPLER_AIR_GAP;
 /** Hitch offsets from body center (sum = COUPLER_DIST, rigid). */
 export const REAR_HITCH = TRAIN_LENGTH * 0.5 + COUPLER_AIR_GAP * 0.5;
 export const FRONT_HITCH = TRAIN_LENGTH * 0.5 + COUPLER_AIR_GAP * 0.5;
+
+/**
+ * Find a rail seat for a follower ~couplerDist behind `prev`, snapped to path.
+ * Picks path points so the car body follows curves instead of a straight tail.
+ */
+function findOnRailSeatBehind(board, prev, couplerDist) {
+  if (!board?.pathIndex?.length || !prev) return null;
+  let best = null;
+  let bestScore = Infinity;
+  // Fan of probes behind/around prev (covers curves and switch mouths)
+  for (let a = -1.15; a <= 1.15; a += 0.1) {
+    for (let t = 0.7; t <= 1.35; t += 0.08) {
+      const probeAng = prev.ang + a;
+      const px = prev.x - Math.cos(probeAng) * couplerDist * t;
+      const py = prev.y - Math.sin(probeAng) * couplerDist * t;
+      const hit = closestPathPoint(board, px, py, 44);
+      if (!hit || hit.dist > 30) continue;
+
+      // Align travel with prev (don't reverse unless needed)
+      let pathAng = hit.ang;
+      let dFwd = Math.atan2(
+        Math.sin(prev.ang - pathAng),
+        Math.cos(prev.ang - pathAng)
+      );
+      let dRev = Math.atan2(
+        Math.sin(prev.ang - (pathAng + Math.PI)),
+        Math.cos(prev.ang - (pathAng + Math.PI))
+      );
+      if (Math.abs(dRev) < Math.abs(dFwd)) {
+        pathAng = normalizeAngle(pathAng + Math.PI);
+      }
+
+      // Body center if front axle is on the path sample
+      const bx = hit.x - Math.cos(pathAng) * FRONT_AXLE_OFFSET;
+      const by = hit.y - Math.sin(pathAng) * FRONT_AXLE_OFFSET;
+      const dist = Math.hypot(bx - prev.x, by - prev.y);
+      // Prefer "behind" prev along travel (not ahead of the nose)
+      const along =
+        (bx - prev.x) * Math.cos(prev.ang) +
+        (by - prev.y) * Math.sin(prev.ang);
+      if (along > couplerDist * 0.25) continue; // too far forward
+
+      // Score: fixed spacing + on-rail + not ahead
+      const score =
+        Math.abs(dist - couplerDist) * 2.2 +
+        hit.dist * 4 +
+        Math.max(0, along) * 1.5;
+      if (score < bestScore) {
+        bestScore = score;
+        best = { x: bx, y: by, ang: pathAng, dist, railDist: hit.dist };
+      }
+    }
+  }
+  return best;
+}
 
 let nextCarId = 1;
 
@@ -127,21 +182,23 @@ export function getPoweredChain(train) {
 }
 
 /**
- * Place coupled followers on a **rigid** trailer hitch.
+ * Place coupled followers.
  *
- * - Fixed hitch length (never elastic stretch/compress).
- * - hard: ang = prev.ang (straight bar behind lead) — good on rails / seat.
- * - whip: classic trailer — nose points at hitch so when the lead turns
- *   (wall bounce) the chain swings out naturally.
- *
- * Rail path-snap was removed from the live path: it varied spacing and
- * killed the wall-whip. Optional soft on-rail re-seat uses hard hitch only.
+ * Modes:
+ * - onRail + board: each car snaps onto the track behind the previous one
+ *   (follows curves — not a straight fixed tail). Spacing targets COUPLER_DIST.
+ * - whip (off-rail): rigid trailer hitch so the chain swings at walls.
+ * - hard without board: straight rigid hitch (fallback seat).
  */
 export function placeFollowers(train, opts = {}) {
   if (!train) return { spacingOk: true, minSpacing: 0 };
   const hard = !!opts.hard;
-  /** Off-rail / wall slide: allow trailer whip (default when not hard). */
+  const board = opts.board || null;
+  /** Off-rail wall slide: trailer whip. */
   const whip = opts.whip != null ? !!opts.whip : !hard;
+  /** Follow rail curves when on-rail (needs board). */
+  const onRail =
+    opts.onRail != null ? !!opts.onRail : !!(board && hard && !whip);
 
   if (!train.cars?.length) {
     if (train.consistSpec?.length) {
@@ -166,44 +223,58 @@ export function placeFollowers(train, opts = {}) {
     const prev = chain[i - 1];
     const car = chain[i];
 
-    // Fixed rear hitch on previous car
-    const hitchX = prev.x - Math.cos(prev.ang) * REAR_HITCH;
-    const hitchY = prev.y - Math.sin(prev.ang) * REAR_HITCH;
-
-    let ang = prev.ang;
-    if (
-      whip &&
-      car.x != null &&
-      Number.isFinite(car.x) &&
-      Number.isFinite(car.y)
-    ) {
-      // Trailer whip: nose aims at hitch so the chain swings when lead turns
-      const dx = hitchX - car.x;
-      const dy = hitchY - car.y;
-      const d = Math.hypot(dx, dy);
-      if (d > 1e-3) {
-        const target = Math.atan2(dy, dx);
-        let da = target - (car.ang || prev.ang);
-        while (da > Math.PI) da -= Math.PI * 2;
-        while (da < -Math.PI) da += Math.PI * 2;
-        // Cap turn rate so the whip is snappy but not a single-frame 180° flip
-        const maxTurn = 0.55;
-        if (da > maxTurn) da = maxTurn;
-        if (da < -maxTurn) da = -maxTurn;
-        ang = (car.ang || prev.ang) + da;
+    // --- On-rail: snap each car onto the path behind prev ---
+    if (onRail && board) {
+      const seat = findOnRailSeatBehind(board, prev, COUPLER_DIST);
+      if (seat) {
+        car.x = seat.x;
+        car.y = seat.y;
+        car.ang = seat.ang;
+      } else {
+        // Fallback: rigid hitch if no path nearby (end of track)
+        const hitchX = prev.x - Math.cos(prev.ang) * REAR_HITCH;
+        const hitchY = prev.y - Math.sin(prev.ang) * REAR_HITCH;
+        car.ang = prev.ang;
+        car.x = hitchX - Math.cos(car.ang) * FRONT_HITCH;
+        car.y = hitchY - Math.sin(car.ang) * FRONT_HITCH;
       }
-    }
+    } else {
+      // --- Off-rail whip OR hard straight hitch ---
+      const hitchX = prev.x - Math.cos(prev.ang) * REAR_HITCH;
+      const hitchY = prev.y - Math.sin(prev.ang) * REAR_HITCH;
 
-    // Rigid: front hitch of this car sits exactly on prev rear hitch (fixed length)
-    car.ang = ang;
-    car.x = hitchX - Math.cos(ang) * FRONT_HITCH;
-    car.y = hitchY - Math.sin(ang) * FRONT_HITCH;
+      let ang = prev.ang;
+      if (
+        whip &&
+        car.x != null &&
+        Number.isFinite(car.x) &&
+        Number.isFinite(car.y)
+      ) {
+        const dx = hitchX - car.x;
+        const dy = hitchY - car.y;
+        const d = Math.hypot(dx, dy);
+        if (d > 1e-3) {
+          const target = Math.atan2(dy, dx);
+          let da = target - (car.ang || prev.ang);
+          while (da > Math.PI) da -= Math.PI * 2;
+          while (da < -Math.PI) da += Math.PI * 2;
+          const maxTurn = 0.55;
+          if (da > maxTurn) da = maxTurn;
+          if (da < -maxTurn) da = -maxTurn;
+          ang = (car.ang || prev.ang) + da;
+        }
+      }
+
+      // Rigid hitch length
+      car.ang = ang;
+      car.x = hitchX - Math.cos(ang) * FRONT_HITCH;
+      car.y = hitchY - Math.sin(ang) * FRONT_HITCH;
+    }
 
     // Non-powered engines face backward (visual only)
     if (car.kind === "engine" && !car.powered) car.facing = -1;
     if (car.kind === "mid") car.facing = 1;
 
-    // Exact rigid length should be ~COUPLER_DIST
     const sp = Math.hypot(car.x - prev.x, car.y - prev.y);
     if (sp < minSpacing) minSpacing = sp;
   }
@@ -211,7 +282,7 @@ export function placeFollowers(train, opts = {}) {
   const coupledCount = chain.length;
   const spacingOk =
     coupledCount < 2 ||
-    (Math.abs(minSpacing - COUPLER_DIST) < 2.5);
+    (minSpacing > COUPLER_DIST * 0.45 && minSpacing < COUPLER_DIST * 1.6);
   return { spacingOk, minSpacing };
 }
 
