@@ -15,14 +15,28 @@ import {
   RE_RAIL_LATERAL,
   RE_RAIL_ANGLE,
 } from "./constants.js";
-import { frontAxlePos, rearAxlePos, bodyFromFrontAxle } from "./pose.js";
+import {
+  frontAxlePos,
+  rearAxlePos,
+  bodyFromRailProbe,
+} from "./pose.js";
 import { placeFollowers, seatConsistHard, markChainOffRail } from "./consist.js";
 
 export const OFF_RAIL_DS = 2.5;
 /** Center-slider reference speed (for re-rail unlock distance). */
 export const OFF_RAIL_REF_SPEED = 210;
 
-export function leaveRails(train) {
+export function leaveRails(train, reason = "unknown", telemetry = null) {
+  telemetry?.event("leave_rails", {
+    reason,
+    fromMode: train.mode,
+    pathKey: train.pathRef
+      ? `${train.pathRef.pieceId}:${train.pathRef.pathId}`
+      : null,
+    x: train.x,
+    y: train.y,
+    ang: train.ang,
+  });
   train.mode = TrainMode.OFF_RAIL;
   train.pathRef = null;
   train.vx = Math.cos(train.ang) * train.speed;
@@ -36,8 +50,11 @@ export function leaveRails(train) {
   train.cornerLockSteps = 0;
   train.cornerLockUx = null;
   train.cornerLockUy = null;
-  // Each car becomes its own off-rail entity (keeps world pose)
-  markChainOffRail(train);
+  train.openMouthClearSteps = reason === "no_next_path" ? 32 : 0;
+  // The powered lead leaves first. Followers with valid rail references keep
+  // their own rail domain until they reach their own open endpoint; this
+  // avoids teleporting the entire visible consist into floor physics.
+  markChainOffRail(train, { preserveOnRailFollowers: true });
 }
 
 /**
@@ -214,6 +231,247 @@ export function resolvePlayfieldAabb(
   return { x, y, ux, uy, ang: Math.atan2(uy, ux), hit };
 }
 
+function normalizeTravel(ux, uy, fallbackAng) {
+  const len = Math.hypot(ux, uy);
+  if (len > 1e-6) {
+    ux /= len;
+    uy /= len;
+    return { ux, uy, ang: Math.atan2(uy, ux) };
+  }
+  return {
+    ux: Math.cos(fallbackAng),
+    uy: Math.sin(fallbackAng),
+    ang: fallbackAng,
+  };
+}
+
+/**
+ * Resolve the two compact axle probes against track walls. This is shared by
+ * the powered slider and follower cars so a consist cannot use different
+ * collision rules merely because the lead is on another rail domain.
+ */
+function isOpenMouthExit(board, x, y, ux, uy) {
+  for (const connector of board?.connectors || []) {
+    if (connector.linked) continue;
+    const dx = x - connector.wx;
+    const dy = y - connector.wy;
+    if (Math.hypot(dx, dy) > WHEEL_RADIUS + 4) continue;
+    const mx = Math.cos(connector.wang);
+    const my = Math.sin(connector.wang);
+    // Only ignore the side-wall endpoint when travelling outward through
+    // the open mouth. Approaching from outside or scraping sideways still
+    // collides normally.
+    if (ux * mx + uy * my > 0.2 && dx * mx + dy * my > -WHEEL_RADIUS) {
+      return connector;
+    }
+  }
+  return null;
+}
+
+function resolveTrackWallPose(x, y, ang, ux, uy, preferAng, board) {
+  const walls = board?.walls || [];
+  let hit = false;
+  for (let iter = 0; iter < 4; iter++) {
+    const ra = {
+      x: x + Math.cos(ang) * REAR_AXLE_OFFSET,
+      y: y + Math.sin(ang) * REAR_AXLE_OFFSET,
+    };
+    const rearMouth = isOpenMouthExit(board, ra.x, ra.y, ux, uy);
+    const rearHit = rearMouth ? null : deepestWallHit(ra.x, ra.y, walls);
+    if (rearHit) {
+      hit = true;
+      x += (rearHit.x - ra.x) * 0.55;
+      y += (rearHit.y - ra.y) * 0.55;
+    }
+
+    const fa = {
+      x: x + Math.cos(ang) * FRONT_AXLE_OFFSET,
+      y: y + Math.sin(ang) * FRONT_AXLE_OFFSET,
+    };
+    const frontMouth = isOpenMouthExit(board, fa.x, fa.y, ux, uy);
+    const frontHit = frontMouth ? null : deepestWallHit(fa.x, fa.y, walls);
+    if (frontHit) {
+      hit = true;
+      x += (frontHit.x - fa.x) * 0.75;
+      y += (frontHit.y - fa.y) * 0.75;
+      const { tx, ty } = wallSlideDir(
+        frontHit.nx,
+        frontHit.ny,
+        ux,
+        uy,
+        preferAng
+      );
+      ux = tx;
+      uy = ty;
+      ang = Math.atan2(uy, ux);
+    }
+
+    if (!rearHit && !frontHit) break;
+  }
+  return { x, y, ang, ux, uy, hit };
+}
+
+/**
+ * Resolve a free body at its current pose against track walls and, when
+ * enabled, the playfield AABB. Unlike stepOffRail(), this does not advance
+ * distance; it is for hitch-controlled follower cars after their pose has
+ * been placed for the current frame.
+ */
+export function resolveOffRailContacts(
+  entity,
+  board,
+  bounds,
+  opts = {}
+) {
+  if (!entity) return { x: 0, y: 0, ang: 0, ux: 1, uy: 0, hit: false };
+
+  let x = Number.isFinite(entity.x) ? entity.x : 0;
+  let y = Number.isFinite(entity.y) ? entity.y : 0;
+  let ang = Number.isFinite(entity.ang) ? entity.ang : 0;
+  const speed = Math.hypot(entity.vx || 0, entity.vy || 0);
+  let ux = Math.cos(ang);
+  let uy = Math.sin(ang);
+  if (speed > 1e-3) {
+    ux = entity.vx / speed;
+    uy = entity.vy / speed;
+  }
+
+  const preferAng =
+    entity.offRailPreferAng != null ? entity.offRailPreferAng : ang;
+  const track = entity.openMouthClearSteps > 0
+    ? { x, y, ang, ux, uy, hit: false }
+    : resolveTrackWallPose(x, y, ang, ux, uy, preferAng, board);
+  x = track.x;
+  y = track.y;
+  ang = track.ang;
+  ux = track.ux;
+  uy = track.uy;
+  let hit = track.hit;
+  let playfieldHit = false;
+
+  if (opts.solidPlayfield && bounds) {
+    const r = resolvePlayfieldAabb(
+      x,
+      y,
+      ux,
+      uy,
+      preferAng,
+      bounds,
+      WHEEL_RADIUS
+    );
+    x = r.x;
+    y = r.y;
+    ux = r.ux;
+    uy = r.uy;
+    ang = r.ang;
+    playfieldHit = r.hit;
+    hit = hit || playfieldHit;
+  }
+
+  const travel = normalizeTravel(ux, uy, ang);
+  entity.x = x;
+  entity.y = y;
+  entity.ang = travel.ang;
+  entity.vx = travel.ux * speed;
+  entity.vy = travel.uy * speed;
+  if (hit) {
+    opts.telemetry?.event("offrail_contact", {
+      entity: entity.id ?? "follower",
+      trackWall: track.hit,
+      playfield: playfieldHit,
+      x,
+      y,
+      ang: travel.ang,
+    });
+  }
+  return { x, y, ang: travel.ang, ux: travel.ux, uy: travel.uy, hit };
+}
+
+/**
+ * Advance a non-powered car through floor physics without changing its mode
+ * or attempting a rail snap. Used while the lead is on-rail and a follower
+ * is still catching up through a mixed rail/floor transition.
+ */
+export function stepOffRailEntity(entity, board, dt, bounds, opts = {}) {
+  if (!entity) return false;
+  const speed = Math.max(1, opts.speed ?? entity.speed ?? OFF_RAIL_REF_SPEED);
+  const solidPlayfield = !!opts.solidPlayfield;
+  entity.offRailDistAcc = (entity.offRailDistAcc || 0) + speed * dt;
+  const targetSteps = Math.floor(entity.offRailDistAcc / OFF_RAIL_DS + 1e-9);
+  let x = entity.x;
+  let y = entity.y;
+  let ang = entity.ang || 0;
+  let ux = Math.cos(ang);
+  let uy = Math.sin(ang);
+  const velocitySpeed = Math.hypot(entity.vx || 0, entity.vy || 0);
+  if (velocitySpeed > 1e-3) {
+    ux = entity.vx / velocitySpeed;
+    uy = entity.vy / velocitySpeed;
+  }
+  let hitAny = false;
+
+  while ((entity.offRailStepsDone || 0) < targetSteps) {
+    entity.offRailStepsDone = (entity.offRailStepsDone || 0) + 1;
+    x += ux * OFF_RAIL_DS;
+    y += uy * OFF_RAIL_DS;
+
+    if (
+      !solidPlayfield &&
+      bounds &&
+      (x < bounds.minX ||
+        x > bounds.maxX ||
+        y < bounds.minY ||
+        y > bounds.maxY)
+    ) {
+      entity.x = Math.max(bounds.minX, Math.min(bounds.maxX, x));
+      entity.y = Math.max(bounds.minY, Math.min(bounds.maxY, y));
+      entity.vx = 0;
+      entity.vy = 0;
+      entity.mode = TrainMode.STOPPED;
+      opts.telemetry?.event("follower_playfield_stop", {
+        carId: entity.id,
+        x: entity.x,
+        y: entity.y,
+      });
+      return false;
+    }
+
+    const contact = resolveOffRailContacts(
+      {
+        id: entity.id,
+        x,
+        y,
+        ang,
+        vx: ux * speed,
+        vy: uy * speed,
+        offRailPreferAng: entity.offRailPreferAng,
+        openMouthClearSteps: entity.openMouthClearSteps || 0,
+      },
+      board,
+      bounds,
+      {
+        solidPlayfield,
+        telemetry: opts.telemetry,
+      }
+    );
+    x = contact.x;
+    y = contact.y;
+    ang = contact.ang;
+    ux = contact.ux;
+    uy = contact.uy;
+    if (contact.hit) hitAny = true;
+    if (entity.openMouthClearSteps > 0) entity.openMouthClearSteps--;
+
+    entity.x = x;
+    entity.y = y;
+    entity.ang = ang;
+    entity.vx = ux * speed;
+    entity.vy = uy * speed;
+    entity.wallHit = hitAny;
+  }
+  return true;
+}
+
 /**
  * Off-rail: fixed-distance steps (speed-invariant geometry).
  *
@@ -222,6 +480,7 @@ export function resolvePlayfieldAabb(
  */
 export function stepOffRail(train, board, dt, bounds, opts = {}) {
   train.wallHit = false;
+  const telemetry = opts.telemetry;
   const speed = Math.max(1, train.speed);
   const solidPlayfield = !!opts.solidPlayfield;
 
@@ -245,9 +504,6 @@ export function stepOffRail(train, board, dt, bounds, opts = {}) {
     train.offRailPreferAng != null ? train.offRailPreferAng : ang;
   let hitAny = false;
 
-  // Track walls ONLY — playfield is handled separately as AABB
-  const walls = board.walls || [];
-
   while ((train.offRailStepsDone || 0) < targetSteps) {
     train.offRailStepsDone = (train.offRailStepsDone || 0) + 1;
     if (train.reRailDistLeft > 0) {
@@ -259,6 +515,7 @@ export function stepOffRail(train, board, dt, bounds, opts = {}) {
 
     if (
       !solidPlayfield &&
+      bounds &&
       (x < bounds.minX ||
         x > bounds.maxX ||
         y < bounds.minY ||
@@ -270,86 +527,38 @@ export function stepOffRail(train, board, dt, bounds, opts = {}) {
       train.vy = 0;
       train.ang = ang;
       train.mode = TrainMode.STOPPED;
+      telemetry?.event("playfield_stop", {
+        x: train.x,
+        y: train.y,
+        bounds: { ...bounds },
+      });
       return;
     }
 
-    // Track wall settle (original proven path)
-    for (let iter = 0; iter < 4; iter++) {
-      const fa = {
-        x: x + Math.cos(ang) * FRONT_AXLE_OFFSET,
-        y: y + Math.sin(ang) * FRONT_AXLE_OFFSET,
-      };
-      const ra = {
-        x: x + Math.cos(ang) * REAR_AXLE_OFFSET,
-        y: y + Math.sin(ang) * REAR_AXLE_OFFSET,
-      };
-
-      const rearHit = deepestWallHit(ra.x, ra.y, walls);
-      if (rearHit) {
-        hitAny = true;
-        x += (rearHit.x - ra.x) * 0.55;
-        y += (rearHit.y - ra.y) * 0.55;
-      }
-
-      const fa2 = {
-        x: x + Math.cos(ang) * FRONT_AXLE_OFFSET,
-        y: y + Math.sin(ang) * FRONT_AXLE_OFFSET,
-      };
-      const frontHit = deepestWallHit(fa2.x, fa2.y, walls);
-      if (frontHit) {
-        hitAny = true;
-        x += (frontHit.x - fa2.x) * 0.75;
-        y += (frontHit.y - fa2.y) * 0.75;
-        const { tx, ty } = wallSlideDir(
-          frontHit.nx,
-          frontHit.ny,
-          ux,
-          uy,
-          preferAng
-        );
-        ux = tx;
-        uy = ty;
-        ang = Math.atan2(uy, ux);
-      }
-
-      if (!rearHit && !frontHit) break;
-    }
-
-    // Solid playfield: AABB align + slide (not segment dual-hit thrash)
-    if (solidPlayfield && bounds) {
-      // Prefer tracks current slide so corners turn instead of reverse thrash
-      const slidePrefer =
-        train.offRailPreferAng != null ? train.offRailPreferAng : preferAng;
-      const r = resolvePlayfieldAabb(
+    const contact = resolveOffRailContacts(
+      {
+        id: "lead",
         x,
         y,
-        ux,
-        uy,
-        slidePrefer,
-        bounds,
-        WHEEL_RADIUS
-      );
-      x = r.x;
-      y = r.y;
-      ux = r.ux;
-      uy = r.uy;
-      ang = r.ang;
-      if (r.hit) hitAny = true;
-      // Update leave-rails prefer to *current* free motion (not stale derail ang)
-      train.offRailPreferAng = ang;
-    }
-
-    const len = Math.hypot(ux, uy);
-    if (len > 1e-6) {
-      ux /= len;
-      uy /= len;
-    } else {
-      const pa =
-        train.offRailPreferAng != null ? train.offRailPreferAng : preferAng;
-      ux = Math.cos(pa);
-      uy = Math.sin(pa);
-      ang = pa;
-    }
+        ang,
+        vx: ux * speed,
+        vy: uy * speed,
+        offRailPreferAng: train.offRailPreferAng,
+        openMouthClearSteps: train.openMouthClearSteps,
+      },
+      board,
+      bounds,
+      { solidPlayfield }
+    );
+    x = contact.x;
+    y = contact.y;
+    ang = contact.ang;
+    ux = contact.ux;
+    uy = contact.uy;
+    if (contact.hit) hitAny = true;
+    if (train.openMouthClearSteps > 0) train.openMouthClearSteps--;
+    // Update leave-rails prefer to current free motion, not stale derail ang.
+    if (solidPlayfield && bounds) train.offRailPreferAng = ang;
 
     train.x = x;
     train.y = y;
@@ -360,7 +569,13 @@ export function stepOffRail(train, board, dt, bounds, opts = {}) {
     train.wallHit = hitAny;
 
     if (train.reRailDistLeft <= 0) {
-      tryRerail(train, board);
+      telemetry?.event("lead_rerail_attempt", {
+        x,
+        y,
+        ang,
+        reRailDistLeft: train.reRailDistLeft,
+      });
+      tryRerail(train, board, telemetry);
       if (train.mode !== TrainMode.OFF_RAIL) return;
     }
   }
@@ -512,9 +727,22 @@ export function resolveCircleSegment(cx, cy, radius, seg) {
   let nx = cx - px;
   let ny = cy - py;
   const dist = Math.hypot(nx, ny);
-  if (dist >= radius || dist < 1e-8) return null;
-  nx /= dist;
-  ny /= dist;
+  if (dist >= radius) return null;
+  if (dist < 1e-8) {
+    // Exact center-on-wall contact is still a penetration. Use a stable
+    // segment normal rather than dropping the collision or dividing by zero.
+    const segLen = Math.hypot(dx, dy);
+    if (segLen > 1e-8) {
+      nx = -dy / segLen;
+      ny = dx / segLen;
+    } else {
+      nx = 1;
+      ny = 0;
+    }
+  } else {
+    nx /= dist;
+    ny /= dist;
+  }
   const pen = radius - dist;
   const push = pen + 0.05;
   return {
@@ -526,23 +754,26 @@ export function resolveCircleSegment(cx, cy, radius, seg) {
   };
 }
 
-function tryRerail(train, board) {
+function tryRerail(train, board, telemetry = null) {
   // Probe front axle, body, and rear — multi-car wall slides often put only
   // the body near the rail while the front axle is still slightly off.
   const fa = frontAxlePos(train);
   const ra = rearAxlePos(train);
   const probes = [
-    { x: fa.x, y: fa.y, max: RE_RAIL_LATERAL + 6 },
-    { x: train.x, y: train.y, max: RE_RAIL_LATERAL + 8 },
-    { x: ra.x, y: ra.y, max: RE_RAIL_LATERAL + 6 },
+    { anchor: "front", x: fa.x, y: fa.y, max: RE_RAIL_LATERAL + 6 },
+    { anchor: "body", x: train.x, y: train.y, max: RE_RAIL_LATERAL + 8 },
+    { anchor: "rear", x: ra.x, y: ra.y, max: RE_RAIL_LATERAL + 6 },
   ];
   let hit = null;
   for (const p of probes) {
     const h = closestPathPoint(board, p.x, p.y, p.max);
     if (!h) continue;
-    if (!hit || h.dist < hit.dist) hit = h;
+    if (!hit || h.dist < hit.dist) hit = { ...h, anchor: p.anchor };
   }
-  if (!hit) return;
+  if (!hit) {
+    telemetry?.event("lead_rerail_miss", { reason: "no_near_path" });
+    return;
+  }
 
   const pathAng = hit.ang;
   const d1 = angleDiff(train.ang, pathAng);
@@ -558,8 +789,27 @@ function tryRerail(train, board) {
   const latLimit =
     (nearMouth ? RE_RAIL_LATERAL + 5 : RE_RAIL_LATERAL * 0.9) *
     (multi ? 1.15 : 1);
-  if (hit.dist > latLimit || best > angLimit) return;
-  if (!nearMouth && best > (32 * Math.PI) / 180) return;
+  if (hit.dist > latLimit || best > angLimit) {
+    telemetry?.event("lead_rerail_miss", {
+      reason: "geometry_gate",
+      pathKey: `${hit.path.pieceId}:${hit.path.id}`,
+      dist: hit.dist,
+      bestAngle: best,
+      nearMouth,
+      latLimit,
+      angLimit,
+    });
+    return;
+  }
+  if (!nearMouth && best > (32 * Math.PI) / 180) {
+    telemetry?.event("lead_rerail_miss", {
+      reason: "interior_angle_gate",
+      pathKey: `${hit.path.pieceId}:${hit.path.id}`,
+      dist: hit.dist,
+      bestAngle: best,
+    });
+    return;
+  }
 
   train.mode = TrainMode.ON_RAIL;
   train.pathRef = {
@@ -570,7 +820,7 @@ function tryRerail(train, board) {
   train.s = hit.s;
   train.dir = d1 <= d2 ? 1 : -1;
   const ang = train.dir > 0 ? pathAng : normalizeAngle(pathAng + Math.PI);
-  const body = bodyFromFrontAxle(hit.x, hit.y, ang);
+  const body = bodyFromRailProbe(hit.x, hit.y, ang, hit.anchor);
   train.x = body.x;
   train.y = body.y;
   train.ang = ang;
@@ -580,7 +830,10 @@ function tryRerail(train, board) {
   train.offRailDistAcc = 0;
   train.offRailStepsDone = 0;
   train.reRailDistLeft = 0;
-  train.reRailCooldown = 0.55;
+  // Briefly keep the first lead re-rail frame coherent; followers are
+  // allowed to catch up immediately afterward rather than waiting half a
+  // second while the hitch drags them past their rails.
+  train.reRailCooldown = 0.1;
   train.cornerLockSteps = 0;
   // Only the powered unit re-rails. Followers keep off_rail until each
   // catches a rail itself (markPoweredOnRail + hitch pull, no force on-rail).
@@ -600,6 +853,15 @@ function tryRerail(train, board) {
   }
   // Pull coupled cars with hitch; do NOT set their mode to on_rail
   if (train.cars?.length > 1) {
-    seatConsistHard(train);
+    seatConsistHard(train, telemetry);
   }
+  telemetry?.event("lead_rerail", {
+    pathKey: `${hit.path.pieceId}:${hit.path.id}`,
+    s: hit.s,
+    anchor: hit.anchor,
+    dir: train.dir,
+    x: train.x,
+    y: train.y,
+    ang: train.ang,
+  });
 }

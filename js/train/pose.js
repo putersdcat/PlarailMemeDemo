@@ -38,6 +38,8 @@ export function createTrain() {
     cornerLockSteps: 0,
     cornerLockUx: null,
     cornerLockUy: null,
+    /** Fixed geometry steps allowed to clear an open turnout mouth/footprint. */
+    openMouthClearSteps: 0,
     /**
      * Linked cars (lead + followers). Empty/absent → single engine.
      * Powered car mirrors train.x/y/ang after placeFollowers.
@@ -72,6 +74,25 @@ export function bodyFromFrontAxle(ax, ay, ang) {
     y: ay - Math.sin(ang) * FRONT_AXLE_OFFSET,
     ang,
   };
+}
+
+export function bodyFromRearAxle(ax, ay, ang) {
+  return {
+    x: ax - Math.cos(ang) * REAR_AXLE_OFFSET,
+    y: ay - Math.sin(ang) * REAR_AXLE_OFFSET,
+    ang,
+  };
+}
+
+/**
+ * Convert a path probe back to a body pose without losing which point was
+ * probed. Front/rear axle samples need an offset; a body sample is already
+ * the body center.
+ */
+export function bodyFromRailProbe(x, y, ang, anchor = "body") {
+  if (anchor === "front") return bodyFromFrontAxle(x, y, ang);
+  if (anchor === "rear") return bodyFromRearAxle(x, y, ang);
+  return { x, y, ang };
 }
 
 /** True if (x,y) is over the train body (for select/drag). */

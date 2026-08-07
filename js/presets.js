@@ -6,7 +6,6 @@
 import { UNIT, PIECE_TYPES } from "./geometry.js";
 import { addPiece, clearBoard, rebuild, loadBoard } from "./track.js";
 import { ARNTENOUGHRAILS_LAYOUT } from "./layouts-arntenoughrails.js";
-import { threeCarConsistSpec } from "./train/consist.js";
 
 export { ARNTENOUGHRAILS_LAYOUT };
 
@@ -368,9 +367,7 @@ export const REAL_MEME_LAYOUT = {
   }
 };
 
-/**
- * Load the gold-standard Real-2-Sim meme track.
- */
+/** Load the gold-standard Real-2-Sim meme track. */
 export function loadRealMemeTrack(board) {
   const result = loadBoard(board, REAL_MEME_LAYOUT);
   const t = REAL_MEME_LAYOUT.train;
@@ -388,19 +385,47 @@ export function loadRealMemeTrack(board) {
   };
 }
 
-/**
- * Load godi3 "not enough rails" meme track — sparse incomplete rails,
- * multi-car consist (lead + mid + reverse trail engine), solid walls.
- * https://x.com/godi3/status/945956752515670016
- */
+/** Load the sparse saved meme track with separate rolling-stock entities. */
 export function loadArntenoughrailsTrack(board) {
   const result = loadBoard(board, ARNTENOUGHRAILS_LAYOUT);
   const t = ARNTENOUGHRAILS_LAYOUT.train;
   const th = t
     ? { x: t.x, y: t.y, ang: t.ang, speed: t.speed ?? 200 }
     : { x: 180, y: 580, ang: -Math.PI / 2, speed: 200 };
-  const consist =
-    t?.consist?.length >= 3 ? t.consist : threeCarConsistSpec();
+  const authoredCars = t?.cars?.length >= 1 ? t.cars : null;
+  const cars = authoredCars
+    ? authoredCars.map((car, index) => ({
+        ...car,
+        id: car.id || ["lead", "mid1", "trail1"][index] || `car${index + 1}`,
+        powered: index === 0 ? true : !!car.powered,
+        coupled: index === 0 ? true : car.coupled !== false,
+      }))
+    : [
+        {
+          id: "lead",
+          kind: "engine",
+          role: "lead",
+          powered: true,
+          coupled: true,
+          facing: 1,
+        },
+        {
+          id: "mid1",
+          kind: "mid",
+          role: "mid",
+          powered: false,
+          coupled: true,
+          facing: 1,
+        },
+        {
+          id: "trail1",
+          kind: "engine",
+          role: "trail",
+          facing: -1,
+          coupled: true,
+          powered: false,
+        },
+      ];
   return {
     ok: result.ok,
     pieceCount: result.pieceCount,
@@ -408,21 +433,14 @@ export function loadArntenoughrailsTrack(board) {
     speed: th.speed,
     solidPlayfield: true,
     northAlign: true,
-    consist,
-    note: `Loaded “Not enough rails” (${result.pieceCount} pieces, 3-car train, solid walls). Mid car in palette · 🦄 switches powered engine · Delete uncouples.`,
+    cars,
+    consist: null,
+    note: `Loaded “Not enough rails” (${result.pieceCount} pieces, 3 separate cars coupled, solid walls). Mid in palette · 🦄 switches engine · Delete removes car.`,
   };
 }
 
-/**
- * Built-in tracks for the Load dropdown (more entries will land here later).
- * @type {{ id: string, name: string, load: (board: object) => object }[]}
- */
 export const TRACK_CATALOG = [
-  {
-    id: "real-meme",
-    name: "Real-2-Sim meme track",
-    load: loadRealMemeTrack,
-  },
+  { id: "real-meme", name: "Real-2-Sim meme track", load: loadRealMemeTrack },
   {
     id: "arntenoughrails",
     name: "Not enough rails (godi3)",

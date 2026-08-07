@@ -11,12 +11,15 @@ import { serializeBoard, loadBoard } from "../track.js";
  *   setTrainPlaced: (v: boolean) => void,
  *   setRunning: (v: boolean) => void,
  *   tryPlaceTrainAt: (x: number, y: number, maxDist?: number) => boolean,
+ *   placeTrainSnapshot?: (snapshot: object) => boolean,
+ *   restoreTrainState?: (snapshot: object) => boolean,
  *   placeTrainAtHint: (hint: object) => void,
  *   resetTrainHard: Function,
  *   applySpeed: (speed: number|string) => void,
- *   fitBoardToView: () => void,
+ *   fitBoardToView: (pad?: number) => void,
  *   setHint: Function,
  *   updateStatus: Function,
+ *   prepareLoadedLayout?: (data: object) => object,
  *   clearSelection: Function,
  *   lsKey: string,
  *   defaultSpeed?: number,
@@ -36,6 +39,7 @@ export function createIo(deps) {
     fitBoardToView,
     setHint,
     updateStatus,
+    prepareLoadedLayout,
     clearSelection,
     lsKey,
     defaultSpeed = 210,
@@ -50,7 +54,46 @@ export function createIo(deps) {
         ang: train.ang,
         mode: train.mode,
         speed: train.speed,
+        s: train.s,
+        dir: train.dir,
+        vx: train.vx,
+        vy: train.vy,
+        poweredId: train.poweredId,
+        selectedCarId: train.selectedCarId,
+        pathRef: train.pathRef
+          ? {
+              pieceId: train.pathRef.pieceId,
+              pathId: train.pathRef.pathId,
+            }
+          : null,
+        offRailPreferAng: train.offRailPreferAng,
+        offRailDistAcc: train.offRailDistAcc,
+        offRailStepsDone: train.offRailStepsDone,
+        reRailDistLeft: train.reRailDistLeft,
+        reRailCooldown: train.reRailCooldown,
+        openMouthClearSteps: train.openMouthClearSteps,
+        cornerLockSteps: train.cornerLockSteps,
+        cornerLockUx: train.cornerLockUx,
+        cornerLockUy: train.cornerLockUy,
       };
+      // Each car is its own entity (no consist template)
+      if (typeof deps.serializeTrainCars === "function") {
+        const cars = deps.serializeTrainCars(train);
+        if (cars?.length) payload.train.cars = cars;
+      } else if (train.cars?.length) {
+        payload.train.cars = train.cars.map((c) => ({
+          id: c.id,
+          role: c.role,
+          kind: c.kind,
+          facing: c.facing,
+          coupled: !!c.coupled,
+          powered: !!c.powered,
+          x: c.x,
+          y: c.y,
+          ang: c.ang,
+          mode: c.mode,
+        }));
+      }
     }
     payload.speed = train.speed;
     payload.savedAt = new Date().toISOString();
@@ -58,6 +101,7 @@ export function createIo(deps) {
   }
 
   function persistLayout() {
+    if (typeof globalThis.localStorage?.setItem !== "function") return;
     try {
       localStorage.setItem(lsKey, JSON.stringify(buildSavePayload()));
     } catch (err) {
@@ -71,20 +115,94 @@ export function createIo(deps) {
       setHint(result.error || "Could not load layout.");
       return false;
     }
+    // A saved file may need the same board alignment/feature setup as a
+    // built-in preset. The callback runs after loadBoard so it can inspect
+    // rebuilt paths/walls, and may return a shifted, normalized data copy.
+    const loadedData =
+      typeof prepareLoadedLayout === "function"
+        ? prepareLoadedLayout(data) || data
+        : data;
+    const trainData = loadedData.train ? { ...loadedData.train } : null;
+    let convertedLegacyConsist = false;
+    // Older saved tracks used `train.consist` instead of live `train.cars`.
+    // Convert that metadata at the persistence boundary so the rest of the
+    // loader always exercises the separate-car placement path.
+    if (
+      trainData &&
+      !Array.isArray(trainData.cars) &&
+      Array.isArray(trainData.consist) &&
+      trainData.consist.length
+    ) {
+      convertedLegacyConsist = true;
+      trainData.cars = trainData.consist.map((spec, index, all) => {
+        const kind = spec?.kind || (spec?.role === "mid" ? "mid" : "engine");
+        const isLead = index === 0;
+        const isTrail =
+          spec?.role === "trail" ||
+          (!isLead && kind === "engine" && index === all.length - 1);
+        return {
+          ...spec,
+          id:
+            spec?.id ||
+            (isLead ? "lead" : isTrail ? "trail1" : `mid${index}`),
+          role: spec?.role || (isLead ? "lead" : isTrail ? "trail" : "mid"),
+          kind,
+          powered: isLead || !!spec?.powered,
+          coupled: isLead ? true : spec?.coupled !== false,
+          facing:
+            spec?.facing ?? (isTrail && kind === "engine" ? -1 : 1),
+          mode: spec?.mode || "on_rail",
+        };
+      });
+    }
+    if (trainData) loadedData.train = trainData;
     setRunning(false);
     resetTrainHard(train);
     setTrainPlaced(false);
     clearSelection();
-    if (data.train && data.train.x != null) {
-      tryPlaceTrainAt(data.train.x, data.train.y);
+    let trainWasPlaced = false;
+    if (trainData?.cars?.length && typeof deps.placeLayoutCars === "function") {
+      // Restore separate car entities (coupled as saved)
+      const ok = deps.placeLayoutCars(trainData.cars, trainData);
+      trainWasPlaced = !!ok;
+      setTrainPlaced(trainWasPlaced);
+    } else if (trainData && trainData.x != null) {
+      const canPlaceFree =
+        (trainData.mode === "off_rail" || trainData.mode === "stopped") &&
+        typeof deps.placeTrainSnapshot === "function";
+      trainWasPlaced = canPlaceFree
+        ? !!deps.placeTrainSnapshot(trainData)
+        : !!tryPlaceTrainAt(trainData.x, trainData.y);
     } else {
       placeTrainAtHint({ x: 528.73, y: 653 });
+      trainWasPlaced = getTrainPlaced();
+    }
+    const hasSavedCarPoses =
+      Array.isArray(trainData?.cars) &&
+      trainData.cars.some(
+        (car) => Number.isFinite(car?.x) && Number.isFinite(car?.y)
+      );
+    const hasRuntimeState =
+      !!trainData &&
+      !convertedLegacyConsist &&
+      (hasSavedCarPoses ||
+        trainData.mode === "off_rail" ||
+        trainData.mode === "stopped" ||
+        !!trainData.pathRef);
+    if (
+      trainWasPlaced &&
+      hasRuntimeState &&
+      typeof deps.restoreTrainState === "function"
+    ) {
+      deps.restoreTrainState(trainData);
     }
     applySpeed(
-      data.train?.speed ?? data.speed ?? defaultSpeed
+      trainData?.speed ?? loadedData.speed ?? defaultSpeed
     );
     persistLayout();
-    fitBoardToView();
+    fitBoardToView(
+      loadedData?.solidPlayfield || loadedData?.northAlign ? 18 : 48
+    );
     setHint(`Loaded ${result.pieceCount} pieces from ${label}.`);
     updateStatus();
     return true;

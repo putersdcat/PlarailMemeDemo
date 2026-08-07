@@ -188,18 +188,30 @@
     "ang": 3.141592653589793,
     "mode": "idle",
     "speed": 200,
-    "consist": [
+    "cars": [
       {
+        "id": "lead",
         "role": "lead",
-        "kind": "engine"
+        "kind": "engine",
+        "powered": true,
+        "coupled": true,
+        "facing": 1
       },
       {
+        "id": "mid1",
         "role": "mid",
-        "kind": "mid"
+        "kind": "mid",
+        "powered": false,
+        "coupled": true,
+        "facing": 1
       },
       {
+        "id": "trail1",
         "role": "trail",
-        "kind": "engine"
+        "kind": "engine",
+        "powered": false,
+        "coupled": true,
+        "facing": -1
       }
     ]
   },

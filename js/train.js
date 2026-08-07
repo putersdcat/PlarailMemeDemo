@@ -15,21 +15,24 @@ import {
   FRONT_AXLE_OFFSET,
   PATH_HOP_DIST,
   PATH_HOP_ANGLE,
-  WHEEL_RADIUS,
 } from "./train/constants.js";
 import { frontAxlePos, bodyFromFrontAxle } from "./train/pose.js";
+import { snapshotTrain } from "./train/telemetry.js";
 import {
   leaveRails,
   stepOffRail,
-  resolvePlayfieldAabb,
+  stepOffRailEntity,
+  resolveOffRailContacts,
 } from "./train/off-rail.js";
 import {
   ensureConsist,
   ensureSingleEngine,
   placeFollowers,
+  railPoseClear,
   seatConsistHard,
   getPoweredChain,
   threeCarConsistSpec,
+  threeMiddleConsistSpec,
   COUPLER_DIST,
   MAX_MID_CARS,
   countMidCars,
@@ -44,6 +47,15 @@ import {
   tryRerailCar,
   markChainOffRail,
   markPoweredOnRail,
+  resolveCarCollisions,
+  carMinCenterDist,
+  carProjectedHalf,
+  CAR_BODY_SKIN,
+  seatConsistOnPath,
+  clearTrainCars,
+  removeCar,
+  placeLayoutCars,
+  serializeTrainCars,
 } from "./train/consist.js";
 
 export {
@@ -67,14 +79,20 @@ export {
   frontAxlePos,
   rearAxlePos,
   bodyFromFrontAxle,
+  bodyFromRearAxle,
+  bodyFromRailProbe,
   hitTestTrain,
 } from "./train/pose.js";
+
+export { createTrainTelemetry, snapshotTrain } from "./train/telemetry.js";
 
 export {
   OFF_RAIL_DS,
   OFF_RAIL_REF_SPEED,
   leaveRails,
   stepOffRail,
+  stepOffRailEntity,
+  resolveOffRailContacts,
   playfieldWallSegments,
   resolvePlayfieldAabb,
   nearestPlayfieldCorner,
@@ -90,9 +108,11 @@ export {
   ensureConsist,
   ensureSingleEngine,
   placeFollowers,
+  railPoseClear,
   seatConsistHard,
   getPoweredChain,
   threeCarConsistSpec,
+  threeMiddleConsistSpec,
   COUPLER_DIST,
   MAX_MID_CARS,
   countMidCars,
@@ -107,6 +127,15 @@ export {
   tryRerailCar,
   markChainOffRail,
   markPoweredOnRail,
+  resolveCarCollisions,
+  carMinCenterDist,
+  carProjectedHalf,
+  CAR_BODY_SKIN,
+  seatConsistOnPath,
+  clearTrainCars,
+  removeCar,
+  placeLayoutCars,
+  serializeTrainCars,
 };
 
 export function placeTrainOnPath(train, hit, opts = {}) {
@@ -138,15 +167,10 @@ export function placeTrainOnPath(train, hit, opts = {}) {
   train.offRailStepsDone = 0;
   train.reRailDistLeft = 0;
   const board = opts.board || null;
-  // Layout load may hardReset an explicit multi-car spec. Bare engine place
-  // never auto-appends mid/trail from a leftover consistSpec.
-  if (opts.hardReset && train.consistSpec?.length) {
-    train.cars = null;
-    ensureConsist(train, train.consistSpec, { hard: true });
-    for (const c of train.cars || []) {
-      c.mode = TrainMode.ON_RAIL;
-    }
-  } else if (!train.cars?.length) {
+  // No hardReset multi-car template. Multi-car layouts use placeLayoutCars
+  // (separate entities). Bare place is always a single engine.
+  if (!train.cars?.length) {
+    train.consistSpec = null;
     ensureSingleEngine(train);
     train.cars[0].mode = TrainMode.ON_RAIL;
     train.cars[0].pathRef = train.pathRef;
@@ -168,11 +192,12 @@ export function placeTrainOnPath(train, hit, opts = {}) {
     }
   }
   if (train.cars?.length > 1) {
-    placeFollowers(train, {
-      hard: true,
-      onRail: true,
-      board,
-    });
+    // Multi-car on rails: path-seat followers (separate entities, short links)
+    if (board) {
+      seatConsistOnPath(train, board);
+    } else {
+      placeFollowers(train, { hard: true, onRail: true, board: null });
+    }
   }
   return true;
 }
@@ -213,6 +238,167 @@ export function snapTrainToPoint(train, board, x, y, maxDist = 48) {
   return placeTrainOnPath(train, hit, { keepDir: true });
 }
 
+function finiteSnapshotValue(value, fallback) {
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function pathRefFromSnapshot(board, ref) {
+  if (!board || !ref?.pieceId || !ref?.pathId) return null;
+  const path = board.pathIndex?.find(
+    (p) => p.pieceId === ref.pieceId && p.id === ref.pathId && p.active
+  );
+  if (!path) return null;
+  return { path, pieceId: path.pieceId, pathId: path.id };
+}
+
+/**
+ * Restore a saved runtime train snapshot after the board and car entities
+ * have been rebuilt. Placement creates safe defaults; this restores the
+ * exact paused pose/mode, including an off-rail state.
+ */
+export function restoreTrainSnapshot(train, board, snapshot) {
+  if (!train || !snapshot || typeof snapshot !== "object") return false;
+
+  train.x = finiteSnapshotValue(snapshot.x, train.x);
+  train.y = finiteSnapshotValue(snapshot.y, train.y);
+  train.ang = finiteSnapshotValue(snapshot.ang, train.ang);
+  train.s = finiteSnapshotValue(snapshot.s, train.s);
+  train.dir = snapshot.dir === -1 || snapshot.dir === 1 ? snapshot.dir : train.dir;
+  train.vx = finiteSnapshotValue(snapshot.vx, train.vx);
+  train.vy = finiteSnapshotValue(snapshot.vy, train.vy);
+
+  const validModes = new Set(Object.values(TrainMode));
+  if (validModes.has(snapshot.mode)) train.mode = snapshot.mode;
+
+  train.offRailPreferAng =
+    snapshot.offRailPreferAng == null
+      ? null
+      : finiteSnapshotValue(snapshot.offRailPreferAng, train.offRailPreferAng);
+  train.offRailDistAcc = finiteSnapshotValue(
+    snapshot.offRailDistAcc,
+    train.offRailDistAcc || 0
+  );
+  train.offRailStepsDone = Math.max(
+    0,
+    Math.floor(finiteSnapshotValue(snapshot.offRailStepsDone, train.offRailStepsDone || 0))
+  );
+  train.reRailDistLeft = Math.max(
+    0,
+    finiteSnapshotValue(snapshot.reRailDistLeft, train.reRailDistLeft || 0)
+  );
+  train.reRailCooldown = Math.max(
+    0,
+    finiteSnapshotValue(snapshot.reRailCooldown, train.reRailCooldown || 0)
+  );
+  train.openMouthClearSteps = Math.max(
+    0,
+    Math.floor(
+      finiteSnapshotValue(snapshot.openMouthClearSteps, train.openMouthClearSteps || 0)
+    )
+  );
+  train.cornerLockSteps = Math.max(
+    0,
+    Math.floor(finiteSnapshotValue(snapshot.cornerLockSteps, train.cornerLockSteps || 0))
+  );
+  train.cornerLockUx =
+    snapshot.cornerLockUx == null
+      ? null
+      : finiteSnapshotValue(snapshot.cornerLockUx, train.cornerLockUx);
+  train.cornerLockUy =
+    snapshot.cornerLockUy == null
+      ? null
+      : finiteSnapshotValue(snapshot.cornerLockUy, train.cornerLockUy);
+
+  const savedPathRef = pathRefFromSnapshot(board, snapshot.pathRef);
+  if (train.mode === TrainMode.OFF_RAIL || train.mode === TrainMode.STOPPED) {
+    train.pathRef = null;
+  } else if (savedPathRef) {
+    train.pathRef = savedPathRef;
+  }
+
+  const savedCars = Array.isArray(snapshot.cars) ? snapshot.cars : [];
+  const currentCars = train.cars || [];
+  const usedSaved = new Set();
+  const findSavedCar = (car, index) => {
+    const byId = car.id
+      ? savedCars.findIndex((saved, i) => !usedSaved.has(i) && saved?.id === car.id)
+      : -1;
+    if (byId >= 0) {
+      usedSaved.add(byId);
+      return savedCars[byId];
+    }
+    const byIndex = savedCars.findIndex(
+      (saved, i) => !usedSaved.has(i) && i === index
+    );
+    if (byIndex >= 0) {
+      usedSaved.add(byIndex);
+      return savedCars[byIndex];
+    }
+    return null;
+  };
+
+  for (let i = 0; i < currentCars.length; i++) {
+    const car = currentCars[i];
+    const saved = findSavedCar(car, i);
+    if (!saved) continue;
+    car.x = finiteSnapshotValue(saved.x, car.x);
+    car.y = finiteSnapshotValue(saved.y, car.y);
+    car.ang = finiteSnapshotValue(saved.ang, car.ang);
+    car.s = finiteSnapshotValue(saved.s, car.s);
+    car.dir = saved.dir === -1 || saved.dir === 1 ? saved.dir : car.dir;
+    car.vx = finiteSnapshotValue(saved.vx, car.vx);
+    car.vy = finiteSnapshotValue(saved.vy, car.vy);
+    car.reRailCooldown = Math.max(
+      0,
+      finiteSnapshotValue(saved.reRailCooldown, car.reRailCooldown || 0)
+    );
+    car.lastRailExitKey = saved.lastRailExitKey || null;
+    car.openMouthClearSteps = Math.max(
+      0,
+      Math.floor(finiteSnapshotValue(saved.openMouthClearSteps, car.openMouthClearSteps || 0))
+    );
+    car.facing = saved.facing === -1 || saved.facing === 1 ? saved.facing : car.facing;
+    car.coupled = saved.coupled !== false;
+    car.powered = !!saved.powered;
+    if (validModes.has(saved.mode)) car.mode = saved.mode;
+    if (
+      car.powered &&
+      train.mode === TrainMode.OFF_RAIL &&
+      (!validModes.has(saved.mode) || saved.mode === TrainMode.IDLE)
+    ) {
+      // Older snapshots did not always synchronize the powered car record
+      // before saving. The train-level mode remains authoritative here.
+      car.mode = TrainMode.OFF_RAIL;
+    }
+
+    const carPathRef = pathRefFromSnapshot(board, saved.pathRef);
+    if (car.mode === TrainMode.OFF_RAIL || car.mode === TrainMode.STOPPED) {
+      car.pathRef = null;
+    } else if (carPathRef) {
+      car.pathRef = carPathRef;
+    }
+  }
+
+  const powered = snapshot.poweredId
+    ? currentCars.find((car) => car.id === snapshot.poweredId)
+    : null;
+  const fallbackPowered = currentCars.find((car) => car.powered);
+  if (powered) {
+    for (const car of currentCars) car.powered = car === powered;
+    train.poweredId = powered.id;
+  } else if (fallbackPowered) {
+    train.poweredId = fallbackPowered.id;
+  }
+  train.selectedCarId = null;
+  if (snapshot.selectedCarId != null) {
+    const selected = currentCars.find((car) => car.id === snapshot.selectedCarId);
+    train.selectedCarId = selected?.id || snapshot.selectedCarId;
+  }
+  train.consistSpec = null;
+  train.wallHit = false;
+  return true;
+}
+
 export function startTrain(train) {
   if (train.mode === TrainMode.STOPPED) return false;
   if (train.mode === TrainMode.OFF_RAIL) {
@@ -235,29 +421,9 @@ export function stopTrain(train) {
 }
 
 export function resetTrainHard(train) {
-  train.mode = TrainMode.IDLE;
-  train.pathRef = null;
-  train.vx = 0;
-  train.vy = 0;
-  train.s = 0;
-  train.dir = 1;
-  train.selected = false;
-  train.wallHit = false;
-  train.offRailPreferAng = null;
-  train.offRailDistAcc = 0;
-  train.offRailStepsDone = 0;
-  train.reRailDistLeft = 0;
-  train.cornerLockSteps = 0;
-  train.cornerLockUx = null;
-  train.cornerLockUy = null;
-  train.selectedCarId = null;
-  // Keep consistSpec; re-seat cars if multi-unit
-  if (train.consistSpec?.length) {
-    ensureConsist(train, train.consistSpec, { hard: true });
-    placeFollowers(train, { hard: true });
-  } else {
-    train.cars = null;
-  }
+  // Full clear — do NOT re-spawn layout multi-car template. User must build
+  // engine + mids one at a time after reset/delete.
+  clearTrainCars(train);
 }
 
 
@@ -266,23 +432,86 @@ export function resetTrainHard(train) {
  * @param {boolean} [opts.solidPlayfield] bounce on playfield perimeter instead of STOPPED
  */
 export function updateTrain(train, board, dt, bounds, opts = {}) {
+  const telemetry = opts.telemetry;
+  const tracing = !!telemetry?.enabled;
+  if (tracing) {
+    telemetry.begin(
+      {
+        dt,
+        solidPlayfield: !!opts.solidPlayfield,
+        bounds: bounds ? { ...bounds } : null,
+      },
+      snapshotTrain(train, board)
+    );
+  }
+
   if (train.mode === TrainMode.IDLE || train.mode === TrainMode.STOPPED) {
-    if (train.cars?.length > 1) {
-      placeFollowers(train, {
-        hard: true,
-        onRail: false,
-        board: null,
-      });
-    }
+    // Paused/stopped physics is a true freeze. Re-seating here used to
+    // teleport mixed rail/floor followers into a straight hitch every frame.
+    if (tracing) telemetry.end(snapshotTrain(train, board));
     return;
   }
 
-  if (train.reRailCooldown > 0) train.reRailCooldown -= dt;
+  if (train.reRailCooldown > 0) {
+    train.reRailCooldown = Math.max(0, train.reRailCooldown - dt);
+  }
+  for (const car of train.cars || []) {
+    if (car.reRailCooldown > 0) {
+      car.reRailCooldown = Math.max(0, car.reRailCooldown - dt);
+      if (car.reRailCooldown === 0) car.lastRailExitKey = null;
+    }
+  }
 
   if (train.mode === TrainMode.ON_RAIL) {
-    stepOnRail(train, board, dt);
+    stepOnRail(train, board, dt, telemetry);
+    if (train.mode === TrainMode.ON_RAIL && !railPoseClear(board, train)) {
+      // A path centerline is not permission to drive an axle through a solid
+      // active rail bed. Leave the rails and let the normal wall-glide solver
+      // resolve the contact instead of silently phasing through it.
+      telemetry?.event("rail_bed_violation", {
+        entity: "lead",
+        pathKey: train.pathRef
+          ? `${train.pathRef.pieceId}:${train.pathRef.pathId}`
+          : null,
+      });
+      leaveRails(train, "rail_bed_violation", telemetry);
+    }
   } else if (train.mode === TrainMode.OFF_RAIL) {
     stepOffRail(train, board, dt, bounds, opts);
+  }
+
+  // Lead-first derail: valid followers continue their own rail simulation
+  // until they reach an actual open endpoint. This is intentionally a mixed
+  // domain window; forcing every car off here was the source of the visible
+  // follower teleport/whip bug.
+  if (train.mode === TrainMode.OFF_RAIL) {
+    for (const car of getPoweredChain(train).slice(1)) {
+      if (car.mode !== TrainMode.ON_RAIL || !car.pathRef) continue;
+      stepOnRailCar(car, board, dt, telemetry, train.speed);
+      if (car.mode === TrainMode.ON_RAIL && !railPoseClear(board, car)) {
+        telemetry?.event("rail_bed_violation", {
+          entity: car.id,
+          pathKey: car.pathRef
+            ? `${car.pathRef.pieceId}:${car.pathRef.pathId}`
+            : null,
+        });
+        car.mode = TrainMode.OFF_RAIL;
+        car.pathRef = null;
+      }
+    }
+  }
+
+  // Normalize only stale on-rail flags with no valid path context. A valid
+  // follower path is preserved while the lead is on the floor.
+  if (train.mode === TrainMode.OFF_RAIL || train.mode === TrainMode.STOPPED) {
+    for (const car of getPoweredChain(train).slice(1)) {
+      if (car.mode === TrainMode.OFF_RAIL) continue;
+      if (car.mode === TrainMode.ON_RAIL && car.pathRef) continue;
+      car.mode = TrainMode.OFF_RAIL;
+      car.pathRef = null;
+      car.vx = Math.cos(car.ang || train.ang || 0) * (train.speed || 180);
+      car.vy = Math.sin(car.ang || train.ang || 0) * (train.speed || 180);
+    }
   }
 
   // Sync powered car from train body after physics
@@ -302,53 +531,167 @@ export function updateTrain(train, board, dt, bounds, opts = {}) {
   }
 
   // Hitch-pull coupled cars (respects per-car off_rail mode — no force on-rail)
+  const solid = !!opts.solidPlayfield;
+  let followerRerailChanged = false;
   if (train.cars?.length > 1) {
-    const anyOff = train.cars.some(
-      (c) => c.coupled && c.mode === TrainMode.OFF_RAIL && !c.powered
+    const leadOn = train.mode === TrainMode.ON_RAIL;
+    const chain = getPoweredChain(train);
+    let anyOff = chain.some(
+      (c, i) => i > 0 && c.mode === TrainMode.OFF_RAIL
     );
+    const anyOnRailFollower = chain.some(
+      (c, i) => i > 0 && c.mode === TrainMode.ON_RAIL && c.pathRef
+    );
+    // Mixed domains can exist while the lead is still off the rails: a
+    // middle car may catch a rail before the lead does. The old leadOn gate
+    // sent every downstream car through the whip solver in that window.
+    const mixed = anyOnRailFollower && anyOff;
+    if (mixed) {
+      // Continue every follower in its own domain. The previous hard hitch /
+      // whip branch overwrote floor poses every frame, so followers could
+      // never reach the rail mouth where tryRerailCar() was waiting.
+      for (const car of chain.slice(1)) {
+        if (car.mode === TrainMode.ON_RAIL && car.pathRef) {
+          stepOnRailCar(car, board, dt, telemetry, train.speed);
+        } else if (car.mode === TrainMode.OFF_RAIL) {
+          stepOffRailEntity(car, board, dt, bounds, {
+            speed: train.speed,
+            solidPlayfield: solid,
+            telemetry,
+          });
+        }
+      }
+      anyOff = chain.some(
+        (c, i) => i > 0 && c.mode === TrainMode.OFF_RAIL
+      );
+    }
+
+    // When the lead is on the floor, do not whip-place every off-rail car
+    // before it gets a chance to catch a nearby rail. This is the important
+    // middle-rerail window: try cars in chain order so a recovered middle car
+    // becomes the predecessor for the next car in the same frame.
+    if (train.mode === TrainMode.OFF_RAIL && board) {
+      for (const car of chain.slice(1)) {
+        if (car.mode !== TrainMode.OFF_RAIL) continue;
+        followerRerailChanged =
+          tryRerailCar(car, board, train, telemetry) || followerRerailChanged;
+      }
+    }
+
+    // Rerailing can change the domain mix, so recompute it before seating.
+    anyOff = chain.some(
+      (c, i) => i > 0 && c.mode === TrainMode.OFF_RAIL
+    );
+    const mixedAfterRerail = chain.some(
+      (c, i) => i > 0 && c.mode === TrainMode.ON_RAIL && c.pathRef
+    ) && anyOff;
+    // Lead on + off-rail followers: hard fixed hitch (no whip pile-up).
+    // All on-rail: pathSeat every frame so mid/trail follow curves on rails.
+    // Lead off: trailer whip, but only after the chain has been normalized
+    // entirely off-rail above.
     placeFollowers(train, {
-      hard: !anyOff && train.mode === TrainMode.ON_RAIL,
-      whip: anyOff || train.mode === TrainMode.OFF_RAIL,
-      onRail: train.mode === TrainMode.ON_RAIL && !anyOff,
-      board: train.mode === TrainMode.ON_RAIL && !anyOff ? board : null,
+      hard: leadOn && anyOff,
+      whip: train.mode === TrainMode.OFF_RAIL && !mixedAfterRerail,
+      pathSeat: leadOn && !anyOff,
+      onRail: leadOn && !anyOff,
+      hybridOffRail: mixedAfterRerail,
+      telemetry,
+      // Need board whenever lead is on so path-seat / heading can snap to rails
+      board: leadOn ? board : null,
     });
   }
 
-  // Per-car: off-rail followers get wall AABB + individual re-rail
-  const solid = !!opts.solidPlayfield;
-  if (train.cars?.length > 1 && board) {
+  // Per-car: every off-rail car gets track-wall + optional playfield contact,
+  // then an individual re-rail attempt. The powered lead is handled by
+  // stepOffRail; followers need the same wall geometry after hitch placement.
+  if (train.cars?.length > 1) {
     for (const car of train.cars) {
       if (car.powered) continue;
       if (car.mode !== TrainMode.OFF_RAIL) continue;
+
+      // When the lead is on-rail, a coupled off-rail follower is held by the
+      // rigid hitch. Contact resolution would move it away from that hitch
+      // and make the next car pile into it. The lead's rail pose owns this
+      // mixed transition; let the follower catch the rail or be re-seated on
+      // the next frame instead of shoving the coupled link sideways.
+      if (car.coupled && train.mode === TrainMode.ON_RAIL) {
+        followerRerailChanged =
+          tryRerailCar(car, board, train, telemetry) || followerRerailChanged;
+        continue;
+      }
+
       // Velocity toward hitch pull direction for wall slide
       if (car.coupled) {
         const sp = train.speed || 180;
         car.vx = Math.cos(car.ang) * sp * 0.85;
         car.vy = Math.sin(car.ang) * sp * 0.85;
       }
-      if (solid && bounds) {
-        const sp = Math.hypot(car.vx, car.vy) || 1;
-        let ux = car.vx / sp;
-        let uy = car.vy / sp;
-        const r = resolvePlayfieldAabb(
-          car.x,
-          car.y,
-          ux,
-          uy,
-          car.ang,
-          bounds,
-          WHEEL_RADIUS
-        );
-        car.x = r.x;
-        car.y = r.y;
-        car.ang = r.ang;
-        const spd = Math.hypot(car.vx, car.vy) || sp;
-        car.vx = Math.cos(r.ang) * spd;
-        car.vy = Math.sin(r.ang) * spd;
+      resolveOffRailContacts(car, board, bounds, {
+        solidPlayfield: solid,
+        telemetry,
+      });
+      if (car.openMouthClearSteps > 0) car.openMouthClearSteps--;
+      if (board) {
+        followerRerailChanged =
+          tryRerailCar(car, board, train, telemetry) || followerRerailChanged;
       }
-      tryRerailCar(car, board, train);
     }
   }
+
+  // A middle car may have recovered before the next car was processed. Give
+  // the downstream chain one same-frame handoff pass so its pose is based on
+  // the recovered predecessor, not the predecessor's pre-rerail coordinates.
+  // This is deliberately chain-length agnostic (lead + 0..3 mids + trail).
+  if (followerRerailChanged && train.cars?.length > 1) {
+    const leadOn = train.mode === TrainMode.ON_RAIL;
+    const chain = getPoweredChain(train);
+    const anyOff = chain.some(
+      (car, index) => index > 0 && car.mode === TrainMode.OFF_RAIL
+    );
+    const mixed = chain.some(
+      (car, index) => index > 0 && car.mode === TrainMode.ON_RAIL && car.pathRef
+    ) && anyOff;
+    placeFollowers(train, {
+      hard: leadOn && anyOff,
+      whip: train.mode === TrainMode.OFF_RAIL && !mixed,
+      pathSeat: leadOn && !anyOff,
+      onRail: leadOn && !anyOff,
+      hybridOffRail: mixed,
+      telemetry,
+      board: leadOn ? board : null,
+    });
+  }
+
+  // Solid bodies: cars never occupy the same space (train-on-train).
+  // Skip when the whole coupled chain is on-rail — path seat already
+  // keeps spacing, and OBB resolve shoves cars off the curve.
+  if (train.cars?.length > 1) {
+    const allOnRail =
+      train.mode === TrainMode.ON_RAIL &&
+      train.cars.every(
+        (c) =>
+          !c.coupled ||
+          c.powered ||
+          c.mode === TrainMode.ON_RAIL ||
+          c.mode === TrainMode.IDLE
+      );
+    if (!allOnRail) {
+      resolveCarCollisions(train);
+      // Body separation can move a follower after its wall pass. Re-seat all
+      // free/off-rail cars once more so body collision cannot leave them
+      // inside track walls or beyond a solid playfield edge.
+      for (const car of train.cars) {
+        if (car.powered || car.mode !== TrainMode.OFF_RAIL) continue;
+        if (car.coupled && train.mode === TrainMode.ON_RAIL) continue;
+        resolveOffRailContacts(car, board, bounds, {
+          solidPlayfield: solid,
+          telemetry,
+        });
+      }
+    }
+  }
+
+  if (tracing) telemetry.end(snapshotTrain(train, board));
 }
 
 
@@ -361,55 +704,106 @@ function resolveLivePath(board, pref) {
   );
 }
 
-function stepOnRail(train, board, dt) {
-  const pref = train.pathRef;
-  if (!pref) {
-    leaveRails(train);
-    return;
-  }
+function stepOnRail(train, board, dt, telemetry = null) {
+  stepRailEntity(train, board, dt, telemetry, true, train.speed);
+}
+
+function stepOnRailCar(car, board, dt, telemetry, speed) {
+  stepRailEntity(car, board, dt, telemetry, false, speed);
+}
+
+function stepRailEntity(entity, board, dt, telemetry, isLead, speed) {
+  const pref = entity.pathRef;
+  const entityId = isLead ? "lead" : entity.id;
+  const fail = (reason, data = {}) => {
+    telemetry?.event(isLead ? "rail_exit" : "car_rail_exit", {
+      entity: entityId,
+      reason,
+      ...data,
+    });
+    if (isLead) {
+      leaveRails(entity, reason, telemetry);
+    } else {
+      entity.reRailCooldown = 0.35;
+      entity.lastRailExitKey = entity.pathRef
+        ? `${entity.pathRef.pieceId}:${entity.pathRef.pathId}`
+        : null;
+      entity.openMouthClearSteps = reason === "no_next_path" ? 32 : 0;
+      entity.mode = TrainMode.OFF_RAIL;
+      entity.pathRef = null;
+      entity.vx = Math.cos(entity.ang || 0) * (speed || 180);
+      entity.vy = Math.sin(entity.ang || 0) * (speed || 180);
+    }
+    return false;
+  };
+
+  if (!pref) return fail("missing_path_ref");
 
   let live = resolveLivePath(board, pref);
   if (!live) {
-    // Switch may have de-activated this route ΓÇö try geometric re-seat
-    const fa = frontAxlePos(train);
+    // A switch may have deactivated the referenced route. Re-seat the entity
+    // only if the nearby active path has a compatible travel heading.
+    const fa = frontAxlePos(entity);
     const hit = closestPathPoint(board, fa.x, fa.y, RE_RAIL_LATERAL + 8);
-    if (hit) {
-      placeTrainOnPath(train, hit, { keepDir: true });
-      train.mode = TrainMode.ON_RAIL;
-      live = resolveLivePath(board, train.pathRef);
+    const d1 = hit ? angleDiff(entity.ang, hit.ang) : Infinity;
+    const d2 = hit ? angleDiff(entity.ang, hit.ang + Math.PI) : Infinity;
+    const bestAngle = Math.min(d1, d2);
+    if (hit && bestAngle <= PATH_HOP_ANGLE) {
+      telemetry?.event("inactive_path_reseat", {
+        entity: entityId,
+        fromPath: `${pref.pieceId}:${pref.pathId}`,
+        toPath: `${hit.path.pieceId}:${hit.path.id}`,
+        dist: hit.dist,
+        bestAngle,
+      });
+      const d1 = angleDiff(entity.ang, hit.ang);
+      const d2 = angleDiff(entity.ang, hit.ang + Math.PI);
+      const dir = d1 <= d2 ? 1 : -1;
+      const ang = dir > 0 ? hit.ang : normalizeAngle(hit.ang + Math.PI);
+      entity.pathRef = {
+        path: hit.path,
+        pieceId: hit.path.pieceId,
+        pathId: hit.path.id,
+      };
+      entity.s = hit.s;
+      entity.dir = dir;
+      entity.ang = ang;
+      const body = bodyFromFrontAxle(hit.x, hit.y, ang);
+      entity.x = body.x;
+      entity.y = body.y;
+      live = resolveLivePath(board, entity.pathRef);
     }
     if (!live) {
-      leaveRails(train);
-      return;
+      return fail("inactive_path_no_reseat", {
+        pathKey: `${pref.pieceId}:${pref.pathId}`,
+        nearestPath: hit ? `${hit.path.pieceId}:${hit.path.id}` : null,
+        nearestDist: hit?.dist ?? null,
+        nearestAngle: Number.isFinite(bestAngle) ? bestAngle : null,
+      });
     }
   }
-  train.pathRef.path = live;
+  entity.pathRef.path = live;
 
   let len = live.length || 1e-6;
-  // Advance in absolute path-length space (px)
-  const dist = train.speed * dt;
-  train.s += (dist / len) * train.dir;
+  const dist = (speed || 180) * dt;
+  entity.s += (dist / len) * entity.dir;
 
   let guard = 0;
-  while ((train.s > 1 || train.s < 0) && guard++ < 16) {
-    const atHigh = train.s > 1;
+  while ((entity.s > 1 || entity.s < 0) && guard++ < 16) {
+    const atHigh = entity.s > 1;
     const overshootPx = atHigh
-      ? (train.s - 1) * len
-      : -train.s * len;
-    // dir>0 leaves at s=1 (toC); dir<0 leaves at s=0 (fromC)
-    const leavingHigh = train.dir > 0;
+      ? (entity.s - 1) * len
+      : -entity.s * len;
+    const leavingHigh = entity.dir > 0;
     const exitConn = leavingHigh ? live.toC : live.fromC;
     const endS = leavingHigh ? 1 : 0;
     const pose = pointOnPolyline(live.points, endS);
-
-    // pose.ang = path tangent along increasing s at this end.
-    // Travel heading follows dir.
     const travelAng =
-      train.dir > 0 ? pose.ang : normalizeAngle(pose.ang + Math.PI);
-    train.ang = travelAng;
+      entity.dir > 0 ? pose.ang : normalizeAngle(pose.ang + Math.PI);
+    entity.ang = travelAng;
     const body = bodyFromFrontAxle(pose.x, pose.y, travelAng);
-    train.x = body.x;
-    train.y = body.y;
+    entity.x = body.x;
+    entity.y = body.y;
 
     const next = findNextPath(
       board,
@@ -417,46 +811,75 @@ function stepOnRail(train, board, dt) {
       exitConn,
       pose,
       travelAng,
-      train
+      entity,
+      telemetry
     );
     if (!next) {
-      leaveRails(train);
-      return;
+      return fail("no_next_path", {
+        fromPath: `${live.pieceId}:${live.id}`,
+        exitConn,
+        travelAng,
+        overshootPx,
+      });
     }
 
-    train.pathRef = {
+    telemetry?.event("path_handoff", {
+      entity: entityId,
+      fromPath: `${live.pieceId}:${live.id}`,
+      exitConn,
+      toPath: `${next.path.pieceId}:${next.path.id}`,
+      dir: next.dir,
+      s: next.s,
+      overshootPx,
+    });
+    entity.pathRef = {
       path: next.path,
       pieceId: next.path.pieceId,
       pathId: next.path.id,
     };
-    train.dir = next.dir;
+    entity.dir = next.dir;
     live = next.path;
     len = live.length || 1e-6;
-    // Enter at end, then consume overshoot in px
-    train.s = next.s + (overshootPx / len) * train.dir;
+    entity.s = next.s + (overshootPx / len) * entity.dir;
   }
 
-  // Clamp tiny float noise
-  if (train.s < 0 && train.s > -1e-6) train.s = 0;
-  if (train.s > 1 && train.s < 1 + 1e-6) train.s = 1;
-
-  if (train.s >= 0 && train.s <= 1) {
-    const cur = resolveLivePath(board, train.pathRef) || train.pathRef.path;
-    const p = pointOnPolyline(cur.points, train.s);
-    train.ang =
-      train.dir > 0 ? p.ang : normalizeAngle(p.ang + Math.PI);
-    const body = bodyFromFrontAxle(p.x, p.y, train.ang);
-    train.x = body.x;
-    train.y = body.y;
+  if (entity.s < 0 && entity.s > -1e-6) entity.s = 0;
+  if (entity.s > 1 && entity.s < 1 + 1e-6) entity.s = 1;
+  if (entity.s >= 0 && entity.s <= 1) {
+    const cur = resolveLivePath(board, entity.pathRef) || entity.pathRef.path;
+    const p = pointOnPolyline(cur.points, entity.s);
+    entity.ang = entity.dir > 0 ? p.ang : normalizeAngle(p.ang + Math.PI);
+    const body = bodyFromFrontAxle(p.x, p.y, entity.ang);
+    entity.x = body.x;
+    entity.y = body.y;
   }
+  return true;
 }
 
 /**
  * Continuous path solver:
  * graph link first, then geometric endpoint hop (heading-matched).
  */
-function findNextPath(board, live, exitConnId, exitPose, travelAng, train) {
+function findNextPath(
+  board,
+  live,
+  exitConnId,
+  exitPose,
+  travelAng,
+  train,
+  telemetry = null
+) {
   const fromGraph = findNextFromGraph(board, live, exitConnId, travelAng);
+  telemetry?.event("path_candidates", {
+    entity: train?.id ?? "lead",
+    fromPath: `${live.pieceId}:${live.id}`,
+    exitConn: exitConnId,
+    graphSelected: fromGraph
+      ? `${fromGraph.path.pieceId}:${fromGraph.path.id}`
+      : null,
+    graphDir: fromGraph?.dir ?? null,
+    graphS: fromGraph?.s ?? null,
+  });
   if (fromGraph) return fromGraph;
   return findNextGeometric(board, live, exitPose.x, exitPose.y, travelAng);
 }

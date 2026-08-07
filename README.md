@@ -23,9 +23,18 @@ The layout and vibe come from this meme / layout energy (the primal pitch deck):
 ```bash
 npm test          # node tests/run.mjs
 npm run serve     # python -m http.server 8765
+npm run trace:train -- --frames=500  # backend train telemetry trace
 ```
 
 Hard-refresh after JS changes (cache-busted `?v=` on entry assets).
+
+### Physics telemetry
+
+Open the browser with `?debug=1` to record frame-by-frame train telemetry.
+The live hooks are available as `window.__sim.getTelemetry()` and
+`window.__plarailDemo.getTelemetry()` for Playwright or the developer console.
+The backend equivalent is `npm run trace:train`; add `--out=<file>` to save
+the complete JSON trace instead of only the compact event summary.
 
 ## Thanks
 

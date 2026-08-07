@@ -46,11 +46,14 @@ import {
   stopTrain,
   resetTrainHard,
   updateTrain,
+  restoreTrainSnapshot,
+  createTrainTelemetry,
   modeLabel,
   TrainMode,
   ensureConsist,
   ensureSingleEngine,
   placeFollowers,
+  seatConsistOnPath,
   threeCarConsistSpec,
   setActiveEngine,
   hitTestCar,
@@ -60,6 +63,10 @@ import {
   snapCarPoseToHit,
   MAX_MID_CARS,
   countMidCars,
+  clearTrainCars,
+  removeCar,
+  placeLayoutCars,
+  serializeTrainCars,
 } from "./train.js";
 import { resizeCanvas, drawScene, drawPaletteIcon, drawPaletteTrainIcon } from "./render.js";
 import { loadRealMemeTrack, TRACK_CATALOG, getTrackById } from "./presets.js";
@@ -96,6 +103,24 @@ const board = createBoard();
 const train = createTrain();
 let trainPlaced = false;
 
+const telemetryDebug = (() => {
+  try {
+    const query = new URLSearchParams(window.location.search);
+    return (
+      query.has("debug") ||
+      query.get("telemetry") === "1" ||
+      localStorage.getItem("plarail-debug-telemetry") === "1"
+    );
+  } catch {
+    return false;
+  }
+})();
+const trainTelemetry = createTrainTelemetry({
+  enabled: telemetryDebug,
+  maxFrames: 3600,
+  maxEvents: 24000,
+});
+
 /** Camera: scale is CSS-px per world unit (1 = 1:1). */
 let view = createView(800, 600);
 let bounds = { minX: 40, minY: 40, maxX: 760, maxY: 560 };
@@ -125,7 +150,7 @@ let hidePieceId = null;
 /** Mutable audio transition memory for syncTrainAudio */
 const audioMem = { prevMode: null, lastWallTick: 0 };
 /** Bump when shipping a new gold-standard default so old autosaves don't win. */
-const LS_KEY = "plarail-real2sim-layout-v7-speed210";
+const LS_KEY = "plarail-real2sim-layout-v8-saved-track-speed210";
 
 // ── Palette (catalog order; HTML may be sparse — we build buttons in JS) ──
 const paletteOrder = [
@@ -368,12 +393,39 @@ document.getElementById("btn-mirror").addEventListener("click", () => {
   }
 });
 document.getElementById("btn-delete").addEventListener("click", () => {
-  // Uncouple selected car (separable multi-car)
-  if (trainPlaced && train.selectedCarId) {
-    const id = train.selectedCarId;
-    if (uncoupleCar(train, id)) {
-      train.selectedCarId = id;
-      setHint("Car uncoupled. Drag to a rail to re-seat · bring near engine to recouple later.");
+  // Delete selected rolling stock (remove from world — not just uncouple)
+  if (trainPlaced && (train.selected || train.selectedCarId)) {
+    const id =
+      train.selectedCarId ||
+      train.poweredId ||
+      train.cars?.[0]?.id ||
+      null;
+    if (id) {
+      const r = removeCar(train, id);
+      if (r.cleared) {
+        trainPlaced = false;
+        running = false;
+        setHint(
+          "Train deleted. Drag 🚂 engine onto a rail, then add mid cars (max 3)."
+        );
+        updateStatus();
+        return;
+      }
+      if (r.removed) {
+        setHint(
+          "Car deleted. Add units from palette (engine / mid) · max 3 mids."
+        );
+        updateStatus();
+        return;
+      }
+    }
+    // Whole-train clear if selection is the powered body without car id
+    if (train.selected && train.cars?.length) {
+      clearTrainCars(train);
+      trainPlaced = false;
+      running = false;
+      setHint("Train cleared. Place engine alone, then build mid cars.");
+      updateStatus();
       return;
     }
   }
@@ -468,14 +520,9 @@ function findTrainSeatHit(hint, maxDist = 120) {
 }
 
 function applyTrackLoadInfo(info) {
-  // Multi-car consist (lead + mid + trailing reverse-facing engine)
-  if (info?.consist?.length) {
-    train.consistSpec = info.consist;
-    train.cars = null; // fresh template only on layout load
-  } else {
-    train.consistSpec = null;
-    train.cars = null;
-  }
+  // Always separate entities — never a hard-coded multi-car template
+  train.consistSpec = null;
+  train.cars = null;
   // Explicit true/false so switching back from arntenoughrails turns walls off
   if (info && Object.prototype.hasOwnProperty.call(info, "solidPlayfield")) {
     setSolidPlayfield(!!info.solidPlayfield);
@@ -494,14 +541,13 @@ function applyTrackLoadInfo(info) {
         x: info.trainHint.x,
       }
     : null;
+  // Shift any saved car poses with north-align
+  const carsList = (info?.cars || []).map((c) =>
+    c && c.y != null ? { ...c, y: c.y + dy } : { ...c }
+  );
   const hit = findTrainSeatHit(hint, 160);
   if (hit) {
-    placeTrainOnPath(train, hit, {
-      dir: 1,
-      hardReset: !!(info?.consist?.length),
-      board,
-    });
-    // Prefer layout ang if it matches path
+    let dir = 1;
     if (hint && typeof hint.ang === "number") {
       const d1 = Math.abs(
         ((hint.ang - hit.ang + Math.PI * 3) % (Math.PI * 2)) - Math.PI
@@ -510,20 +556,21 @@ function applyTrackLoadInfo(info) {
         ((hint.ang - (hit.ang + Math.PI) + Math.PI * 3) % (Math.PI * 2)) -
           Math.PI
       );
-      if (d2 < d1) {
-        placeTrainOnPath(train, hit, {
-          dir: -1,
-          hardReset: false,
-          board,
-        });
-      }
+      if (d2 < d1) dir = -1;
+    }
+    if (carsList.length > 0) {
+      // Layout cars are distinct entities placed + coupled on the path
+      placeLayoutCars(train, carsList, board, { seatHit: hit, dir });
+      train.consistSpec = null;
+    } else {
+      // Single engine only
+      placeTrainOnPath(train, hit, {
+        dir,
+        hardReset: false,
+        board,
+      });
     }
     trainPlaced = true;
-    placeFollowers(train, {
-      hard: true,
-      onRail: !!train.pathRef,
-      board: train.pathRef ? board : null,
-    });
   } else {
     trainPlaced = false;
     setHint("Track loaded but no rail found for the train — drag Engine onto a path.");
@@ -637,6 +684,19 @@ function tryPlaceTrainAt(x, y, maxDist = 48) {
   return false;
 }
 
+function placeTrainSnapshot(snapshot) {
+  if (!snapshot || !Number.isFinite(snapshot.x) || !Number.isFinite(snapshot.y)) {
+    return false;
+  }
+  train.x = snapshot.x;
+  train.y = snapshot.y;
+  train.ang = Number.isFinite(snapshot.ang) ? snapshot.ang : train.ang;
+  train.mode = snapshot.mode || TrainMode.IDLE;
+  train.pathRef = null;
+  ensureSingleEngine(train);
+  return true;
+}
+
 function placeTrainAtHint(hint, opts = {}) {
   if (!hint && !opts.forceAny) return;
   const hit = findTrainSeatHit(hint, opts.maxDist ?? 160);
@@ -657,11 +717,12 @@ function placeTrainAtHint(hint, opts = {}) {
       hardReset: !!opts.hardReset,
       board,
     });
-    placeFollowers(train, {
-      hard: true,
-      onRail: !!train.pathRef,
-      board: train.pathRef ? board : null,
-    });
+    // placeTrainOnPath already path-seats multi-car; only hard-hitch if no board path
+    if (train.cars?.length > 1 && train.pathRef) {
+      seatConsistOnPath(train, board);
+    } else if (train.cars?.length > 1) {
+      placeFollowers(train, { hard: true, onRail: false, board: null });
+    }
     trainPlaced = true;
     train.selected = false;
     running = false;
@@ -688,12 +749,80 @@ const io = createIo({
   placeTrainAtHint,
   resetTrainHard,
   applySpeed,
-  fitBoardToView: () => fitBoardToView(48),
+  fitBoardToView: (pad = 48) => fitBoardToView(pad),
   setHint,
   updateStatus,
+  prepareLoadedLayout: (data) => {
+    if (
+      data &&
+      Object.prototype.hasOwnProperty.call(data, "solidPlayfield")
+    ) {
+      setSolidPlayfield(!!data.solidPlayfield);
+    }
+
+    // File-loaded solid layouts must use the same north-edge alignment as
+    // the built-in preset. Without this, the authored rail envelope remains
+    // below the wood wall and the off-rail train cannot reach the rerail
+    // pocket shown by the saved track.
+    const dy =
+      data?.solidPlayfield || data?.northAlign
+        ? northAlignBoardToWall(36)
+        : 0;
+    if (!dy || !data?.train) return data;
+
+    const trainData = {
+      ...data.train,
+      y: Number.isFinite(data.train.y) ? data.train.y + dy : data.train.y,
+    };
+    if (Array.isArray(data.train.cars)) {
+      trainData.cars = data.train.cars.map((car) => ({
+        ...car,
+        y: Number.isFinite(car?.y) ? car.y + dy : car?.y,
+      }));
+    }
+    return { ...data, train: trainData };
+  },
   clearSelection,
   lsKey: LS_KEY,
   defaultSpeed: 210,
+  serializeTrainCars: () => serializeTrainCars(train),
+  placeTrainSnapshot,
+  restoreTrainState: (snapshot) => restoreTrainSnapshot(train, board, snapshot),
+  placeLayoutCars: (cars, trainMeta) => {
+    const hit = findTrainSeatHit(
+      trainMeta
+        ? { x: trainMeta.x, y: trainMeta.y, ang: trainMeta.ang }
+        : null,
+      160
+    );
+    if (
+      !hit &&
+      (!Number.isFinite(cars?.[0]?.x) || !Number.isFinite(cars?.[0]?.y))
+    )
+      return false;
+    let dir = 1;
+    if (trainMeta?.ang != null && hit) {
+      const d1 = Math.abs(
+        ((trainMeta.ang - hit.ang + Math.PI * 3) % (Math.PI * 2)) - Math.PI
+      );
+      const d2 = Math.abs(
+        ((trainMeta.ang - (hit.ang + Math.PI) + Math.PI * 3) %
+          (Math.PI * 2)) -
+          Math.PI
+      );
+      if (d2 < d1) dir = -1;
+    }
+    placeLayoutCars(train, cars, board, {
+      seatHit: hit || null,
+      dir,
+      preserveSavedState: cars.some(
+        (car) => Number.isFinite(car?.x) && Number.isFinite(car?.y)
+      ),
+    });
+    train.consistSpec = null;
+    if (trainMeta?.speed != null) train.speed = trainMeta.speed;
+    return !!(train.cars?.length);
+  },
 });
 const {
   buildSavePayload,
@@ -720,7 +849,7 @@ btnStart.addEventListener("click", () => {
     setHint("Train hit the edge. Reset Train, place on rail, then Start.");
     return;
   }
-  if (!train.pathRef) {
+  if (!train.pathRef && train.mode !== TrainMode.OFF_RAIL) {
     if (!tryPlaceTrainAt(train.x, train.y, 56)) {
       setHint("Train is not on a rail — drag 🚂 onto a blue path.");
       return;
@@ -740,12 +869,16 @@ btnStop.addEventListener("click", () => {
   running = false;
   stopTrain(train);
   stopMotor();
+  setHint("Paused. Press Start to resume.");
+  updateStatus();
 });
 btnResetTrain.addEventListener("click", () => {
   running = false;
-  resetTrainHard(train);
+  resetTrainHard(train); // clears cars + consistSpec (no auto multi rebuild)
   trainPlaced = false;
-  setHint("Train cleared. Drag 🚂 from palette onto a rail, then Start.");
+  setHint(
+    "Train cleared. Drag 🚂 engine alone onto a rail, then mid cars (max 3)."
+  );
   updateStatus();
 });
 
@@ -794,6 +927,9 @@ window.addEventListener("keydown", (e) => {
     if (running) {
       running = false;
       stopTrain(train);
+      stopMotor();
+      setHint("Paused. Press Start to resume.");
+      updateStatus();
     } else {
       btnStart.click();
     }
@@ -1022,7 +1158,7 @@ function onPointerDown(e) {
       const powered =
         train.cars?.find((c) => c.powered)?.id || train.poweredId || "lead";
       setHint(
-        `Car selected (${train.selectedCarId || "lead"}). 🦄 = switch powered engine (active: ${powered}). Delete uncouples. Drag along rails.`
+        `Car selected (${train.selectedCarId || "lead"}). 🦄 = active engine (${powered}). Delete removes car · drag to re-seat.`
       );
       return;
     }
@@ -1418,6 +1554,8 @@ function onPointerUp(e) {
           setHint(`Mid car limit reached (max ${MAX_MID_CARS}).`);
         } else {
           if (!train.cars?.length) train.cars = [];
+          // Drop layout template so free mid is never absorbed into a forced consist
+          train.consistSpec = null;
           const car = spawnFreeCar(
             train,
             "mid",
@@ -1430,11 +1568,15 @@ function onPointerUp(e) {
           } else {
             snapCarPoseToHit(car, trainGhost.hit, train.dir || 1);
             car.coupled = false;
+            // Auto-link if dropped near the powered chain tail
+            const linked = tryRecoupleCar(train, car.id);
             trainPlaced = true;
             train.selected = true;
             train.selectedCarId = car.id;
             setHint(
-              `Mid car on rails (${countMidCars(train)}/${MAX_MID_CARS}). Link near coupler · Delete uncouples.`
+              linked
+                ? `Mid coupled (${countMidCars(train)}/${MAX_MID_CARS}). Delete removes car.`
+                : `Mid on rails (${countMidCars(train)}/${MAX_MID_CARS}). Drop near coupler to link · Delete removes.`
             );
           }
         }
@@ -1453,28 +1595,70 @@ function onPointerUp(e) {
           placeTrainOnPath(train, trainGhost.hit, {
             dir: train.dir || 1,
             keepDir: true,
+            board,
           });
           setHint("Engine on rails. Start runs · 🦄 flips direction or switches power.");
         }
         trainPlaced = true;
         train.selected = true;
-      } else {
-        // Engine place alone — never auto-append mid/trail (no long turd)
-        if (!train.cars?.length) {
-          train.consistSpec = null;
+      } else if (
+        !drag.fromExisting &&
+        kind === "engine" &&
+        train.cars?.length
+      ) {
+        // Extra engine from palette — free unit (trail), never rebuild multi template
+        train.consistSpec = null;
+        const eng = spawnFreeCar(
+          train,
+          "engine",
+          trainGhost.hit.x,
+          trainGhost.hit.y,
+          trainGhost.ang || 0
+        );
+        if (eng) {
+          snapCarPoseToHit(eng, trainGhost.hit, train.dir || 1);
+          eng.coupled = false;
+          eng.powered = false;
+          eng.facing = -1;
+          const linked = tryRecoupleCar(train, eng.id);
+          trainPlaced = true;
+          train.selected = true;
+          train.selectedCarId = eng.id;
+          setHint(
+            linked
+              ? "Trailing engine coupled. 🦄 switches powered unit · Delete removes."
+              : "Trailing engine on rails (free). Drop near coupler to link · Delete removes."
+          );
         }
+      } else {
+        // First engine place alone — never auto-append mid/trail
+        train.consistSpec = null;
+        train.cars = null;
         placeTrainOnPath(train, trainGhost.hit, {
           dir: train.dir || 1,
           keepDir: true,
           hardReset: false,
           board,
         });
+        // Guarantee single unit (layout template must never reappear here)
+        if (train.cars?.length !== 1) {
+          ensureSingleEngine(train);
+          train.cars[0].mode = TrainMode.ON_RAIL;
+          train.cars[0].pathRef = train.pathRef;
+          train.cars[0].s = train.s;
+          train.cars[0].dir = train.dir;
+          train.cars[0].x = train.x;
+          train.cars[0].y = train.y;
+          train.cars[0].ang = train.ang;
+        }
+        train.consistSpec = null;
         trainPlaced = true;
         train.selected = true;
+        train.selectedCarId = train.cars[0]?.id || "lead";
         running = false;
         clearSelection();
         setHint(
-          "Engine on rails. Add mid cars from palette (max 3). 🦄 switches powered engine."
+          "Engine on rails (alone). Add mid cars from palette (max 3), then optional trail engine."
         );
       }
       running = false;
@@ -1812,6 +1996,16 @@ window.__plarailDemo = {
     pieceId: train.pathRef?.pieceId ?? null,
     pathId: train.pathRef?.pathId ?? null,
   }),
+  getTelemetry: () => trainTelemetry.snapshot(),
+  clearTelemetry: () => trainTelemetry.clear(),
+  setTelemetryDebug(enabled) {
+    trainTelemetry.setEnabled(enabled);
+    try {
+      localStorage.setItem("plarail-debug-telemetry", enabled ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  },
   isRunning: () => running,
   setSidebarCollapsed,
   fitWorldRect,
@@ -1831,11 +2025,17 @@ window.__plarailDemo = {
       if (!tryPlaceTrainAt(cx, cy, 2000)) return false;
     }
     if (train.mode === TrainMode.STOPPED) return false;
-    if (!train.pathRef && !tryPlaceTrainAt(train.x, train.y, 56)) return false;
+    if (
+      !train.pathRef &&
+      train.mode !== TrainMode.OFF_RAIL &&
+      !tryPlaceTrainAt(train.x, train.y, 56)
+    )
+      return false;
     if (startTrain(train)) {
       running = true;
       train.selected = false;
       startMotor(train.speed / 140);
+      setHint("Running. Follows connected track · open ends derail · walls glide.");
       updateStatus();
       return true;
     }
@@ -1845,6 +2045,7 @@ window.__plarailDemo = {
     running = false;
     stopTrain(train);
     stopMotor();
+    setHint("Paused. Press Start to resume.");
     updateStatus();
   },
 };
@@ -1879,7 +2080,10 @@ function frame(t) {
   lastT = t;
 
   if (running) {
-    updateTrain(train, board, dt, bounds, { solidPlayfield });
+    updateTrain(train, board, dt, bounds, {
+      solidPlayfield,
+      telemetry: trainTelemetry,
+    });
     if (train.mode === TrainMode.STOPPED) {
       running = false;
       setHint(
@@ -1890,7 +2094,8 @@ function frame(t) {
     }
   }
 
-  // Synthesized train audio (Web Audio — no external libs)
+  // Synthesized train audio (Web Audio — no external libs).
+  // Pass per-car modes so each unit thumps off-rail and taps on re-rail.
   syncTrainAudio(
     {
       running,
@@ -1898,6 +2103,9 @@ function frame(t) {
       wallHit: !!train.wallHit,
       wallGlide: !!train.wallHit,
       speed: train.speed,
+      cars: train.cars
+        ? train.cars.map((c) => ({ id: c.id, mode: c.mode }))
+        : null,
     },
     audioMem
   );
@@ -1930,6 +2138,9 @@ window.__sim = {
   serialize: () => buildSavePayload(),
   save: saveLayoutToFile,
   persist: persistLayout,
+  telemetry: trainTelemetry,
+  getTelemetry: () => trainTelemetry.snapshot(),
+  clearTelemetry: () => trainTelemetry.clear(),
   get running() {
     return running;
   },

@@ -347,7 +347,45 @@ export function playRerail() {
 }
 
 /**
- * Frame sync: same gear motor on-rail / off-rail; quieter off-rail.
+ * Pure per-car mode transition detector (no AudioContext).
+ * Thump = derail/off; tap = re-rail/on. Used by syncTrainAudio + tests.
+ *
+ * @param {Array<{id:string,mode:string}>} cars
+ * @param {Record<string,string>} prevMap previous car id → mode
+ * @returns {{ events: Array<{id:string,kind:'derail'|'rerail'}>, carModes: Record<string,string> }}
+ */
+export function carModeSoundEvents(cars, prevMap = {}) {
+  const events = [];
+  const carModes = { ...prevMap };
+  const seen = new Set();
+  for (const car of cars || []) {
+    if (!car?.id) continue;
+    seen.add(car.id);
+    const mode = car.mode || "idle";
+    const prev = carModes[car.id];
+    if (prev && prev !== mode) {
+      if (
+        mode === "off_rail" &&
+        (prev === "on_rail" || prev === "idle")
+      ) {
+        events.push({ id: car.id, kind: "derail" });
+      } else if (mode === "on_rail" && prev === "off_rail") {
+        events.push({ id: car.id, kind: "rerail" });
+      }
+    }
+    carModes[car.id] = mode;
+  }
+  // Drop modes for cars that no longer exist
+  for (const id of Object.keys(carModes)) {
+    if (!seen.has(id)) delete carModes[id];
+  }
+  return { events, carModes };
+}
+
+/**
+ * Frame sync: gear motor + one-shots.
+ * Derail thump / re-rail tap fire per car (each solid unit is its own entity).
+ * Train-level mode still drives motor and edge/wall for the powered body.
  */
 export function syncTrainAudio(state, mem = {}) {
   if (ctx && ctx.state === "suspended" && unlocked) {
@@ -359,15 +397,27 @@ export function syncTrainAudio(state, mem = {}) {
   const running = !!state.running;
   const prev = mem.prevMode;
 
-  if (prev && prev !== mode) {
+  // Per-car thump (off) / tap (on). Prefer car list when present so mid/trail
+  // each make their own sound; fall back to train body for single-engine.
+  const cars = state.cars;
+  if (cars?.length) {
+    const { events, carModes } = carModeSoundEvents(cars, mem.carModes || {});
+    mem.carModes = carModes;
+    for (const ev of events) {
+      if (ev.kind === "derail") playCollision("derail");
+      else if (ev.kind === "rerail") playRerail();
+    }
+  } else if (prev && prev !== mode) {
     if (mode === "off_rail" && (prev === "on_rail" || prev === "idle")) {
       playCollision("derail");
-    } else if (mode === "stopped") {
-      playCollision("edge");
-      stopMotor();
     } else if (mode === "on_rail" && prev === "off_rail") {
       playRerail();
     }
+  }
+
+  if (prev && prev !== mode && mode === "stopped") {
+    playCollision("edge");
+    stopMotor();
   }
 
   if (mode === "off_rail" && state.wallHit) {

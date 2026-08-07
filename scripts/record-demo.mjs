@@ -151,7 +151,11 @@ async function main() {
     throw new Error("__plarailDemo.start missing");
   }
 
-  await page.click("#btn-meme");
+  // The old meme button was removed when built-in layouts moved to the
+  // dropdown. Explicitly load the real track so recording does not depend on
+  // whatever a stale localStorage layout happened to restore.
+  await page.selectOption("#track-select", "real-meme");
+  await page.click("#btn-load-track");
   await sleep(600);
 
   await page.evaluate((sp) => {

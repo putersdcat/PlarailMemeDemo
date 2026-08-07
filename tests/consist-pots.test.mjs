@@ -18,10 +18,20 @@ import {
   countMidCars,
   setActiveEngine,
   uncoupleCar,
+  tryRecoupleCar,
   snapCarPoseToHit,
   spawnFreeCar,
   tryRerailCar,
+  resolveCarCollisions,
+  carMinCenterDist,
+  TRAIN_LENGTH,
+  resetTrainHard,
+  clearTrainCars,
+  removeCar,
+  placeLayoutCars,
+  serializeTrainCars,
 } from "../js/train.js";
+import { carModeSoundEvents } from "../js/sound.js";
 import {
   createBoard,
   addPiece,
@@ -51,15 +61,23 @@ test("TRACK_CATALOG exposes arntenoughrails without removing real-meme", () => {
   assertEq(getTrackById("arntenoughrails").id, "arntenoughrails");
 });
 
-test("loadArntenoughrailsTrack: pieces, solid walls, 3-car, no pots", () => {
+test("loadArntenoughrailsTrack: pieces, solid walls, 3 separate cars, no pots", () => {
   const board = createBoard();
   const info = loadArntenoughrailsTrack(board);
   assert(info.ok);
   assert(info.pieceCount > 0);
   assert(info.solidPlayfield === true);
   assert(info.northAlign === true);
-  assert(info.consist?.length === 3);
-  assertEq(info.consist[2].kind, "engine");
+  // Separate car entities — never a consist template
+  assert(!info.consist, "no fake consist template");
+  assert(info.cars?.length === 3, "three car entities");
+  assertEq(info.cars[0].id, "lead");
+  assertEq(info.cars[1].id, "mid1");
+  assertEq(info.cars[2].id, "trail1");
+  assert(info.cars.every((car) => car.id && car.kind && car.role));
+  assertEq(info.cars[0].kind, "engine");
+  assertEq(info.cars[1].kind, "mid");
+  assertEq(info.cars[2].kind, "engine");
   // Pots purged forever
   assert(!board.pots?.length, "board.pots must be empty");
   assert(!("pots" in ARNTENOUGHRAILS_LAYOUT) || !ARNTENOUGHRAILS_LAYOUT.pots?.length);
@@ -336,6 +354,115 @@ test("real-meme still loads as single-engine default", () => {
   assert(info.ok);
   assert(info.pieceCount >= 30);
   assert(!info.consist);
+  assert(!info.cars?.length);
+});
+
+test("seatConsistHard after whip angles restores full coupler spacing", () => {
+  // Skeptic: hard:true was ignored for off-rail cars (whip path first) → pile-up.
+  const train = createTrain();
+  train.x = 100;
+  train.y = 100;
+  train.ang = 0;
+  train.consistSpec = threeCarConsistSpec();
+  ensureConsist(train, train.consistSpec, { hard: true });
+  placeFollowers(train, { hard: true });
+  // Simulate trailer-whipped pose after leaveRails (mid/trail facing ~90°)
+  train.cars[1].mode = TrainMode.OFF_RAIL;
+  train.cars[1].ang = Math.PI / 2;
+  train.cars[1].x = 100;
+  train.cars[1].y = 160;
+  train.cars[2].mode = TrainMode.OFF_RAIL;
+  train.cars[2].ang = Math.PI / 2;
+  train.cars[2].x = 100;
+  train.cars[2].y = 220;
+  train.mode = TrainMode.ON_RAIL;
+  train.cars[0].mode = TrainMode.ON_RAIL;
+  train.cars[0].x = 100;
+  train.cars[0].y = 100;
+  train.cars[0].ang = 0;
+
+  seatConsistHard(train);
+  const d01 = Math.hypot(
+    train.cars[0].x - train.cars[1].x,
+    train.cars[0].y - train.cars[1].y
+  );
+  const d12 = Math.hypot(
+    train.cars[1].x - train.cars[2].x,
+    train.cars[1].y - train.cars[2].y
+  );
+  assert(
+    d01 >= COUPLER_DIST * 0.75,
+    `mid piled after hard seat d01=${d01} want ~${COUPLER_DIST}`
+  );
+  assert(
+    d12 >= COUPLER_DIST * 0.75,
+    `trail piled after hard seat d12=${d12} want ~${COUPLER_DIST}`
+  );
+  assert(Math.abs(d01 - COUPLER_DIST) < 2, `d01 exact hitch ${d01}`);
+  assert(Math.abs(d12 - COUPLER_DIST) < 2, `d12 exact hitch ${d12}`);
+});
+
+test("re-rail with whipped mid/trail keeps full spacing (shipped updateTrain)", () => {
+  const board = createBoard();
+  for (let i = 0; i < 4; i++) addPiece(board, "R01", i * UNIT, 100, 0);
+  rebuild(board);
+  const hit = closestPathPoint(board, UNIT * 1.5, 100, 40);
+  assert(hit);
+  const train = createTrain();
+  placeLayoutCars(train, threeCarConsistSpec(), board, { seatHit: hit, dir: 1 });
+  // leaveRails-style whip: cars off, mid/trail at ~90°
+  train.mode = TrainMode.OFF_RAIL;
+  train.pathRef = null;
+  for (const c of train.cars) {
+    c.mode = TrainMode.OFF_RAIL;
+    c.pathRef = null;
+  }
+  train.cars[1].ang = Math.PI / 2;
+  train.cars[1].x = train.x;
+  train.cars[1].y = train.y + 80;
+  train.cars[2].ang = Math.PI / 2;
+  train.cars[2].x = train.x;
+  train.cars[2].y = train.y + 160;
+  // Put lead on path for re-rail
+  train.x = hit.x;
+  train.y = hit.y;
+  train.ang = hit.ang;
+  train.vx = Math.cos(hit.ang) * 50;
+  train.vy = Math.sin(hit.ang) * 50;
+  train.speed = 180;
+  train.reRailDistLeft = 0;
+  train.offRailDistAcc = 0;
+  train.offRailStepsDone = 0;
+  train.offRailPreferAng = hit.ang;
+  const bounds = { minX: 0, minY: 0, maxX: 900, maxY: 500 };
+  let ok = false;
+  for (let i = 0; i < 100; i++) {
+    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+    if (train.mode === TrainMode.ON_RAIL) {
+      const d01 = Math.hypot(
+        train.cars[0].x - train.cars[1].x,
+        train.cars[0].y - train.cars[1].y
+      );
+      const d12 = Math.hypot(
+        train.cars[1].x - train.cars[2].x,
+        train.cars[1].y - train.cars[2].y
+      );
+      assert(
+        d01 >= COUPLER_DIST * 0.75,
+        `re-rail frame mid pile d01=${d01}`
+      );
+      assert(
+        d12 >= COUPLER_DIST * 0.75,
+        `re-rail frame trail pile d12=${d12}`
+      );
+      // Followers still off_rail entities
+      assertEq(train.cars[1].mode, TrainMode.OFF_RAIL);
+      assertEq(train.cars[2].mode, TrainMode.OFF_RAIL);
+      ok = true;
+      break;
+    }
+  }
+  assert(ok, "lead should re-rail");
 });
 
 test("re-rail hard-seats multi-car without pile-up on lead", () => {
@@ -346,8 +473,7 @@ test("re-rail hard-seats multi-car without pile-up on lead", () => {
   const hit = closestPathPoint(board, UNIT, 80, 40);
   assert(hit);
   const train = createTrain();
-  train.consistSpec = threeCarConsistSpec();
-  placeTrainOnPath(train, hit, { dir: 1, hardReset: true, board });
+  placeLayoutCars(train, threeCarConsistSpec(), board, { seatHit: hit, dir: 1 });
   // Simulate off-rail near the rail then re-rail via updateTrain
   train.mode = TrainMode.OFF_RAIL;
   train.pathRef = null;
@@ -406,6 +532,88 @@ test("engine place alone does not auto-append mid+trail", () => {
   assert(!train.consistSpec, "consistSpec cleared for single engine");
 });
 
+test("resetTrainHard clears cars and consistSpec (no multi rebuild)", () => {
+  const train = createTrain();
+  train.consistSpec = threeCarConsistSpec();
+  ensureConsist(train, train.consistSpec, { hard: true });
+  assertEq(train.cars.length, 3);
+  resetTrainHard(train);
+  assert(!train.cars || train.cars.length === 0, "cars cleared");
+  assert(!train.consistSpec, "consistSpec cleared — no layout re-spawn");
+});
+
+test("delete/removeCar strips unit; last car clears train", () => {
+  const train = createTrain();
+  train.consistSpec = threeCarConsistSpec();
+  ensureConsist(train, train.consistSpec, { hard: true });
+  const midId = train.cars[1].id;
+  const r1 = removeCar(train, midId);
+  assert(r1.removed && !r1.cleared);
+  assertEq(train.cars.length, 2);
+  assert(!train.consistSpec);
+  // Remove remaining including lead
+  removeCar(train, train.cars[1].id);
+  const r2 = removeCar(train, train.cars[0].id);
+  assert(r2.cleared);
+  assert(!train.cars);
+});
+
+test("build train one car at a time: engine then mids then trail", () => {
+  const board = createBoard();
+  for (let i = 0; i < 8; i++) addPiece(board, "R01", i * UNIT, 0, 0);
+  rebuild(board);
+  const hit = closestPathPoint(board, UNIT * 3, 0, 40);
+  const train = createTrain();
+  // Simulate leftover layout + user reset
+  train.consistSpec = threeCarConsistSpec();
+  resetTrainHard(train);
+  assert(!train.consistSpec);
+  // Place engine only
+  placeTrainOnPath(train, hit, { dir: 1, hardReset: false, board });
+  assertEq(train.cars.length, 1);
+  assertEq(train.cars[0].kind, "engine");
+  // Add mids one by one at the live chain tail hitch
+  for (let m = 0; m < MAX_MID_CARS; m++) {
+    const chain = train.cars.filter(
+      (c, i, arr) =>
+        i === 0 ||
+        (arr[i - 1] &&
+          (arr[i - 1].powered || arr[i - 1].coupled) &&
+          c.coupled !== false)
+    );
+    // powered chain via getPoweredChain semantics: all coupled after lead
+    const tail = train.cars.filter((c) => c.coupled || c.powered).slice(-1)[0];
+    const x = tail.x - Math.cos(tail.ang) * COUPLER_DIST;
+    const y = tail.y - Math.sin(tail.ang) * COUPLER_DIST;
+    const mid = spawnFreeCar(train, "mid", x, y, tail.ang);
+    assert(mid, `mid ${m + 1}`);
+    mid.ang = tail.ang;
+    mid.x = x;
+    mid.y = y;
+    mid.mode = TrainMode.ON_RAIL;
+    mid.coupled = false;
+    assert(tryRecoupleCar(train, mid.id), `mid ${m + 1} should couple`);
+    placeFollowers(train, { hard: true });
+  }
+  assertEq(countMidCars(train), MAX_MID_CARS);
+  assertEq(spawnFreeCar(train, "mid", 0, 0, 0), null);
+  // Trail engine at chain tail
+  const tail = train.cars.filter((c) => c.coupled || c.powered).slice(-1)[0];
+  const tx = tail.x - Math.cos(tail.ang) * COUPLER_DIST;
+  const ty = tail.y - Math.sin(tail.ang) * COUPLER_DIST;
+  const trail = spawnFreeCar(train, "engine", tx, ty, tail.ang);
+  assert(trail);
+  trail.x = tx;
+  trail.y = ty;
+  trail.ang = tail.ang;
+  trail.mode = TrainMode.ON_RAIL;
+  trail.coupled = false;
+  trail.powered = false;
+  assert(tryRecoupleCar(train, trail.id), "trail engine couples");
+  assertEq(train.cars.length, 1 + MAX_MID_CARS + 1);
+  assert(!train.consistSpec);
+});
+
 test("mid cars capped at three; fourth spawn blocked", () => {
   const train = createTrain();
   ensureSingleEngine(train);
@@ -425,8 +633,7 @@ test("on-rail coupler length matches off-rail hard hitch", () => {
   rebuild(board);
   const hit = closestPathPoint(board, UNIT, 0, 40);
   const train = createTrain();
-  train.consistSpec = threeCarConsistSpec();
-  placeTrainOnPath(train, hit, { dir: 1, hardReset: true, board });
+  placeLayoutCars(train, threeCarConsistSpec(), board, { seatHit: hit, dir: 1 });
   placeFollowers(train, { hard: true, onRail: true, board });
   const onD = Math.hypot(
     train.cars[0].x - train.cars[1].x,
@@ -450,8 +657,7 @@ test("lead re-rail leaves off-rail followers off-rail until they re-rail", () =>
   rebuild(board);
   const hit = closestPathPoint(board, UNIT, 100, 40);
   const train = createTrain();
-  train.consistSpec = threeCarConsistSpec();
-  placeTrainOnPath(train, hit, { dir: 1, hardReset: true, board });
+  placeLayoutCars(train, threeCarConsistSpec(), board, { seatHit: hit, dir: 1 });
   startTrain(train);
   train.speed = 200;
   // Derail whole train
@@ -502,6 +708,77 @@ test("lead re-rail leaves off-rail followers off-rail until they re-rail", () =>
   assert(leadOn, "lead should re-rail");
 });
 
+test("after lead re-rail, mid and trail each become on_rail with full spacing", () => {
+  // Skeptic: followers must not stay permanent hitch-turds — each re-rails itself.
+  const board = createBoard();
+  // Long straight so trail hitch seat eventually sits over path
+  for (let i = 0; i < 10; i++) addPiece(board, "R01", i * UNIT, 100, 0);
+  rebuild(board);
+  const hit = closestPathPoint(board, UNIT * 4, 100, 40);
+  assert(hit);
+  const train = createTrain();
+  placeLayoutCars(train, threeCarConsistSpec(), board, { seatHit: hit, dir: 1 });
+  startTrain(train);
+  train.speed = 220;
+  train.mode = TrainMode.OFF_RAIL;
+  train.pathRef = null;
+  for (const c of train.cars) {
+    c.mode = TrainMode.OFF_RAIL;
+    c.pathRef = null;
+  }
+  train.cars[1].ang = Math.PI / 2;
+  train.cars[1].x = train.x;
+  train.cars[1].y = train.y + 80;
+  train.cars[2].ang = Math.PI / 2;
+  train.cars[2].x = train.x;
+  train.cars[2].y = train.y + 160;
+  train.x = hit.x;
+  train.y = hit.y;
+  train.ang = hit.ang;
+  train.vx = Math.cos(hit.ang) * 80;
+  train.vy = Math.sin(hit.ang) * 80;
+  train.reRailDistLeft = 0;
+  train.offRailDistAcc = 0;
+  train.offRailStepsDone = 0;
+  train.offRailPreferAng = hit.ang;
+
+  const bounds = { minX: -200, minY: 0, maxX: 1200, maxY: 500 };
+  let sawLeadOn = false;
+  let midOn = false;
+  let trailOn = false;
+  for (let i = 0; i < 240; i++) {
+    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+    if (train.mode === TrainMode.ON_RAIL) sawLeadOn = true;
+    if (train.cars[1].mode === TrainMode.ON_RAIL) midOn = true;
+    if (train.cars[2].mode === TrainMode.ON_RAIL) trailOn = true;
+    if (sawLeadOn && midOn && trailOn) {
+      const d01 = Math.hypot(
+        train.cars[0].x - train.cars[1].x,
+        train.cars[0].y - train.cars[1].y
+      );
+      const d12 = Math.hypot(
+        train.cars[1].x - train.cars[2].x,
+        train.cars[1].y - train.cars[2].y
+      );
+      assert(
+        d01 >= COUPLER_DIST * 0.75,
+        `mid piled after individual re-rail d01=${d01}`
+      );
+      assert(
+        d12 >= COUPLER_DIST * 0.75,
+        `trail piled after individual re-rail d12=${d12}`
+      );
+      break;
+    }
+  }
+  assert(sawLeadOn, "lead should re-rail");
+  assert(midOn, "mid should re-rail as its own entity within N frames");
+  assert(trailOn, "trail should re-rail as its own entity within N frames");
+  assertEq(train.cars[0].mode, TrainMode.ON_RAIL);
+  assertEq(train.cars[1].mode, TrainMode.ON_RAIL);
+  assertEq(train.cars[2].mode, TrainMode.ON_RAIL);
+});
+
 test("placeTrainOnPath re-seat preserves uncouple and active engine", () => {
   // Skeptic: placeTrainOnPath nulling cars + ensureConsist undid uncouple/power.
   const board = createBoard();
@@ -510,8 +787,7 @@ test("placeTrainOnPath re-seat preserves uncouple and active engine", () => {
   const hit = closestPathPoint(board, UNIT, 0, 40);
   assert(hit);
   const train = createTrain();
-  train.consistSpec = threeCarConsistSpec();
-  placeTrainOnPath(train, hit, { dir: 1, hardReset: true });
+  placeLayoutCars(train, threeCarConsistSpec(), null, { seatHit: hit, dir: 1 });
   assertEq(train.cars.length, 3);
   const midId = train.cars[1].id;
   const trailId = train.cars[2].id;
@@ -543,4 +819,200 @@ test("placeTrainOnPath re-seat preserves uncouple and active engine", () => {
   placeTrainOnPath(train, hit3, { dir: 1, keepDir: true });
   assertEq(train.poweredId, trailId);
   assert(train.cars.find((c) => c.id === trailId).powered);
+});
+
+test("on-rail multi-car followers stay on path through curves (no fly-off)", () => {
+  // Bug: chord hitch put mid/trail off the outside of bends when lead pulled.
+  const board = createBoard();
+  const info = loadArntenoughrailsTrack(board);
+  assert(info.ok);
+  const hit = closestPathPoint(board, info.trainHint.x, info.trainHint.y, 160);
+  assert(hit);
+  const train = createTrain();
+  placeLayoutCars(train, info.cars, board, { seatHit: hit, dir: 1 });
+  startTrain(train);
+  train.speed = 200;
+  const bounds = { minX: -200, minY: -200, maxX: 1400, maxY: 1000 };
+  let maxOff = 0;
+  for (let i = 0; i < 240; i++) {
+    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+    if (train.mode !== TrainMode.ON_RAIL) break;
+    for (const c of train.cars) {
+      const near = closestPathPoint(board, c.x, c.y, 80);
+      const d = near ? near.dist : 999;
+      if (d > maxOff) maxOff = d;
+    }
+  }
+  assert(
+    maxOff < 12,
+    `followers flew off rails maxPathDist=${maxOff.toFixed(2)}`
+  );
+  assertEq(train.cars[1].mode, TrainMode.ON_RAIL);
+  assertEq(train.cars[2].mode, TrainMode.ON_RAIL);
+});
+
+test("layout multi-car seats mid/trail on path not straight off-track", () => {
+  // placeLayoutCars: three separate entities on path, coupled — no consistSpec
+  const board = createBoard();
+  const info = loadArntenoughrailsTrack(board);
+  assert(info.ok);
+  assert(info.cars?.length >= 3);
+  assert(!info.consist);
+  const train = createTrain();
+  const hint = info.trainHint;
+  const hit = closestPathPoint(board, hint.x, hint.y, 160);
+  assert(hit);
+  placeLayoutCars(train, info.cars, board, { seatHit: hit, dir: 1 });
+  assertEq(train.cars.length, 3);
+  assert(!train.consistSpec, "no template after placeLayoutCars");
+  // Distinct ids / entities
+  const ids = new Set(train.cars.map((c) => c.id));
+  assertEq(ids.size, 3);
+  assert(train.cars[0].powered);
+  assert(train.cars[1].coupled);
+  assert(train.cars[2].coupled);
+  for (let i = 0; i < train.cars.length; i++) {
+    const c = train.cars[i];
+    const near = closestPathPoint(board, c.x, c.y, 64);
+    assert(near, `car ${i} has no nearby path`);
+    assert(
+      near.dist < 18,
+      `car ${i} off track pathDist=${near.dist.toFixed(1)} (straight hitch spawn)`
+    );
+    assertEq(c.mode, TrainMode.ON_RAIL);
+  }
+  const d01 = Math.hypot(
+    train.cars[0].x - train.cars[1].x,
+    train.cars[0].y - train.cars[1].y
+  );
+  assert(
+    d01 >= COUPLER_DIST * 0.7 && d01 <= COUPLER_DIST * 1.35,
+    `mid spacing d01=${d01} want ~${COUPLER_DIST}`
+  );
+  // Serialize round-trip is per-car, not a consist template
+  const ser = serializeTrainCars(train);
+  assertEq(ser.length, 3);
+  assert(ser.every((c) => c.kind));
+  assert(!ser.consist);
+});
+
+test("carModeSoundEvents: each car thumps off and taps on", () => {
+  const cars = [
+    { id: "lead", mode: TrainMode.ON_RAIL },
+    { id: "mid", mode: TrainMode.ON_RAIL },
+    { id: "trail", mode: TrainMode.ON_RAIL },
+  ];
+  let mem = {};
+  let r = carModeSoundEvents(cars, mem);
+  // seed prev
+  mem = r.carModes;
+  cars[0].mode = TrainMode.OFF_RAIL;
+  cars[1].mode = TrainMode.OFF_RAIL;
+  r = carModeSoundEvents(cars, mem);
+  const derails = r.events.filter((e) => e.kind === "derail");
+  assertEq(derails.length, 2);
+  assert(derails.some((e) => e.id === "lead"));
+  assert(derails.some((e) => e.id === "mid"));
+  mem = r.carModes;
+  cars[1].mode = TrainMode.ON_RAIL;
+  cars[2].mode = TrainMode.OFF_RAIL;
+  r = carModeSoundEvents(cars, mem);
+  const taps = r.events.filter((e) => e.kind === "rerail");
+  const moreThumps = r.events.filter((e) => e.kind === "derail");
+  assertEq(taps.length, 1);
+  assertEq(taps[0].id, "mid");
+  assertEq(moreThumps.length, 1);
+  assertEq(moreThumps[0].id, "trail");
+});
+
+test("solid car bodies: overlapping free cars separate (no stack)", () => {
+  const train = createTrain();
+  train.mode = TrainMode.OFF_RAIL;
+  ensureSingleEngine(train);
+  const mid = spawnFreeCar(train, "mid", 100, 100, 0);
+  const mid2 = spawnFreeCar(train, "mid", 100, 100, 0); // stacked on mid
+  assert(mid && mid2);
+  mid.coupled = false;
+  mid2.coupled = false;
+  mid.mode = TrainMode.OFF_RAIL;
+  mid2.mode = TrainMode.OFF_RAIL;
+  // Lead far away so it does not interfere
+  train.cars[0].x = 500;
+  train.cars[0].y = 500;
+  train.cars[0].powered = true;
+  train.mode = TrainMode.OFF_RAIL;
+
+  const before = Math.hypot(mid.x - mid2.x, mid.y - mid2.y);
+  assert(before < 1, `start stacked d=${before}`);
+  const res = resolveCarCollisions(train);
+  assert(res.separated > 0, "expected separation steps");
+  const after = Math.hypot(mid.x - mid2.x, mid.y - mid2.y);
+  const need = carMinCenterDist(mid, mid2);
+  assert(
+    after >= need * 0.98,
+    `cars still overlap after resolve d=${after} need>=${need}`
+  );
+  assert(after > TRAIN_LENGTH * 0.5, `separated too little d=${after}`);
+});
+
+test("hard-hitched consist centers stay outside solid body overlap", () => {
+  const train = createTrain();
+  train.x = 200;
+  train.y = 100;
+  train.ang = 0;
+  train.consistSpec = threeCarConsistSpec();
+  ensureConsist(train, train.consistSpec, { hard: true });
+  placeFollowers(train, { hard: true });
+  resolveCarCollisions(train);
+  for (let i = 1; i < train.cars.length; i++) {
+    const a = train.cars[i - 1];
+    const b = train.cars[i];
+    const d = Math.hypot(a.x - b.x, a.y - b.y);
+    const minD = carMinCenterDist(a, b);
+    assert(d + 0.5 >= minD, `coupled overlap d=${d} min=${minD}`);
+    assert(
+      Math.abs(d - COUPLER_DIST) < 4,
+      `hitch spacing broken d=${d} COUPLER=${COUPLER_DIST}`
+    );
+  }
+});
+
+test("updateTrain separates stacked free cars via shipped path", () => {
+  const board = createBoard();
+  for (let i = 0; i < 3; i++) addPiece(board, "R01", i * UNIT, 0, 0);
+  rebuild(board);
+  const train = createTrain();
+  train.mode = TrainMode.OFF_RAIL;
+  train.speed = 0;
+  train.vx = 0;
+  train.vy = 0;
+  ensureSingleEngine(train);
+  train.cars[0].x = 400;
+  train.cars[0].y = 200;
+  train.cars[0].mode = TrainMode.OFF_RAIL;
+  // Stack far from track so re-rail/AABB noise does not dominate
+  const a = spawnFreeCar(train, "mid", 300, 300, 0);
+  const b = spawnFreeCar(train, "mid", 302, 300, 0);
+  a.coupled = false;
+  b.coupled = false;
+  a.mode = TrainMode.OFF_RAIL;
+  b.mode = TrainMode.OFF_RAIL;
+  a.ang = 0;
+  b.ang = 0;
+  a.vx = 0;
+  a.vy = 0;
+  b.vx = 0;
+  b.vy = 0;
+  const bounds = { minX: 0, minY: 0, maxX: 800, maxY: 600 };
+  for (let i = 0; i < 8; i++) {
+    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+  }
+  const d = Math.hypot(a.x - b.x, a.y - b.y);
+  const need = carMinCenterDist(a, b);
+  assert(
+    d + 1 >= need * 0.95,
+    `stacked free cars not solid after updateTrain d=${d} need=${need}`
+  );
+  // Must have left the stacked ~2px start
+  assert(d > 40, `barely moved apart d=${d}`);
 });
