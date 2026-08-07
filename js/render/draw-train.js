@@ -203,48 +203,51 @@ export function drawTrainCar(ctx, car, mode = TrainMode.IDLE) {
 }
 
 /**
- * Thin white plastic Plarail-style coupler bar in the air gap between cars.
+ * Short thin white plastic Plarail-style coupler bar (fixed gap, not elastic).
  */
 export function drawCouplerLink(ctx, link) {
   if (!link) return;
   const dx = link.x2 - link.x1;
   const dy = link.y2 - link.y1;
   const len = Math.hypot(dx, dy) || 1;
-  // Only draw when there is a real air gap
-  if (len < 6) return;
+  if (len < 4) return;
+  // Pull ends slightly inward so the bar sits cleanly in the gap
+  const ux = dx / len;
+  const uy = dy / len;
+  const inset = Math.min(2.5, len * 0.12);
+  const x1 = link.x1 + ux * inset;
+  const y1 = link.y1 + uy * inset;
+  const x2 = link.x2 - ux * inset;
+  const y2 = link.y2 - uy * inset;
   ctx.save();
   ctx.lineCap = "round";
-  // Soft shadow
-  ctx.strokeStyle = "rgba(0,0,0,0.18)";
-  ctx.lineWidth = 5;
+  ctx.strokeStyle = "rgba(0,0,0,0.16)";
+  ctx.lineWidth = 3.5;
   ctx.beginPath();
-  ctx.moveTo(link.x1 + 1, link.y1 + 1.5);
-  ctx.lineTo(link.x2 + 1, link.y2 + 1.5);
+  ctx.moveTo(x1 + 0.8, y1 + 1.2);
+  ctx.lineTo(x2 + 0.8, y2 + 1.2);
   ctx.stroke();
-  // White plastic bar
-  ctx.strokeStyle = "#f4f7fa";
-  ctx.lineWidth = 3.2;
+  ctx.strokeStyle = "#f2f5f8";
+  ctx.lineWidth = 2.4;
   ctx.beginPath();
-  ctx.moveTo(link.x1, link.y1);
-  ctx.lineTo(link.x2, link.y2);
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
   ctx.stroke();
-  // Edge highlight
-  ctx.strokeStyle = "rgba(255,255,255,0.95)";
-  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = "rgba(255,255,255,0.9)";
+  ctx.lineWidth = 0.9;
   ctx.beginPath();
-  ctx.moveTo(link.x1, link.y1);
-  ctx.lineTo(link.x2, link.y2);
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
   ctx.stroke();
-  // Tiny joint pegs at each end
-  ctx.fillStyle = "#e8eef4";
-  ctx.strokeStyle = "rgba(120,130,140,0.7)";
-  ctx.lineWidth = 0.8;
+  ctx.fillStyle = "#eef2f6";
+  ctx.strokeStyle = "rgba(130,140,150,0.65)";
+  ctx.lineWidth = 0.7;
   for (const p of [
-    [link.x1, link.y1],
-    [link.x2, link.y2],
+    [x1, y1],
+    [x2, y2],
   ]) {
     ctx.beginPath();
-    ctx.arc(p[0], p[1], 2.4, 0, Math.PI * 2);
+    ctx.arc(p[0], p[1], 1.9, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
   }
@@ -270,7 +273,7 @@ export function drawTrain(ctx, train) {
           },
         ];
 
-  // White plastic coupler bars in the air gap (between body shells)
+  // Short white plastic coupler bars in the air gap between body shells
   {
     const powered = cars.find((c) => c.powered) || cars[0];
     const ord = [powered];
@@ -281,12 +284,15 @@ export function drawTrain(ctx, train) {
       const prev = ord[i - 1];
       const car = ord[i];
       if (car.coupled === false) continue;
-      // Ends sit just outside each body (half-length along heading)
-      const half = TRAIN_LENGTH * 0.48;
-      const x1 = prev.x - Math.cos(prev.ang) * half;
-      const y1 = prev.y - Math.sin(prev.ang) * half;
-      const x2 = car.x + Math.cos(car.ang) * half;
-      const y2 = car.y + Math.sin(car.ang) * half;
+      // Body half-length (mid cars slightly shorter visually)
+      const halfPrev =
+        TRAIN_LENGTH * ((prev.kind === "mid" ? 0.92 : 1) * 0.5);
+      const halfCar =
+        TRAIN_LENGTH * ((car.kind === "mid" ? 0.92 : 1) * 0.5);
+      const x1 = prev.x - Math.cos(prev.ang) * halfPrev;
+      const y1 = prev.y - Math.sin(prev.ang) * halfPrev;
+      const x2 = car.x + Math.cos(car.ang) * halfCar;
+      const y2 = car.y + Math.sin(car.ang) * halfCar;
       drawCouplerLink(ctx, { x1, y1, x2, y2 });
     }
   }

@@ -227,8 +227,8 @@ export function resetTrainHard(train) {
  */
 export function updateTrain(train, board, dt, bounds, opts = {}) {
   if (train.mode === TrainMode.IDLE || train.mode === TrainMode.STOPPED) {
-    // Still seat followers if multi-car while idle (visual)
-    if (train.cars?.length > 1) placeFollowers(train, { board, hard: true });
+    // Rigid seat while idle
+    if (train.cars?.length > 1) placeFollowers(train, { hard: true });
     return;
   }
 
@@ -240,11 +240,14 @@ export function updateTrain(train, board, dt, bounds, opts = {}) {
     stepOffRail(train, board, dt, bounds, opts);
   }
 
-  // Coupled followers trail the powered unit after physics step (rail-snapped)
+  // Coupled followers: rigid hitch always.
+  // On-rail → hard (fixed bar behind lead).
+  // Off-rail → whip (trailer swings when lead turns at walls).
   if (train.cars?.length > 1 || train.consistSpec?.length > 1) {
+    const off = train.mode === TrainMode.OFF_RAIL;
     placeFollowers(train, {
-      board,
-      hard: train.mode === TrainMode.ON_RAIL,
+      hard: !off,
+      whip: off,
     });
   }
 }
