@@ -582,6 +582,7 @@ function tryRerail(train, board) {
   train.cornerLockSteps = 0;
   // Seat multi-car chain immediately so trailers don't drag re-rail back off
   if (train.cars?.length > 1) {
-    placeFollowers(train, { hard: true, onRail: true, board });
+    // Dynamic import avoided — hitch first; on-rail step will arc-seat next frame
+    placeFollowers(train, { hard: true });
   }
 }

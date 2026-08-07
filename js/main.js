@@ -50,6 +50,7 @@ import {
   TrainMode,
   ensureConsist,
   placeFollowers,
+  placeFollowersOnRail,
   threeCarConsistSpec,
   setActiveEngine,
   hitTestCar,
@@ -516,7 +517,8 @@ function applyTrackLoadInfo(info) {
       }
     }
     trainPlaced = true;
-    placeFollowers(train, { hard: true, onRail: true, board });
+    if (train.pathRef) placeFollowersOnRail(train, board);
+    else placeFollowers(train, { hard: true });
   } else {
     trainPlaced = false;
     setHint("Track loaded but no rail found for the train — drag Engine onto a path.");
@@ -650,7 +652,8 @@ function placeTrainAtHint(hint, opts = {}) {
       hardReset: !!opts.hardReset,
       board,
     });
-    placeFollowers(train, { hard: true, onRail: true, board });
+    if (train.pathRef) placeFollowersOnRail(train, board);
+    else placeFollowers(train, { hard: true });
     trainPlaced = true;
     train.selected = false;
     running = false;
