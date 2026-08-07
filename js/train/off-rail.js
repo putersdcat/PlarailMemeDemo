@@ -16,7 +16,7 @@ import {
   RE_RAIL_ANGLE,
 } from "./constants.js";
 import { frontAxlePos, rearAxlePos, bodyFromFrontAxle } from "./pose.js";
-import { placeFollowers } from "./consist.js";
+import { placeFollowers, seatConsistHard } from "./consist.js";
 
 export const OFF_RAIL_DS = 2.5;
 /** Center-slider reference speed (for re-rail unlock distance). */
@@ -580,9 +580,10 @@ function tryRerail(train, board) {
   train.reRailDistLeft = 0;
   train.reRailCooldown = 0.55;
   train.cornerLockSteps = 0;
-  // Seat multi-car chain immediately so trailers don't drag re-rail back off
+  // Hard-seat the full consist behind the lead at FIXED hitch length.
+  // Never path-walk here: near wall/mouth walk fails and used to pile cars
+  // on the lead. Path-curve seating resumes after reRailCooldown.
   if (train.cars?.length > 1) {
-    // Dynamic import avoided — hitch first; on-rail step will arc-seat next frame
-    placeFollowers(train, { hard: true });
+    seatConsistHard(train);
   }
 }

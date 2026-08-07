@@ -21,6 +21,7 @@ import { leaveRails, stepOffRail } from "./train/off-rail.js";
 import {
   ensureConsist,
   placeFollowers,
+  seatConsistHard,
   getPoweredChain,
   threeCarConsistSpec,
   COUPLER_DIST,
@@ -77,6 +78,7 @@ export {
 export {
   ensureConsist,
   placeFollowers,
+  seatConsistHard,
   getPoweredChain,
   threeCarConsistSpec,
   COUPLER_DIST,
@@ -89,8 +91,6 @@ export {
   consistLinks,
   couplerLink,
 };
-
-// placeFollowersOnRail is exported at its declaration below
 
 export function placeTrainOnPath(train, hit, opts = {}) {
   if (!hit?.path) return false;
@@ -250,16 +250,23 @@ export function updateTrain(train, board, dt, bounds, opts = {}) {
   }
 
   // Coupled followers — always fixed hitch length.
-  // On-rail: hitch + path tangent (bends with track, no teleport/bungy).
-  // Off-rail: trailer whip.
+  // On-rail: path-walk behind lead (curves). Off-rail: trailer whip.
+  // Just after re-rail (cooldown): hard hitch only so cars don't jumble
+  // at path mouths / wall tips.
   if (train.cars?.length > 1 || train.consistSpec?.length > 1) {
     const off = train.mode === TrainMode.OFF_RAIL;
-    placeFollowers(train, {
-      hard: !off,
-      whip: off,
-      onRail: !off,
-      board: !off ? board : null,
-    });
+    const justRerailed =
+      !off && (train.reRailCooldown == null ? 0 : train.reRailCooldown) > 0.15;
+    if (justRerailed) {
+      placeFollowers(train, { hard: true, whip: false, onRail: false });
+    } else {
+      placeFollowers(train, {
+        hard: !off,
+        whip: off,
+        onRail: !off,
+        board: !off ? board : null,
+      });
+    }
   }
 }
 

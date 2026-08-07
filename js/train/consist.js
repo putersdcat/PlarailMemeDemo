@@ -45,8 +45,9 @@ function angDiffAbs(a, b) {
 
 /**
  * Walk a fixed path-length behind a world point along the track.
- * Uses only local path s-walk + geometric end hops (no score-based bungy).
- * Returns front-axle pose or null (caller falls back to hitch).
+ * Returns front-axle pose only if the full distPx was walked.
+ * If the path ends early (wall / dead-end), returns null so the caller
+ * uses a rigid hitch — never piles cars at the path mouth.
  */
 function walkTrackBehind(board, fromX, fromY, travelAng, distPx) {
   if (!board?.pathIndex?.length || !(distPx > 0)) return null;
@@ -55,13 +56,11 @@ function walkTrackBehind(board, fromX, fromY, travelAng, distPx) {
 
   let path = start.path;
   let s = start.s;
-  // Which way is "forward travel" on this path
   let tdir =
     angDiffAbs(travelAng, start.ang) <=
     angDiffAbs(travelAng, start.ang + Math.PI)
       ? 1
       : -1;
-  // Behind = opposite parameter direction
   let wdir = -tdir;
   let left = distPx;
   let guard = 0;
@@ -80,7 +79,6 @@ function walkTrackBehind(board, fromX, fromY, travelAng, distPx) {
     const moveAng =
       wdir > 0 ? pose.ang : normalizeAngle(pose.ang + Math.PI);
 
-    // Geometric hop to a neighboring path end (tight radius — no teleports)
     let best = null;
     for (const p of board.pathIndex) {
       if (!p.active || !p.points || p.points.length < 2) continue;
@@ -101,20 +99,29 @@ function walkTrackBehind(board, fromX, fromY, travelAng, distPx) {
       }
     }
     if (!best) {
-      // Can't hop — stop here (do not clamp-walk to 0 and pretend)
-      s = endS;
-      left = 0;
-      break;
+      // Incomplete walk — hitch fallback (do NOT seat at path end)
+      return null;
     }
     path = best.path;
     s = best.s;
     wdir = best.wdir;
   }
 
+  // Must have used the full coupler distance
+  if (left > 1.0) return null;
+
   s = Math.max(0, Math.min(1, s));
   const p = pointOnPolyline(path.points, s);
   const ang = matchTravelAng(travelAng, p.ang);
   return { x: p.x, y: p.y, ang };
+}
+
+/**
+ * Hard-seat the whole coupled chain on a straight rigid hitch behind the lead.
+ * Use on re-rail so mid/trail never collapse onto the lead at a path mouth.
+ */
+export function seatConsistHard(train) {
+  return placeFollowers(train, { hard: true, whip: false, onRail: false });
 }
 
 let nextCarId = 1;

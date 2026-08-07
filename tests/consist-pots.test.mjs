@@ -333,6 +333,59 @@ test("real-meme still loads as single-engine default", () => {
   assert(!info.consist);
 });
 
+test("re-rail hard-seats multi-car without pile-up on lead", () => {
+  // Near wall/mouth, path walk can fail; re-rail must use full hitch length.
+  const board = createBoard();
+  for (let i = 0; i < 3; i++) addPiece(board, "R01", i * UNIT, 80, 0);
+  rebuild(board);
+  const hit = closestPathPoint(board, UNIT, 80, 40);
+  assert(hit);
+  const train = createTrain();
+  train.consistSpec = threeCarConsistSpec();
+  placeTrainOnPath(train, hit, { dir: 1, hardReset: true, board });
+  // Simulate off-rail near the rail then re-rail via updateTrain
+  train.mode = TrainMode.OFF_RAIL;
+  train.pathRef = null;
+  train.vx = 0;
+  train.vy = 0;
+  train.ang = hit.ang;
+  train.x = hit.x;
+  train.y = hit.y;
+  train.speed = 180;
+  train.reRailDistLeft = 0;
+  train.offRailDistAcc = 0;
+  train.offRailStepsDone = 0;
+  train.offRailPreferAng = hit.ang;
+  train.vx = Math.cos(hit.ang) * 80;
+  train.vy = Math.sin(hit.ang) * 80;
+  const bounds = { minX: 0, minY: 0, maxX: 800, maxY: 400 };
+  let rerailed = false;
+  for (let i = 0; i < 90; i++) {
+    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+    if (train.mode === TrainMode.ON_RAIL) {
+      rerailed = true;
+      const d01 = Math.hypot(
+        train.cars[0].x - train.cars[1].x,
+        train.cars[0].y - train.cars[1].y
+      );
+      const d12 = Math.hypot(
+        train.cars[1].x - train.cars[2].x,
+        train.cars[1].y - train.cars[2].y
+      );
+      assert(
+        d01 > COUPLER_DIST * 0.75,
+        `mid piled on lead after re-rail d01=${d01}`
+      );
+      assert(
+        d12 > COUPLER_DIST * 0.75,
+        `trail piled on mid after re-rail d12=${d12}`
+      );
+      break;
+    }
+  }
+  assert(rerailed, "expected re-rail onto track");
+});
+
 test("placeTrainOnPath re-seat preserves uncouple and active engine", () => {
   // Skeptic: placeTrainOnPath nulling cars + ensureConsist undid uncouple/power.
   const board = createBoard();
