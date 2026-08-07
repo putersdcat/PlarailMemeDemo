@@ -130,10 +130,13 @@ export function placeTrainOnPath(train, hit, opts = {}) {
   } else if (!train.cars?.length && train.consistSpec?.length) {
     ensureConsist(train, train.consistSpec, { hard: true });
   }
-  // Seat followers: arc-length on rail when path known, else rigid hitch
+  // Fixed hitch (+ path heading when board/path available). Never path-walk teleport.
   if (train.cars?.length > 1) {
-    if (board && train.pathRef) placeFollowersOnRail(train, board);
-    else placeFollowers(train, { hard: true });
+    placeFollowers(train, {
+      hard: true,
+      onRail: !!(board && train.pathRef),
+      board: board && train.pathRef ? board : null,
+    });
   }
   return true;
 }
@@ -228,10 +231,12 @@ export function resetTrainHard(train) {
  */
 export function updateTrain(train, board, dt, bounds, opts = {}) {
   if (train.mode === TrainMode.IDLE || train.mode === TrainMode.STOPPED) {
-    // Prefer path seats when we still have a path; else rigid hitch
     if (train.cars?.length > 1) {
-      if (train.pathRef && board) placeFollowersOnRail(train, board);
-      else placeFollowers(train, { hard: true });
+      placeFollowers(train, {
+        hard: true,
+        onRail: !!(train.pathRef && board),
+        board: train.pathRef ? board : null,
+      });
     }
     return;
   }
@@ -244,159 +249,18 @@ export function updateTrain(train, board, dt, bounds, opts = {}) {
     stepOffRail(train, board, dt, bounds, opts);
   }
 
-  // Coupled followers:
-  // On-rail → fixed arc-length along path (no bungy, follows curves).
-  // Off-rail → trailer whip (swing when lead turns at walls).
+  // Coupled followers — always fixed hitch length.
+  // On-rail: hitch + path tangent (bends with track, no teleport/bungy).
+  // Off-rail: trailer whip.
   if (train.cars?.length > 1 || train.consistSpec?.length > 1) {
-    if (train.mode === TrainMode.ON_RAIL && board) {
-      placeFollowersOnRail(train, board);
-    } else {
-      placeFollowers(train, { hard: false, whip: true });
-    }
-  }
-}
-
-/**
- * Walk along the path network by a fixed path-length (px).
- * walkDir: +1 increases s, -1 decreases s (independent of lead travel).
- * Returns front-axle pose for the car traveling with travelDirOnPath.
- */
-function walkPathByParam(board, pathRef, s0, walkDir, distPx, travelDir) {
-  if (!pathRef || !board || !(distPx > 0)) return null;
-  let live =
-    board.pathIndex.find(
-      (p) =>
-        p.pieceId === pathRef.pieceId &&
-        p.id === (pathRef.pathId || pathRef.id) &&
-        p.active
-    ) || pathRef.path;
-  if (!live?.points?.length) return null;
-
-  let s = Math.max(0, Math.min(1, s0));
-  let remaining = distPx;
-  let guard = 0;
-  // walkDir: which way we move along the polyline parameter
-  let wdir = walkDir >= 0 ? 1 : -1;
-
-  while (remaining > 1e-6 && guard++ < 48) {
-    const len = live.length || 1e-6;
-    const avail = wdir > 0 ? (1 - s) * len : s * len;
-    if (remaining <= avail + 1e-9) {
-      s += (remaining / len) * wdir;
-      remaining = 0;
-      break;
-    }
-    remaining -= avail;
-    const exitHigh = wdir > 0;
-    const exitConn = exitHigh ? live.toC : live.fromC;
-    const endS = exitHigh ? 1 : 0;
-    const pose = pointOnPolyline(live.points, endS);
-    // Heading while walking in wdir through this exit
-    const moveAng =
-      wdir > 0 ? pose.ang : normalizeAngle(pose.ang + Math.PI);
-    const next = findNextPath(board, live, exitConn, pose, moveAng, {
-      dir: wdir,
+    const off = train.mode === TrainMode.OFF_RAIL;
+    placeFollowers(train, {
+      hard: !off,
+      whip: off,
+      onRail: !off,
+      board: !off ? board : null,
     });
-    if (!next) {
-      s = endS;
-      remaining = 0;
-      break;
-    }
-    live = next.path;
-    s = next.s;
-    // Continue walking in the parameter direction that matches moveAng entry
-    wdir = next.dir;
   }
-
-  s = Math.max(0, Math.min(1, s));
-  const p = pointOnPolyline(live.points, s);
-  // Car faces travel direction of the lead (not walk direction)
-  const tdir = travelDir >= 0 ? 1 : -1;
-  const ang = tdir > 0 ? p.ang : normalizeAngle(p.ang + Math.PI);
-  return {
-    x: p.x,
-    y: p.y,
-    ang,
-    path: live,
-    s,
-    dir: tdir,
-    pieceId: live.pieceId,
-    pathId: live.id,
-  };
-}
-
-/**
- * Seat coupled followers on the rail at fixed arc spacing behind the lead.
- * Path-length spacing is exact — no stretchy closest-point search.
- */
-export function placeFollowersOnRail(train, board) {
-  if (!train?.cars?.length || !board || !train.pathRef) {
-    placeFollowers(train, { hard: true });
-    return { spacingOk: false, minSpacing: 0 };
-  }
-  const chain = getPoweredChain(train);
-  if (chain.length < 2) return { spacingOk: true, minSpacing: 0 };
-
-  const powered = chain[0];
-  powered.x = train.x;
-  powered.y = train.y;
-  powered.ang = train.ang;
-  powered.powered = true;
-  powered.facing = 1;
-
-  // Lead front-axle path state
-  let pathRef = {
-    pieceId: train.pathRef.pieceId,
-    pathId: train.pathRef.pathId || train.pathRef.path?.id,
-    path: train.pathRef.path,
-  };
-  let s = train.s;
-  const leadDir = train.dir || 1;
-  // Behind lead = walk opposite to lead travel along the track
-  const behindWalk = leadDir > 0 ? -1 : 1;
-
-  let minSpacing = Infinity;
-  for (let i = 1; i < chain.length; i++) {
-    const car = chain[i];
-    const pose = walkPathByParam(
-      board,
-      pathRef,
-      s,
-      behindWalk,
-      COUPLER_DIST,
-      leadDir
-    );
-    if (!pose) {
-      placeFollowers(train, { hard: true });
-      return { spacingOk: false, minSpacing };
-    }
-    const body = bodyFromFrontAxle(pose.x, pose.y, pose.ang);
-    car.x = body.x;
-    car.y = body.y;
-    car.ang = pose.ang;
-    if (car.kind === "engine" && !car.powered) car.facing = -1;
-    if (car.kind === "mid") car.facing = 1;
-    car.pathRef = {
-      path: pose.path,
-      pieceId: pose.pieceId,
-      pathId: pose.pathId,
-    };
-    car.s = pose.s;
-    car.dir = pose.dir;
-
-    const prev = chain[i - 1];
-    const sp = Math.hypot(car.x - prev.x, car.y - prev.y);
-    if (sp < minSpacing) minSpacing = sp;
-
-    // Next follower is further behind this car's axle along the same track
-    pathRef = car.pathRef;
-    s = car.s;
-  }
-  if (!Number.isFinite(minSpacing)) minSpacing = 0;
-  return {
-    spacingOk: minSpacing > COUPLER_DIST * 0.45,
-    minSpacing,
-  };
 }
 
 

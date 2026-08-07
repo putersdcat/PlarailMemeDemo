@@ -8,7 +8,7 @@ import {
   FRONT_AXLE_OFFSET,
   REAR_AXLE_OFFSET,
 } from "./constants.js";
-import { normalizeAngle } from "../geometry.js";
+import { normalizeAngle, pointOnPolyline } from "../geometry.js";
 import { closestPathPoint } from "../track.js";
 
 /**
@@ -20,59 +20,101 @@ export const COUPLER_DIST = TRAIN_LENGTH + COUPLER_AIR_GAP;
 export const REAR_HITCH = TRAIN_LENGTH * 0.5 + COUPLER_AIR_GAP * 0.5;
 export const FRONT_HITCH = TRAIN_LENGTH * 0.5 + COUPLER_AIR_GAP * 0.5;
 
+/** Match path tangent to previous car travel (avoid 180° flips). */
+function matchTravelAng(prevAng, pathAng) {
+  const dFwd = Math.atan2(
+    Math.sin(prevAng - pathAng),
+    Math.cos(prevAng - pathAng)
+  );
+  const dRev = Math.atan2(
+    Math.sin(prevAng - (pathAng + Math.PI)),
+    Math.cos(prevAng - (pathAng + Math.PI))
+  );
+  if (Math.abs(dRev) < Math.abs(dFwd)) {
+    return normalizeAngle(pathAng + Math.PI);
+  }
+  return pathAng;
+}
+
+function angDiffAbs(a, b) {
+  let d = a - b;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return Math.abs(d);
+}
+
 /**
- * Find a rail seat for a follower ~couplerDist behind `prev`, snapped to path.
- * Picks path points so the car body follows curves instead of a straight tail.
+ * Walk a fixed path-length behind a world point along the track.
+ * Uses only local path s-walk + geometric end hops (no score-based bungy).
+ * Returns front-axle pose or null (caller falls back to hitch).
  */
-function findOnRailSeatBehind(board, prev, couplerDist) {
-  if (!board?.pathIndex?.length || !prev) return null;
-  let best = null;
-  let bestScore = Infinity;
-  // Fan of probes behind/around prev (covers curves and switch mouths)
-  for (let a = -1.15; a <= 1.15; a += 0.1) {
-    for (let t = 0.7; t <= 1.35; t += 0.08) {
-      const probeAng = prev.ang + a;
-      const px = prev.x - Math.cos(probeAng) * couplerDist * t;
-      const py = prev.y - Math.sin(probeAng) * couplerDist * t;
-      const hit = closestPathPoint(board, px, py, 44);
-      if (!hit || hit.dist > 30) continue;
+function walkTrackBehind(board, fromX, fromY, travelAng, distPx) {
+  if (!board?.pathIndex?.length || !(distPx > 0)) return null;
+  const start = closestPathPoint(board, fromX, fromY, 28);
+  if (!start?.path?.points?.length) return null;
 
-      // Align travel with prev (don't reverse unless needed)
-      let pathAng = hit.ang;
-      let dFwd = Math.atan2(
-        Math.sin(prev.ang - pathAng),
-        Math.cos(prev.ang - pathAng)
-      );
-      let dRev = Math.atan2(
-        Math.sin(prev.ang - (pathAng + Math.PI)),
-        Math.cos(prev.ang - (pathAng + Math.PI))
-      );
-      if (Math.abs(dRev) < Math.abs(dFwd)) {
-        pathAng = normalizeAngle(pathAng + Math.PI);
-      }
+  let path = start.path;
+  let s = start.s;
+  // Which way is "forward travel" on this path
+  let tdir =
+    angDiffAbs(travelAng, start.ang) <=
+    angDiffAbs(travelAng, start.ang + Math.PI)
+      ? 1
+      : -1;
+  // Behind = opposite parameter direction
+  let wdir = -tdir;
+  let left = distPx;
+  let guard = 0;
 
-      // Body center if front axle is on the path sample
-      const bx = hit.x - Math.cos(pathAng) * FRONT_AXLE_OFFSET;
-      const by = hit.y - Math.sin(pathAng) * FRONT_AXLE_OFFSET;
-      const dist = Math.hypot(bx - prev.x, by - prev.y);
-      // Prefer "behind" prev along travel (not ahead of the nose)
-      const along =
-        (bx - prev.x) * Math.cos(prev.ang) +
-        (by - prev.y) * Math.sin(prev.ang);
-      if (along > couplerDist * 0.25) continue; // too far forward
+  while (left > 0.5 && guard++ < 32) {
+    const len = path.length || 1e-6;
+    const avail = wdir > 0 ? (1 - s) * len : s * len;
+    if (left <= avail + 1e-6) {
+      s += wdir * (left / len);
+      left = 0;
+      break;
+    }
+    left -= avail;
+    const endS = wdir > 0 ? 1 : 0;
+    const pose = pointOnPolyline(path.points, endS);
+    const moveAng =
+      wdir > 0 ? pose.ang : normalizeAngle(pose.ang + Math.PI);
 
-      // Score: fixed spacing + on-rail + not ahead
-      const score =
-        Math.abs(dist - couplerDist) * 2.2 +
-        hit.dist * 4 +
-        Math.max(0, along) * 1.5;
-      if (score < bestScore) {
-        bestScore = score;
-        best = { x: bx, y: by, ang: pathAng, dist, railDist: hit.dist };
+    // Geometric hop to a neighboring path end (tight radius — no teleports)
+    let best = null;
+    for (const p of board.pathIndex) {
+      if (!p.active || !p.points || p.points.length < 2) continue;
+      if (p.pieceId === path.pieceId && p.id === path.id) continue;
+      for (const es of [0, 1]) {
+        const pe = pointOnPolyline(p.points, es);
+        const d = Math.hypot(pe.x - pose.x, pe.y - pose.y);
+        if (d > 32) continue;
+        const enterDir = es === 0 ? 1 : -1;
+        const entryAng =
+          enterDir > 0 ? pe.ang : normalizeAngle(pe.ang + Math.PI);
+        const err = angDiffAbs(entryAng, moveAng);
+        if (err > 1.1) continue;
+        const score = d + err * 25;
+        if (!best || score < best.score) {
+          best = { path: p, s: es, wdir: enterDir, score };
+        }
       }
     }
+    if (!best) {
+      // Can't hop — stop here (do not clamp-walk to 0 and pretend)
+      s = endS;
+      left = 0;
+      break;
+    }
+    path = best.path;
+    s = best.s;
+    wdir = best.wdir;
   }
-  return best;
+
+  s = Math.max(0, Math.min(1, s));
+  const p = pointOnPolyline(path.points, s);
+  const ang = matchTravelAng(travelAng, p.ang);
+  return { x: p.x, y: p.y, ang };
 }
 
 let nextCarId = 1;
@@ -182,23 +224,23 @@ export function getPoweredChain(train) {
 }
 
 /**
- * Place coupled followers.
+ * Place coupled followers with a **fixed-length** hitch (never elastic).
  *
- * Modes:
- * - onRail + board: each car snaps onto the track behind the previous one
- *   (follows curves — not a straight fixed tail). Spacing targets COUPLER_DIST.
- * - whip (off-rail): rigid trailer hitch so the chain swings at walls.
- * - hard without board: straight rigid hitch (fallback seat).
+ * - Always: front hitch of follower sits on rear hitch of previous car.
+ * - onRail + board: heading taken from nearby path so the consist bends
+ *   with the track (hinged, not a rigid straight bar, not a bungy search).
+ * - whip: trailer swing for off-rail wall hits (rate-limited).
+ *
+ * Never teleports cars via path-network walking — that caused disappear /
+ * re-rail pile-ups at path starts.
  */
 export function placeFollowers(train, opts = {}) {
   if (!train) return { spacingOk: true, minSpacing: 0 };
   const hard = !!opts.hard;
   const board = opts.board || null;
-  /** Off-rail wall slide: trailer whip. */
   const whip = opts.whip != null ? !!opts.whip : !hard;
-  /** Follow rail curves when on-rail (needs board). */
   const onRail =
-    opts.onRail != null ? !!opts.onRail : !!(board && hard && !whip);
+    opts.onRail != null ? !!opts.onRail : !!(board && !whip);
 
   if (!train.cars?.length) {
     if (train.consistSpec?.length) {
@@ -211,7 +253,6 @@ export function placeFollowers(train, opts = {}) {
   if (!chain.length) return { spacingOk: true, minSpacing: 0 };
   const powered = chain[0];
 
-  // Powered unit is the physics body
   powered.x = train.x;
   powered.y = train.y;
   powered.ang = train.ang;
@@ -223,55 +264,62 @@ export function placeFollowers(train, opts = {}) {
     const prev = chain[i - 1];
     const car = chain[i];
 
-    // --- On-rail: snap each car onto the path behind prev ---
+    // Fixed rear hitch on previous car (world)
+    const hitchX = prev.x - Math.cos(prev.ang) * REAR_HITCH;
+    const hitchY = prev.y - Math.sin(prev.ang) * REAR_HITCH;
+
+    let ang = prev.ang;
+
     if (onRail && board) {
-      const seat = findOnRailSeatBehind(board, prev, COUPLER_DIST);
-      if (seat) {
-        car.x = seat.x;
-        car.y = seat.y;
-        car.ang = seat.ang;
+      // Walk a fixed track length behind prev — seats on curves without bungy.
+      const axle = walkTrackBehind(
+        board,
+        prev.x,
+        prev.y,
+        prev.ang,
+        COUPLER_DIST
+      );
+      if (axle) {
+        // Path seat for front axle; spacing is fixed in arc-length (stable).
+        car.ang = axle.ang;
+        car.x = axle.x - Math.cos(axle.ang) * FRONT_AXLE_OFFSET;
+        car.y = axle.y - Math.sin(axle.ang) * FRONT_AXLE_OFFSET;
       } else {
-        // Fallback: rigid hitch if no path nearby (end of track)
-        const hitchX = prev.x - Math.cos(prev.ang) * REAR_HITCH;
-        const hitchY = prev.y - Math.sin(prev.ang) * REAR_HITCH;
+        // No path behind — rigid hitch fallback (never teleport)
         car.ang = prev.ang;
         car.x = hitchX - Math.cos(car.ang) * FRONT_HITCH;
         car.y = hitchY - Math.sin(car.ang) * FRONT_HITCH;
       }
-    } else {
-      // --- Off-rail whip OR hard straight hitch ---
-      const hitchX = prev.x - Math.cos(prev.ang) * REAR_HITCH;
-      const hitchY = prev.y - Math.sin(prev.ang) * REAR_HITCH;
-
-      let ang = prev.ang;
-      if (
-        whip &&
-        car.x != null &&
-        Number.isFinite(car.x) &&
-        Number.isFinite(car.y)
-      ) {
-        const dx = hitchX - car.x;
-        const dy = hitchY - car.y;
-        const d = Math.hypot(dx, dy);
-        if (d > 1e-3) {
-          const target = Math.atan2(dy, dx);
-          let da = target - (car.ang || prev.ang);
-          while (da > Math.PI) da -= Math.PI * 2;
-          while (da < -Math.PI) da += Math.PI * 2;
-          const maxTurn = 0.55;
-          if (da > maxTurn) da = maxTurn;
-          if (da < -maxTurn) da = -maxTurn;
-          ang = (car.ang || prev.ang) + da;
-        }
+    } else if (
+      whip &&
+      car.x != null &&
+      Number.isFinite(car.x) &&
+      Number.isFinite(car.y)
+    ) {
+      // Trailer whip: aim nose at hitch (rate-limited)
+      const dx = hitchX - car.x;
+      const dy = hitchY - car.y;
+      const d = Math.hypot(dx, dy);
+      if (d > 1e-3) {
+        const target = Math.atan2(dy, dx);
+        let da = target - (car.ang || prev.ang);
+        while (da > Math.PI) da -= Math.PI * 2;
+        while (da < -Math.PI) da += Math.PI * 2;
+        const maxTurn = 0.55;
+        if (da > maxTurn) da = maxTurn;
+        if (da < -maxTurn) da = -maxTurn;
+        ang = (car.ang || prev.ang) + da;
       }
-
-      // Rigid hitch length
       car.ang = ang;
       car.x = hitchX - Math.cos(ang) * FRONT_HITCH;
       car.y = hitchY - Math.sin(ang) * FRONT_HITCH;
+    } else {
+      // Hard straight hitch
+      car.ang = prev.ang;
+      car.x = hitchX - Math.cos(car.ang) * FRONT_HITCH;
+      car.y = hitchY - Math.sin(car.ang) * FRONT_HITCH;
     }
 
-    // Non-powered engines face backward (visual only)
     if (car.kind === "engine" && !car.powered) car.facing = -1;
     if (car.kind === "mid") car.facing = 1;
 
@@ -279,10 +327,10 @@ export function placeFollowers(train, opts = {}) {
     if (sp < minSpacing) minSpacing = sp;
   }
   if (!Number.isFinite(minSpacing)) minSpacing = 0;
-  const coupledCount = chain.length;
+  // Hitch modes ≈ exact; on-rail arc seat may vary slightly in chord length
   const spacingOk =
-    coupledCount < 2 ||
-    (minSpacing > COUPLER_DIST * 0.45 && minSpacing < COUPLER_DIST * 1.6);
+    chain.length < 2 ||
+    (minSpacing > COUPLER_DIST * 0.55 && minSpacing < COUPLER_DIST * 1.45);
   return { spacingOk, minSpacing };
 }
 
