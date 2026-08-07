@@ -21,11 +21,16 @@ import { leaveRails, stepOffRail } from "./train/off-rail.js";
 import {
   ensureConsist,
   placeFollowers,
-  knockPots,
   threeCarConsistSpec,
-  loadPotsFromLayout,
   COUPLER_DIST,
-  POT_RADIUS,
+  uncoupleCar,
+  tryRecoupleCar,
+  setActiveEngine,
+  hitTestCar,
+  spawnFreeCar,
+  snapCarPoseToHit,
+  consistLinks,
+  couplerLink,
 } from "./train/consist.js";
 
 export {
@@ -71,11 +76,16 @@ export {
 export {
   ensureConsist,
   placeFollowers,
-  knockPots,
   threeCarConsistSpec,
-  loadPotsFromLayout,
   COUPLER_DIST,
-  POT_RADIUS,
+  uncoupleCar,
+  tryRecoupleCar,
+  setActiveEngine,
+  hitTestCar,
+  spawnFreeCar,
+  snapCarPoseToHit,
+  consistLinks,
+  couplerLink,
 };
 
 export function placeTrainOnPath(train, hit, opts = {}) {
@@ -191,11 +201,11 @@ export function resetTrainHard(train) {
   train.cornerLockSteps = 0;
   train.cornerLockUx = null;
   train.cornerLockUy = null;
-  train.potHit = false;
+  train.selectedCarId = null;
   // Keep consistSpec; re-seat cars if multi-unit
   if (train.consistSpec?.length) {
-    ensureConsist(train, train.consistSpec);
-    placeFollowers(train);
+    ensureConsist(train, train.consistSpec, { hard: true });
+    placeFollowers(train, { hard: true });
   } else {
     train.cars = null;
   }
@@ -214,7 +224,6 @@ export function updateTrain(train, board, dt, bounds, opts = {}) {
   }
 
   if (train.reRailCooldown > 0) train.reRailCooldown -= dt;
-  train.potHit = false;
 
   if (train.mode === TrainMode.ON_RAIL) {
     stepOnRail(train, board, dt);
@@ -222,16 +231,9 @@ export function updateTrain(train, board, dt, bounds, opts = {}) {
     stepOffRail(train, board, dt, bounds, opts);
   }
 
-  // Linked cars trail the lead after physics step
+  // Coupled followers trail the powered unit after physics step
   if (train.cars?.length > 1 || train.consistSpec?.length > 1) {
-    ensureConsist(train);
     placeFollowers(train);
-  }
-
-  // Knock freestanding pots / dome with any car body
-  if (board?.pots?.length) {
-    const n = knockPots(train, board, dt);
-    if (n > 0) train.potHit = true;
   }
 }
 

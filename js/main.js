@@ -34,6 +34,7 @@ import {
   getPiece,
   rebuild,
   normalizePieceColor,
+  rotateSelectionAboutCenter,
 } from "./track.js";
 import {
   createTrain,
@@ -50,8 +51,14 @@ import {
   ensureConsist,
   placeFollowers,
   threeCarConsistSpec,
+  setActiveEngine,
+  hitTestCar,
+  uncoupleCar,
+  tryRecoupleCar,
+  spawnFreeCar,
+  snapCarPoseToHit,
 } from "./train.js";
-import { resizeCanvas, drawScene, drawPaletteIcon } from "./render.js";
+import { resizeCanvas, drawScene, drawPaletteIcon, drawPaletteTrainIcon } from "./render.js";
 import { loadRealMemeTrack, TRACK_CATALOG, getTrackById } from "./presets.js";
 import {
   unlockAudio,
@@ -143,7 +150,9 @@ const paletteEl = document.getElementById("palette");
 function refreshPaletteActive() {
   document.querySelectorAll(".piece-btn").forEach((btn) => {
     if (btn.dataset.tool === "train") {
-      btn.classList.toggle("active", trainTool);
+      btn.classList.toggle("active", trainTool && carTool === "engine");
+    } else if (btn.dataset.tool === "midcar") {
+      btn.classList.toggle("active", trainTool && carTool === "mid");
     } else {
       btn.classList.toggle("active", btn.dataset.type === paletteTool && !trainTool);
     }
@@ -160,30 +169,35 @@ function clearSelection() {
   board.selectedId = null;
 }
 
+/** carTool: null | "engine" | "mid" — which rolling stock the palette places */
+let carTool = null;
+
 function ensurePaletteButtons() {
   paletteEl.innerHTML = "";
 
-  // ── Train asset (drag onto rails) ──
+  // ── Engine (drag onto rails) — rendered icon, not emoji ──
   {
     const btn = document.createElement("button");
     btn.className = "piece-btn train-btn";
     btn.type = "button";
     btn.dataset.tool = "train";
     btn.innerHTML = `
-      <div class="train-icon" aria-hidden="true">🚂</div>
+      <canvas class="train-icon-canvas" width="72" height="52" aria-hidden="true"></canvas>
       <div class="meta">
-        <strong>Train</strong>
-        <span>Drag onto a rail · Start / Stop</span>
+        <strong>Engine</strong>
+        <span>Drag onto a rail · powered unit</span>
       </div>`;
+    drawPaletteTrainIcon(btn.querySelector("canvas"), "engine");
     btn.addEventListener("click", (e) => {
       if (drag?.kind === "train" || drag?.suppressClick) return;
       trainTool = !trainTool;
+      carTool = trainTool ? "engine" : null;
       if (trainTool) paletteTool = null;
       refreshPaletteActive();
       setHint(
         trainTool
-          ? "Train tool: left-drag onto a rail (or click a path). Start runs it."
-          : "Train tool off."
+          ? "Engine tool: left-drag onto a rail. 🦄 on a selected engine switches which is powered."
+          : "Engine tool off."
       );
     });
     btn.addEventListener("pointerdown", (e) => {
@@ -191,9 +205,49 @@ function ensurePaletteButtons() {
       e.preventDefault();
       e.stopPropagation();
       trainTool = true;
+      carTool = "engine";
       paletteTool = null;
       refreshPaletteActive();
-      beginTrainDrag(e);
+      beginTrainDrag(e, null, { carKind: "engine" });
+    });
+    paletteEl.appendChild(btn);
+  }
+
+  // ── Middle car (drag onto rails like engine) ──
+  {
+    const btn = document.createElement("button");
+    btn.className = "piece-btn train-btn";
+    btn.type = "button";
+    btn.dataset.tool = "midcar";
+    btn.innerHTML = `
+      <canvas class="train-icon-canvas" width="72" height="52" aria-hidden="true"></canvas>
+      <div class="meta">
+        <strong>Mid car</strong>
+        <span>Drag onto a rail · couple behind engine</span>
+      </div>`;
+    drawPaletteTrainIcon(btn.querySelector("canvas"), "mid");
+    btn.addEventListener("click", (e) => {
+      if (drag?.kind === "train" || drag?.suppressClick) return;
+      const on = carTool !== "mid";
+      trainTool = on;
+      carTool = on ? "mid" : null;
+      if (on) paletteTool = null;
+      refreshPaletteActive();
+      setHint(
+        on
+          ? "Mid car tool: left-drag onto a rail. Select + Delete uncouples."
+          : "Mid car tool off."
+      );
+    });
+    btn.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      trainTool = true;
+      carTool = "mid";
+      paletteTool = null;
+      refreshPaletteActive();
+      beginTrainDrag(e, null, { carKind: "mid" });
     });
     paletteEl.appendChild(btn);
   }
@@ -246,8 +300,19 @@ document.getElementById("btn-rotate").addEventListener("click", () => {
   if (ghost) {
     rotateGhost(1);
   } else {
-    for (const id of selectedIds.size ? selectedIds : [board.selectedId]) {
-      if (id) rotatePiece(board, id, 1);
+    const ids = selectedIds.size
+      ? [...selectedIds]
+      : board.selectedId
+        ? [board.selectedId]
+        : [];
+    if (ids.length > 1) {
+      // Rigid group rotate about shared visual-pivot centroid
+      rotateSelectionAboutCenter(board, ids, 1);
+      setHint(`Rotated ${ids.length} pieces about group center.`);
+    } else {
+      for (const id of ids) {
+        if (id) rotatePiece(board, id, 1);
+      }
     }
     persistLayout();
   }
@@ -255,6 +320,20 @@ document.getElementById("btn-rotate").addEventListener("click", () => {
 document.getElementById("btn-flip").addEventListener("click", () => {
   if (ghost) {
     flipGhost();
+  } else if (
+    trainPlaced &&
+    train.selectedCarId &&
+    train.cars?.some((c) => c.id === train.selectedCarId && c.kind === "engine")
+  ) {
+    // Gender control on a selected engine → make it the powered unit
+    const ok = setActiveEngine(train, train.selectedCarId);
+    train.selected = true;
+    clearSelection();
+    setHint(
+      ok
+        ? `Powered engine switched. Green ring = active. Only one engine drives.`
+        : "Could not switch powered engine."
+    );
   } else if (trainPlaced && (train.selected || (!board.selectedId && selectedIds.size === 0))) {
     // Flip train travel direction when train is the selection target
     flipTrainDirection(train, board);
@@ -286,6 +365,15 @@ document.getElementById("btn-mirror").addEventListener("click", () => {
   }
 });
 document.getElementById("btn-delete").addEventListener("click", () => {
+  // Uncouple selected car (separable multi-car)
+  if (trainPlaced && train.selectedCarId) {
+    const id = train.selectedCarId;
+    if (uncoupleCar(train, id)) {
+      train.selectedCarId = id;
+      setHint("Car uncoupled. Drag to a rail to re-seat · bring near engine to recouple later.");
+      return;
+    }
+  }
   const ids = selectedIds.size
     ? [...selectedIds]
     : board.selectedId
@@ -297,6 +385,13 @@ document.getElementById("btn-delete").addEventListener("click", () => {
   setHint(ids.length ? `Deleted ${ids.length} piece(s).` : "Nothing selected.");
 });
 document.getElementById("btn-clear").addEventListener("click", () => {
+  if (
+    !window.confirm(
+      "Clear the entire track board? This cannot be undone (autosave will also be cleared)."
+    )
+  ) {
+    return;
+  }
   clearBoard(board);
   resetTrainHard(train);
   trainPlaced = false;
@@ -326,8 +421,25 @@ if (trackSelect) {
   }
 }
 
+/** Shift layout so northern-most track sits against the playfield top wall. */
+function northAlignBoardToWall(targetMinY = 56) {
+  if (!board.pieces.length) return 0;
+  let minY = Infinity;
+  for (const p of board.pieces) minY = Math.min(minY, p.y);
+  // Also consider walls if present
+  for (const w of board.walls || []) {
+    minY = Math.min(minY, w.y1, w.y2);
+  }
+  if (!Number.isFinite(minY)) return 0;
+  const dy = targetMinY - minY;
+  if (Math.abs(dy) < 0.5) return 0;
+  for (const p of board.pieces) p.y += dy;
+  rebuild(board);
+  return dy;
+}
+
 function applyTrackLoadInfo(info) {
-  // Multi-car consist (lead + mid + trailing pulled engine)
+  // Multi-car consist (lead + mid + trailing reverse-facing engine)
   if (info?.consist?.length) {
     train.consistSpec = info.consist;
     train.cars = null; // drop stale poses before seat
@@ -339,6 +451,10 @@ function applyTrackLoadInfo(info) {
   // Explicit true/false so switching back from arntenoughrails turns walls off
   if (info && Object.prototype.hasOwnProperty.call(info, "solidPlayfield")) {
     setSolidPlayfield(!!info.solidPlayfield);
+  }
+  // Not-enough-rails: pin north edge of track to the solid wall for video re-rail
+  if (info?.northAlign || info?.solidPlayfield) {
+    northAlignBoardToWall(56);
   }
   clearSelection();
   placeTrainAtHint(info.trainHint);
@@ -811,17 +927,34 @@ function onPointerDown(e) {
     return;
   }
 
-  // Click existing train body first (select + drag along track)
-  if (hitTestTrain(train, p.x, p.y, trainPlaced)) {
-    running = false;
-    stopTrain(train);
-    train.selected = true;
-    clearSelection();
-    beginTrainDrag(e, p, { fromExisting: true });
-    setHint("Train selected. Drag along rails · 🦄 / F flips direction · Start runs.");
-    return;
+  // Click existing train / car body first (select + drag along track)
+  if (trainPlaced) {
+    const carHit = hitTestCar(train, p.x, p.y);
+    if (carHit || hitTestTrain(train, p.x, p.y, trainPlaced)) {
+      running = false;
+      stopTrain(train);
+      train.selected = true;
+      train.selectedCarId = carHit?.id || train.poweredId || train.cars?.[0]?.id || null;
+      // Mark selection on cars
+      if (train.cars) {
+        for (const c of train.cars) c.selected = c.id === train.selectedCarId;
+      }
+      clearSelection();
+      beginTrainDrag(e, p, {
+        fromExisting: true,
+        carId: train.selectedCarId,
+      });
+      const powered =
+        train.cars?.find((c) => c.powered)?.id || train.poweredId || "lead";
+      setHint(
+        `Car selected (${train.selectedCarId || "lead"}). 🦄 = switch powered engine (active: ${powered}). Delete uncouples. Drag along rails.`
+      );
+      return;
+    }
   }
   train.selected = false;
+  train.selectedCarId = null;
+  if (train.cars) for (const c of train.cars) c.selected = false;
 
   // Hit-test piece / lever
   const hit = hitTestPiece(board, p.x, p.y);
@@ -967,6 +1100,7 @@ function beginTrainDrag(e, worldP, opts = {}) {
     y: p.y,
     onRail: false,
     dir: train.dir || 1,
+    carKind: opts.carKind || carTool || "engine",
   };
   drag = {
     kind: "train",
@@ -975,6 +1109,8 @@ function beginTrainDrag(e, worldP, opts = {}) {
     startX: e.clientX,
     startY: e.clientY,
     fromExisting: !!opts.fromExisting,
+    carKind: opts.carKind || carTool || "engine",
+    carId: opts.carId || null,
   };
   canvas.classList.add("dragging");
   try {
@@ -1201,25 +1337,72 @@ function onPointerUp(e) {
     const p = canvasPoint(e);
     updateTrainGhost(p.x, p.y);
     if (trainGhost?.onRail && trainGhost.hit) {
-      placeTrainOnPath(train, trainGhost.hit, {
-        dir: train.dir || 1,
-        keepDir: true,
-      });
-      trainPlaced = true;
-      train.selected = true;
+      const kind = drag.carKind || carTool || "engine";
+      if (kind === "mid" && !drag.fromExisting) {
+        // Place free mid car snapped to rail
+        if (!train.cars?.length) {
+          // Need an engine first for a consist — still place mid as free unit
+          train.cars = train.cars || [];
+        }
+        const car = spawnFreeCar(
+          train,
+          "mid",
+          trainGhost.hit.x,
+          trainGhost.hit.y,
+          trainGhost.ang || 0
+        );
+        snapCarPoseToHit(car, trainGhost.hit, train.dir || 1);
+        car.coupled = false;
+        trainPlaced = true;
+        train.selected = true;
+        train.selectedCarId = car.id;
+        setHint(
+          "Mid car on rails. Bring near a train coupler to link · Delete uncouples · 🦄 on an engine switches power."
+        );
+      } else if (drag.fromExisting && drag.carId && train.cars) {
+        // Re-seat a selected car
+        const car = train.cars.find((c) => c.id === drag.carId);
+        if (car && !car.powered) {
+          snapCarPoseToHit(car, trainGhost.hit, train.dir || 1);
+          if (tryRecoupleCar(train, car.id)) {
+            setHint("Car re-seated and recoupled.");
+          } else {
+            setHint("Car re-seated on rail (still uncoupled).");
+          }
+        } else {
+          placeTrainOnPath(train, trainGhost.hit, {
+            dir: train.dir || 1,
+            keepDir: true,
+          });
+          setHint("Engine on rails. Start runs · 🦄 flips direction or switches power.");
+        }
+        trainPlaced = true;
+        train.selected = true;
+      } else {
+        placeTrainOnPath(train, trainGhost.hit, {
+          dir: train.dir || 1,
+          keepDir: true,
+        });
+        trainPlaced = true;
+        train.selected = true;
+        running = false;
+        clearSelection();
+        if (train.consistSpec?.length) {
+          ensureConsist(train, train.consistSpec, { hard: true });
+          placeFollowers(train, { hard: true });
+        }
+        setHint(
+          "Engine on rails. 🦄 / F flips direction (or switches powered engine when a car is selected) · Start runs."
+        );
+      }
       running = false;
       clearSelection();
-      setHint(
-        "Train on rails. 🦄 / F flips direction · Start / Space runs."
-      );
     } else {
-      setHint("Drop the train on a blue rail centerline (green ring = snapped).");
-      if (!drag.fromExisting) {
-        // Cancelled new place — leave previous train if any
-      }
+      setHint("Drop on a blue rail centerline (green ring = snapped).");
     }
     trainGhost = null;
     trainTool = false;
+    carTool = null;
     refreshPaletteActive();
     drag = { suppressClick: true };
     setTimeout(() => {

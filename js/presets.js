@@ -390,7 +390,7 @@ export function loadRealMemeTrack(board) {
 
 /**
  * Load godi3 "not enough rails" meme track — sparse incomplete rails,
- * multi-car consist, solid walls, green dome prop (video).
+ * multi-car consist (lead + mid + reverse trail engine), solid walls.
  * https://x.com/godi3/status/945956752515670016
  */
 export function loadArntenoughrailsTrack(board) {
@@ -404,12 +404,12 @@ export function loadArntenoughrailsTrack(board) {
   return {
     ok: result.ok,
     pieceCount: result.pieceCount,
-    potCount: result.potCount ?? board.pots?.length ?? 0,
     trainHint: th,
     speed: th.speed,
     solidPlayfield: true,
+    northAlign: true,
     consist,
-    note: `Loaded “Not enough rails” (${result.pieceCount} pieces, 3-car train, solid walls). Incomplete rails + multi-car chaos — Start and enjoy.`,
+    note: `Loaded “Not enough rails” (${result.pieceCount} pieces, 3-car train, solid walls). Mid car in palette · 🦄 switches powered engine · Delete uncouples.`,
   };
 }
 

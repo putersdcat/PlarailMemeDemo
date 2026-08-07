@@ -22,14 +22,17 @@ function roundRect(ctx, x, y, w, h, r) {
 
 /**
  * Draw one car body. kind: "engine" | "mid". Engines get nose glass; mid is boxy.
+ * car.facing === -1 draws the same engine body reversed (trailing double-header).
  */
 export function drawTrainCar(ctx, car, mode = TrainMode.IDLE) {
   const { x, y, ang } = car;
   const kind = car.kind || (car.role === "mid" ? "mid" : "engine");
   const isMid = kind === "mid";
+  const facing = car.facing == null ? 1 : car.facing;
   ctx.save();
   ctx.translate(x, y);
-  ctx.rotate(ang);
+  // facing -1: reverse visual body so nose points opposite travel ang
+  ctx.rotate(ang + (facing < 0 ? Math.PI : 0));
 
   const L = TRAIN_LENGTH * (isMid ? 0.92 : 1);
   const R = TRAIN_RADIUS;
@@ -181,6 +184,51 @@ export function drawTrainCar(ctx, car, mode = TrainMode.IDLE) {
     ctx.stroke();
   }
 
+  // Powered engine highlight ring
+  if (car.powered) {
+    ctx.strokeStyle = "rgba(80, 200, 120, 0.85)";
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, L * 0.5, R + 5, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (car.selected) {
+    ctx.strokeStyle = "rgba(58, 143, 214, 0.9)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, L * 0.5, R + 5, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+/** Draw visible metal coupler bar between two cars. */
+export function drawCouplerLink(ctx, link) {
+  if (!link) return;
+  ctx.save();
+  ctx.strokeStyle = "rgba(40, 48, 58, 0.95)";
+  ctx.lineWidth = 4.5;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(link.x1, link.y1);
+  ctx.lineTo(link.x2, link.y2);
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(180, 190, 200, 0.95)";
+  ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  ctx.moveTo(link.x1, link.y1);
+  ctx.lineTo(link.x2, link.y2);
+  ctx.stroke();
+  // Joint knobs
+  ctx.fillStyle = "#2a323c";
+  for (const p of [
+    [link.x1, link.y1],
+    [link.x2, link.y2],
+  ]) {
+    ctx.beginPath();
+    ctx.arc(p[0], p[1], 3.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.restore();
 }
 
@@ -198,62 +246,70 @@ export function drawTrain(ctx, train) {
             ang: train.ang,
             role: "lead",
             kind: "engine",
+            facing: 1,
+            powered: true,
           },
         ];
+
+  // Coupler links under bodies
+  const powered =
+    cars.find((c) => c.powered) || cars[0];
+  const chain = [
+    powered,
+    ...cars.filter((c) => c !== powered && c.coupled !== false),
+  ];
+  // Only draw links between consecutive coupled cars
+  for (let i = 1; i < cars.length; i++) {
+    // rebuild ordered chain from powered
+  }
+  {
+    const ord = [powered];
+    for (const c of cars) {
+      if (c !== powered && c.coupled !== false) ord.push(c);
+    }
+    for (let i = 1; i < ord.length; i++) {
+      if (!ord[i].coupled && ord[i].coupled !== undefined) continue;
+      const prev = ord[i - 1];
+      const car = ord[i];
+      if (car.coupled === false) continue;
+      const x1 = prev.x - Math.cos(prev.ang) * (TRAIN_LENGTH * 0.42);
+      const y1 = prev.y - Math.sin(prev.ang) * (TRAIN_LENGTH * 0.42);
+      const x2 = car.x + Math.cos(car.ang) * (TRAIN_LENGTH * 0.38);
+      const y2 = car.y + Math.sin(car.ang) * (TRAIN_LENGTH * 0.38);
+      drawCouplerLink(ctx, { x1, y1, x2, y2 });
+    }
+  }
+
   // Draw trail first so lead paints on top
   for (let i = cars.length - 1; i >= 0; i--) {
-    drawTrainCar(ctx, cars[i], train.mode);
+    const c = { ...cars[i] };
+    if (train.selectedCarId && c.id === train.selectedCarId) c.selected = true;
+    drawTrainCar(ctx, c, train.mode);
   }
 }
 
-/** Green dome / ceramic pot freestanding obstacle. */
-export function drawPot(ctx, pot) {
-  if (!pot) return;
-  const r = pot.r || 22;
+/** Render a small train icon for the palette (same idea as track piece canvases). */
+export function drawPaletteTrainIcon(canvas, kind = "engine") {
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = "#1e2229";
+  ctx.fillRect(0, 0, w, h);
+  const car = {
+    x: w / 2,
+    y: h / 2,
+    ang: 0,
+    kind: kind === "mid" ? "mid" : "engine",
+    facing: kind === "trail" ? -1 : 1,
+    role: kind === "mid" ? "mid" : "lead",
+    powered: kind === "engine",
+  };
   ctx.save();
-  ctx.translate(pot.x, pot.y);
-  ctx.rotate(pot.ang || 0);
-  // Shadow
-  ctx.fillStyle = "rgba(0,0,0,0.18)";
-  ctx.beginPath();
-  ctx.ellipse(2, 3, r * 0.95, r * 0.55, 0, 0, Math.PI * 2);
-  ctx.fill();
-  // Dome body
-  const col = pot.color || "#5aaf3a";
-  const grd = ctx.createRadialGradient(-r * 0.25, -r * 0.3, r * 0.1, 0, 0, r);
-  grd.addColorStop(0, pot.knocked ? "#c4d86a" : "#8fd45a");
-  grd.addColorStop(0.55, col);
-  grd.addColorStop(1, pot.knocked ? "#4a6b28" : "#2f6b1e");
-  ctx.beginPath();
-  ctx.arc(0, 0, r, 0, Math.PI * 2);
-  ctx.fillStyle = grd;
-  ctx.fill();
-  ctx.strokeStyle = "rgba(30,60,20,0.55)";
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-  // Tunnel mouth (green dome vibe)
-  if (pot.kind === "dome" || pot.kind === "tunnel") {
-    ctx.fillStyle = "rgba(20, 30, 25, 0.85)";
-    ctx.beginPath();
-    ctx.ellipse(0, r * 0.15, r * 0.42, r * 0.38, 0, 0, Math.PI * 2);
-    ctx.fill();
-  } else {
-    // Pot rim
-    ctx.strokeStyle = "rgba(255,255,255,0.25)";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(0, -r * 0.15, r * 0.45, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-  if (pot.knocked) {
-    ctx.strokeStyle = "rgba(255, 200, 80, 0.7)";
-    ctx.lineWidth = 2;
-    ctx.setLineDash([4, 3]);
-    ctx.beginPath();
-    ctx.arc(0, 0, r + 4, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.setLineDash([]);
-  }
+  // Scale down for icon
+  ctx.translate(w / 2, h / 2);
+  ctx.scale(0.42, 0.42);
+  ctx.translate(-w / 2, -h / 2);
+  drawTrainCar(ctx, { ...car, x: w / 2, y: h / 2 }, TrainMode.IDLE);
   ctx.restore();
 }
-

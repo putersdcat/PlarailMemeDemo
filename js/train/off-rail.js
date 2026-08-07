@@ -15,7 +15,8 @@ import {
   RE_RAIL_LATERAL,
   RE_RAIL_ANGLE,
 } from "./constants.js";
-import { frontAxlePos, bodyFromFrontAxle } from "./pose.js";
+import { frontAxlePos, rearAxlePos, bodyFromFrontAxle } from "./pose.js";
+import { placeFollowers } from "./consist.js";
 
 export const OFF_RAIL_DS = 2.5;
 /** Center-slider reference speed (for re-rail unlock distance). */
@@ -524,8 +525,21 @@ export function resolveCircleSegment(cx, cy, radius, seg) {
 }
 
 function tryRerail(train, board) {
+  // Probe front axle, body, and rear — multi-car wall slides often put only
+  // the body near the rail while the front axle is still slightly off.
   const fa = frontAxlePos(train);
-  const hit = closestPathPoint(board, fa.x, fa.y, RE_RAIL_LATERAL + 4);
+  const ra = rearAxlePos(train);
+  const probes = [
+    { x: fa.x, y: fa.y, max: RE_RAIL_LATERAL + 6 },
+    { x: train.x, y: train.y, max: RE_RAIL_LATERAL + 8 },
+    { x: ra.x, y: ra.y, max: RE_RAIL_LATERAL + 6 },
+  ];
+  let hit = null;
+  for (const p of probes) {
+    const h = closestPathPoint(board, p.x, p.y, p.max);
+    if (!h) continue;
+    if (!hit || h.dist < hit.dist) hit = h;
+  }
   if (!hit) return;
 
   const pathAng = hit.ang;
@@ -534,10 +548,16 @@ function tryRerail(train, board) {
   const best = Math.min(d1, d2);
 
   const nearMouth = hit.s < 0.12 || hit.s > 0.88;
-  const angLimit = nearMouth ? RE_RAIL_ANGLE * 1.15 : RE_RAIL_ANGLE * 0.72;
-  const latLimit = nearMouth ? RE_RAIL_LATERAL + 3 : RE_RAIL_LATERAL * 0.75;
+  // Slightly looser near mouths and when multi-car (wall adjacency)
+  const multi = !!(train.cars && train.cars.length > 1);
+  const angLimit =
+    (nearMouth ? RE_RAIL_ANGLE * 1.2 : RE_RAIL_ANGLE * 0.78) *
+    (multi ? 1.12 : 1);
+  const latLimit =
+    (nearMouth ? RE_RAIL_LATERAL + 5 : RE_RAIL_LATERAL * 0.9) *
+    (multi ? 1.15 : 1);
   if (hit.dist > latLimit || best > angLimit) return;
-  if (!nearMouth && best > (28 * Math.PI) / 180) return;
+  if (!nearMouth && best > (32 * Math.PI) / 180) return;
 
   train.mode = TrainMode.ON_RAIL;
   train.pathRef = {
@@ -560,4 +580,8 @@ function tryRerail(train, board) {
   train.reRailDistLeft = 0;
   train.reRailCooldown = 0.55;
   train.cornerLockSteps = 0;
+  // Seat multi-car chain immediately so trailers don't drag re-rail back off
+  if (train.cars?.length > 1) {
+    placeFollowers(train, { hard: true });
+  }
 }

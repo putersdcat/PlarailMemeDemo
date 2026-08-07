@@ -11,6 +11,7 @@ import {
   buildTemplate,
   worldGeometry,
   worldPivot,
+  originFromWorldPivot,
   rotateAroundVisualPivot,
   flipAroundVisualPivot,
   mirrorAroundVisualPivot,
@@ -30,8 +31,6 @@ export function createBoard() {
     walls: [],
     pathIndex: [],
     connectors: [],
-    /** Freestanding knockable pots / domes (layout props, not track pieces). */
-    pots: [],
   };
 }
 
@@ -84,13 +83,13 @@ export function removePiece(board, id) {
 export function clearBoard(board) {
   board.pieces = [];
   board.selectedId = null;
-  board.pots = [];
+  if (board.pots) board.pots = []; // legacy field ignored if present
   rebuild(board);
 }
 
 /** Serialize board to a plain JSON-friendly object (native layout format). */
 export function serializeBoard(board) {
-  const out = {
+  return {
     format: "plarail-meme-layout",
     version: 1,
     pieces: board.pieces.map((p) => ({
@@ -105,18 +104,6 @@ export function serializeBoard(board) {
       color: normalizePieceColor(p.color),
     })),
   };
-  if (board.pots?.length) {
-    out.pots = board.pots.map((p) => ({
-      id: p.id,
-      x: p.x,
-      y: p.y,
-      r: p.r,
-      kind: p.kind || "pot",
-      color: p.color,
-      knocked: !!p.knocked,
-    }));
-  }
-  return out;
 }
 
 /**
@@ -164,26 +151,10 @@ export function loadBoard(board, data) {
     }
   }
   if (maxN > 0) nextId = Math.max(nextId, maxN + 1);
-  // Knockable freestanding props (pots / green dome)
-  if (Array.isArray(data.pots)) {
-    board.pots = data.pots.map((p, i) => ({
-      id: p.id || `pot${i + 1}`,
-      x: Number(p.x) || 0,
-      y: Number(p.y) || 0,
-      r: Number(p.r) > 0 ? Number(p.r) : 22,
-      kind: p.kind || "pot",
-      color: p.color || "#5aaf3a",
-      knocked: !!p.knocked,
-      vx: 0,
-      vy: 0,
-      ang: Number(p.ang) || 0,
-      spin: 0,
-    }));
-  } else {
-    board.pots = [];
-  }
+  // Pots/dome removed from the game — ignore legacy layout.pots if present
+  board.pots = [];
   rebuild(board);
-  return { ok: true, pieceCount: board.pieces.length, potCount: board.pots.length };
+  return { ok: true, pieceCount: board.pieces.length };
 }
 
 export function getPiece(board, id) {
@@ -196,6 +167,52 @@ export function rotatePiece(board, id, delta = 1) {
   // Spin around the visible rail center, not the model origin (curve focus, etc.)
   rotateAroundVisualPivot(p, delta);
   rebuild(board);
+}
+
+/**
+ * Rotate multiple pieces as a rigid group about their shared visual-pivot centroid.
+ * Each piece also advances rotSteps by delta (45° steps).
+ * @returns {{ cx: number, cy: number, count: number }|null}
+ */
+export function rotateSelectionAboutCenter(board, ids, delta = 1) {
+  const list = (ids || []).map((id) => getPiece(board, id)).filter(Boolean);
+  if (!list.length) return null;
+  if (list.length === 1) {
+    rotatePiece(board, list[0].id, delta);
+    const piv = worldPivot(list[0]);
+    return { cx: piv.x, cy: piv.y, count: 1 };
+  }
+
+  // Centroid of visual pivots (shared virtual center)
+  let cx = 0;
+  let cy = 0;
+  const pivots = list.map((p) => worldPivot(p));
+  for (const v of pivots) {
+    cx += v.x;
+    cy += v.y;
+  }
+  cx /= pivots.length;
+  cy /= pivots.length;
+
+  const ang = rotStepsToRad(delta);
+  const cos = Math.cos(ang);
+  const sin = Math.sin(ang);
+
+  for (let i = 0; i < list.length; i++) {
+    const p = list[i];
+    const piv = pivots[i];
+    const dx = piv.x - cx;
+    const dy = piv.y - cy;
+    const nx = cx + dx * cos - dy * sin;
+    const ny = cy + dx * sin + dy * cos;
+    // Rotate piece orientation about its own visual pivot after moving pivot
+    p.rotSteps = (((p.rotSteps + delta) % 8) + 8) % 8;
+    const o = originFromWorldPivot(p, nx, ny);
+    p.x = o.x;
+    p.y = o.y;
+  }
+  rebuild(board);
+  return { cx, cy, count: list.length };
 }
 
 export function flipPiece(board, id) {

@@ -40,13 +40,15 @@ export function createTrain() {
     cornerLockUy: null,
     /**
      * Linked cars (lead + followers). Empty/absent → single engine.
-     * Lead always mirrors train.x/y/ang after placeFollowers.
+     * Powered car mirrors train.x/y/ang after placeFollowers.
      */
     cars: null,
-    /** Spec used to (re)build cars: [{role, kind}, ...] */
+    /** Spec used to (re)build cars: [{role, kind, facing}, ...] */
     consistSpec: null,
-    /** Pots knocked this frame (SFX hook) */
-    potHit: false,
+    /** Id of powered engine car */
+    poweredId: null,
+    /** Selected car id for power switch / uncouple UI */
+    selectedCarId: null,
   };
 }
 
