@@ -9,11 +9,17 @@ import {
   REAR_AXLE_OFFSET,
 } from "./constants.js";
 import { normalizeAngle } from "../geometry.js";
+import { closestPathPoint } from "../track.js";
 
-/** Center-to-center spacing when coupled. */
-export const COUPLER_DIST = TRAIN_LENGTH * 0.88;
-export const REAR_HITCH = TRAIN_LENGTH * 0.48;
-export const FRONT_HITCH = TRAIN_LENGTH * 0.4;
+/**
+ * Center-to-center when coupled: full body length + air gap so shells
+ * do not overlap and a plastic coupler bar is visible between cars.
+ */
+export const COUPLER_AIR_GAP = 20;
+export const COUPLER_DIST = TRAIN_LENGTH + COUPLER_AIR_GAP;
+/** Hitch offsets from body center (sum = COUPLER_DIST). */
+export const REAR_HITCH = TRAIN_LENGTH * 0.5 + COUPLER_AIR_GAP * 0.5;
+export const FRONT_HITCH = TRAIN_LENGTH * 0.5 + COUPLER_AIR_GAP * 0.5;
 
 let nextCarId = 1;
 
@@ -123,12 +129,14 @@ export function getPoweredChain(train) {
 
 /**
  * Place coupled followers behind the powered lead.
+ * When `opts.board` is set, each car is snapped onto the nearest rail
+ * (same snap idea as the engine) so mid/trail do not free-fly off-track.
  * Trail engines keep facing=-1 (body drawn reversed).
- * Uncoupled cars are left in place.
  */
 export function placeFollowers(train, opts = {}) {
   if (!train) return { spacingOk: true, minSpacing: 0 };
   const hard = !!opts.hard;
+  const board = opts.board || null;
   if (!train.cars?.length) {
     if (train.consistSpec?.length) {
       ensureConsist(train, train.consistSpec, { hard: true });
@@ -151,16 +159,74 @@ export function placeFollowers(train, opts = {}) {
   for (let i = 1; i < chain.length; i++) {
     const prev = chain[i - 1];
     const car = chain[i];
-    const hitchX = prev.x - Math.cos(prev.ang) * REAR_HITCH;
-    const hitchY = prev.y - Math.sin(prev.ang) * REAR_HITCH;
-
+    // Desired center directly behind previous car along its heading
+    const targetX = prev.x - Math.cos(prev.ang) * COUPLER_DIST;
+    const targetY = prev.y - Math.sin(prev.ang) * COUPLER_DIST;
     let ang = prev.ang;
-    if (
+    let x = targetX;
+    let y = targetY;
+
+    // Snap onto rail centerline so cars follow track, not free air
+    if (board) {
+      // Fan of probes behind prev (covers curves)
+      const probes = [];
+      for (let t = 0.75; t <= 1.25; t += 0.1) {
+        for (let a = -0.7; a <= 0.7; a += 0.175) {
+          const pa = prev.ang + a;
+          probes.push({
+            x: prev.x - Math.cos(pa) * COUPLER_DIST * t,
+            y: prev.y - Math.sin(pa) * COUPLER_DIST * t,
+          });
+        }
+      }
+      probes.push({ x: targetX, y: targetY });
+      let best = null;
+      for (const p of probes) {
+        const hit = closestPathPoint(board, p.x, p.y, 72);
+        if (!hit) continue;
+        // Prefer hits roughly coupler-distance from prev center
+        const dPrev = Math.hypot(hit.x - prev.x, hit.y - prev.y);
+        const distScore =
+          hit.dist + Math.abs(dPrev - COUPLER_DIST) * 0.35;
+        if (!best || distScore < best.score) {
+          best = { hit, score: distScore };
+        }
+      }
+      if (best && best.hit.dist < 52) {
+        const h = best.hit;
+        let pathAng = h.ang;
+        const d1 = Math.abs(
+          Math.atan2(
+            Math.sin(prev.ang - pathAng),
+            Math.cos(prev.ang - pathAng)
+          )
+        );
+        const d2 = Math.abs(
+          Math.atan2(
+            Math.sin(prev.ang - (pathAng + Math.PI)),
+            Math.cos(prev.ang - (pathAng + Math.PI))
+          )
+        );
+        if (d2 < d1) pathAng = normalizeAngle(pathAng + Math.PI);
+        ang = pathAng;
+        // Seat body so front axle sits on the path point (same as engine)
+        x = h.x - Math.cos(ang) * FRONT_AXLE_OFFSET;
+        y = h.y - Math.sin(ang) * FRONT_AXLE_OFFSET;
+      } else {
+        // Geometric fallback still behind prev (never leave at origin)
+        x = targetX;
+        y = targetY;
+        ang = prev.ang;
+      }
+    } else if (
       !hard &&
       car.x != null &&
       Number.isFinite(car.x) &&
       Number.isFinite(car.y)
     ) {
+      // Soft free-space trailer blend when no board
+      const hitchX = prev.x - Math.cos(prev.ang) * REAR_HITCH;
+      const hitchY = prev.y - Math.sin(prev.ang) * REAR_HITCH;
       const dx = hitchX - car.x;
       const dy = hitchY - car.y;
       const d = Math.hypot(dx, dy);
@@ -169,12 +235,15 @@ export function placeFollowers(train, opts = {}) {
         let da = hitchAng - ang;
         while (da > Math.PI) da -= Math.PI * 2;
         while (da < -Math.PI) da += Math.PI * 2;
-        ang = ang + da * 0.85;
+        ang = ang + da * 0.5;
       }
+      x = hitchX - Math.cos(ang) * FRONT_HITCH;
+      y = hitchY - Math.sin(ang) * FRONT_HITCH;
     }
+
     car.ang = ang;
-    car.x = hitchX - Math.cos(ang) * FRONT_HITCH;
-    car.y = hitchY - Math.sin(ang) * FRONT_HITCH;
+    car.x = x;
+    car.y = y;
     // Non-powered engines in the chain face backward
     if (car.kind === "engine" && !car.powered) car.facing = -1;
     if (car.kind === "mid") car.facing = 1;
@@ -186,7 +255,7 @@ export function placeFollowers(train, opts = {}) {
   const coupledCount = chain.length;
   const spacingOk =
     coupledCount < 2 ||
-    (minSpacing > COUPLER_DIST * 0.35 && minSpacing < COUPLER_DIST * 1.6);
+    (minSpacing > COUPLER_DIST * 0.45 && minSpacing < COUPLER_DIST * 1.75);
   return { spacingOk, minSpacing };
 }
 

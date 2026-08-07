@@ -202,32 +202,51 @@ export function drawTrainCar(ctx, car, mode = TrainMode.IDLE) {
   ctx.restore();
 }
 
-/** Draw visible metal coupler bar between two cars. */
+/**
+ * Thin white plastic Plarail-style coupler bar in the air gap between cars.
+ */
 export function drawCouplerLink(ctx, link) {
   if (!link) return;
+  const dx = link.x2 - link.x1;
+  const dy = link.y2 - link.y1;
+  const len = Math.hypot(dx, dy) || 1;
+  // Only draw when there is a real air gap
+  if (len < 6) return;
   ctx.save();
-  ctx.strokeStyle = "rgba(40, 48, 58, 0.95)";
-  ctx.lineWidth = 4.5;
   ctx.lineCap = "round";
+  // Soft shadow
+  ctx.strokeStyle = "rgba(0,0,0,0.18)";
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.moveTo(link.x1 + 1, link.y1 + 1.5);
+  ctx.lineTo(link.x2 + 1, link.y2 + 1.5);
+  ctx.stroke();
+  // White plastic bar
+  ctx.strokeStyle = "#f4f7fa";
+  ctx.lineWidth = 3.2;
   ctx.beginPath();
   ctx.moveTo(link.x1, link.y1);
   ctx.lineTo(link.x2, link.y2);
   ctx.stroke();
-  ctx.strokeStyle = "rgba(180, 190, 200, 0.95)";
-  ctx.lineWidth = 2.2;
+  // Edge highlight
+  ctx.strokeStyle = "rgba(255,255,255,0.95)";
+  ctx.lineWidth = 1.2;
   ctx.beginPath();
   ctx.moveTo(link.x1, link.y1);
   ctx.lineTo(link.x2, link.y2);
   ctx.stroke();
-  // Joint knobs
-  ctx.fillStyle = "#2a323c";
+  // Tiny joint pegs at each end
+  ctx.fillStyle = "#e8eef4";
+  ctx.strokeStyle = "rgba(120,130,140,0.7)";
+  ctx.lineWidth = 0.8;
   for (const p of [
     [link.x1, link.y1],
     [link.x2, link.y2],
   ]) {
     ctx.beginPath();
-    ctx.arc(p[0], p[1], 3.2, 0, Math.PI * 2);
+    ctx.arc(p[0], p[1], 2.4, 0, Math.PI * 2);
     ctx.fill();
+    ctx.stroke();
   }
   ctx.restore();
 }
@@ -251,31 +270,23 @@ export function drawTrain(ctx, train) {
           },
         ];
 
-  // Coupler links under bodies
-  const powered =
-    cars.find((c) => c.powered) || cars[0];
-  const chain = [
-    powered,
-    ...cars.filter((c) => c !== powered && c.coupled !== false),
-  ];
-  // Only draw links between consecutive coupled cars
-  for (let i = 1; i < cars.length; i++) {
-    // rebuild ordered chain from powered
-  }
+  // White plastic coupler bars in the air gap (between body shells)
   {
+    const powered = cars.find((c) => c.powered) || cars[0];
     const ord = [powered];
     for (const c of cars) {
       if (c !== powered && c.coupled !== false) ord.push(c);
     }
     for (let i = 1; i < ord.length; i++) {
-      if (!ord[i].coupled && ord[i].coupled !== undefined) continue;
       const prev = ord[i - 1];
       const car = ord[i];
       if (car.coupled === false) continue;
-      const x1 = prev.x - Math.cos(prev.ang) * (TRAIN_LENGTH * 0.42);
-      const y1 = prev.y - Math.sin(prev.ang) * (TRAIN_LENGTH * 0.42);
-      const x2 = car.x + Math.cos(car.ang) * (TRAIN_LENGTH * 0.38);
-      const y2 = car.y + Math.sin(car.ang) * (TRAIN_LENGTH * 0.38);
+      // Ends sit just outside each body (half-length along heading)
+      const half = TRAIN_LENGTH * 0.48;
+      const x1 = prev.x - Math.cos(prev.ang) * half;
+      const y1 = prev.y - Math.sin(prev.ang) * half;
+      const x2 = car.x + Math.cos(car.ang) * half;
+      const y2 = car.y + Math.sin(car.ang) * half;
       drawCouplerLink(ctx, { x1, y1, x2, y2 });
     }
   }

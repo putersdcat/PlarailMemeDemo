@@ -421,14 +421,23 @@ if (trackSelect) {
   }
 }
 
-/** Shift layout so northern-most track sits against the playfield top wall. */
-function northAlignBoardToWall(targetMinY = 56) {
+/**
+ * Shift layout so the northern-most *rail path* sits near targetMinY
+ * (close to the solid top wall after a tight fit).
+ */
+function northAlignBoardToWall(targetMinY = 36) {
   if (!board.pieces.length) return 0;
+  rebuild(board);
   let minY = Infinity;
-  for (const p of board.pieces) minY = Math.min(minY, p.y);
-  // Also consider walls if present
-  for (const w of board.walls || []) {
-    minY = Math.min(minY, w.y1, w.y2);
+  for (const path of board.pathIndex || []) {
+    if (!path.active || !path.points?.length) continue;
+    for (const pt of path.points) minY = Math.min(minY, pt.y);
+  }
+  if (!Number.isFinite(minY)) {
+    for (const w of board.walls || []) minY = Math.min(minY, w.y1, w.y2);
+  }
+  if (!Number.isFinite(minY)) {
+    for (const p of board.pieces) minY = Math.min(minY, p.y);
   }
   if (!Number.isFinite(minY)) return 0;
   const dy = targetMinY - minY;
@@ -436,6 +445,23 @@ function northAlignBoardToWall(targetMinY = 56) {
   for (const p of board.pieces) p.y += dy;
   rebuild(board);
   return dy;
+}
+
+/** Find a path hit for train seat — fall back to any active path midpoint. */
+function findTrainSeatHit(hint, maxDist = 120) {
+  if (hint) {
+    const hit = closestPathPoint(board, hint.x, hint.y, maxDist);
+    if (hit) return hit;
+  }
+  // Fallback: first active path mid-sample
+  for (const path of board.pathIndex || []) {
+    if (!path.active || !path.points?.length) continue;
+    const mid = path.points[Math.floor(path.points.length / 2)];
+    if (!mid) continue;
+    const hit = closestPathPoint(board, mid.x, mid.y, 40);
+    if (hit) return hit;
+  }
+  return null;
 }
 
 function applyTrackLoadInfo(info) {
@@ -451,21 +477,54 @@ function applyTrackLoadInfo(info) {
   if (info && Object.prototype.hasOwnProperty.call(info, "solidPlayfield")) {
     setSolidPlayfield(!!info.solidPlayfield);
   }
-  // Not-enough-rails: pin north edge of track to the solid wall for video re-rail
+  // Not-enough-rails: pin north *path* edge tight under the solid top wall
+  let dy = 0;
   if (info?.northAlign || info?.solidPlayfield) {
-    northAlignBoardToWall(56);
+    dy = northAlignBoardToWall(36);
   }
   clearSelection();
-  // placeTrainAtHint → placeTrainOnPath: hardReset only when cars still null
-  placeTrainAtHint(info.trainHint, {
-    hardReset: !!(info?.consist?.length),
-  });
-  if (train.cars?.length) {
-    placeFollowers(train, { hard: true });
+  // Shift train hint with the layout so seat lands on the moved rails
+  const hint = info.trainHint
+    ? {
+        ...info.trainHint,
+        y: (info.trainHint.y ?? 0) + dy,
+        x: info.trainHint.x,
+      }
+    : null;
+  const hit = findTrainSeatHit(hint, 160);
+  if (hit) {
+    placeTrainOnPath(train, hit, {
+      dir: 1,
+      hardReset: !!(info?.consist?.length),
+      board,
+    });
+    // Prefer layout ang if it matches path
+    if (hint && typeof hint.ang === "number") {
+      const d1 = Math.abs(
+        ((hint.ang - hit.ang + Math.PI * 3) % (Math.PI * 2)) - Math.PI
+      );
+      const d2 = Math.abs(
+        ((hint.ang - (hit.ang + Math.PI) + Math.PI * 3) % (Math.PI * 2)) -
+          Math.PI
+      );
+      if (d2 < d1) {
+        placeTrainOnPath(train, hit, {
+          dir: -1,
+          hardReset: false,
+          board,
+        });
+      }
+    }
+    trainPlaced = true;
+    placeFollowers(train, { hard: true, board });
+  } else {
+    trainPlaced = false;
+    setHint("Track loaded but no rail found for the train — drag Engine onto a path.");
   }
   applySpeed(info.speed ?? info.trainHint?.speed ?? 210);
   persistLayout();
-  fitBoardToView(48);
+  // Tight fit so north rails sit near the wood wall (re-rail geometry)
+  fitBoardToView(info?.northAlign || info?.solidPlayfield ? 18 : 48);
 }
 
 function loadSelectedTrack() {
@@ -572,11 +631,11 @@ function tryPlaceTrainAt(x, y, maxDist = 48) {
 }
 
 function placeTrainAtHint(hint, opts = {}) {
-  if (!hint) return;
-  const hit = closestPathPoint(board, hint.x, hint.y, 80);
+  if (!hint && !opts.forceAny) return;
+  const hit = findTrainSeatHit(hint, opts.maxDist ?? 160);
   if (hit) {
     let dir = 1;
-    if (typeof hint.ang === "number" && Number.isFinite(hint.ang)) {
+    if (hint && typeof hint.ang === "number" && Number.isFinite(hint.ang)) {
       const d1 = Math.abs(
         ((hint.ang - hit.ang + Math.PI * 3) % (Math.PI * 2)) - Math.PI
       );
@@ -589,7 +648,9 @@ function placeTrainAtHint(hint, opts = {}) {
     placeTrainOnPath(train, hit, {
       dir,
       hardReset: !!opts.hardReset,
+      board,
     });
+    placeFollowers(train, { hard: true, board });
     trainPlaced = true;
     train.selected = false;
     running = false;

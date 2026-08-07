@@ -121,15 +121,18 @@ export function placeTrainOnPath(train, hit, opts = {}) {
   // Multi-car: re-seat must NOT rebuild from consistSpec (that undoes uncouple /
   // setActiveEngine). Only build from template when no cars exist yet, or
   // opts.hardReset is set (layout load / hard reset).
+  const board = opts.board || null;
   if (opts.hardReset && train.consistSpec?.length) {
     train.cars = null;
     ensureConsist(train, train.consistSpec, { hard: true });
+    placeFollowers(train, { hard: true, board });
   } else if (train.cars?.length) {
-    // Preserve free/coupled/powered; only hitch the still-coupled chain
-    placeFollowers(train, { hard: true });
+    // Preserve free/coupled/powered; snap coupled cars onto rails
+    placeFollowers(train, { hard: true, board });
   } else if (train.consistSpec?.length) {
     // First seat of a multi-car layout
     ensureConsist(train, train.consistSpec, { hard: true });
+    placeFollowers(train, { hard: true, board });
   }
   return true;
 }
@@ -225,7 +228,7 @@ export function resetTrainHard(train) {
 export function updateTrain(train, board, dt, bounds, opts = {}) {
   if (train.mode === TrainMode.IDLE || train.mode === TrainMode.STOPPED) {
     // Still seat followers if multi-car while idle (visual)
-    if (train.cars?.length > 1) placeFollowers(train);
+    if (train.cars?.length > 1) placeFollowers(train, { board, hard: true });
     return;
   }
 
@@ -237,9 +240,12 @@ export function updateTrain(train, board, dt, bounds, opts = {}) {
     stepOffRail(train, board, dt, bounds, opts);
   }
 
-  // Coupled followers trail the powered unit after physics step
+  // Coupled followers trail the powered unit after physics step (rail-snapped)
   if (train.cars?.length > 1 || train.consistSpec?.length > 1) {
-    placeFollowers(train);
+    placeFollowers(train, {
+      board,
+      hard: train.mode === TrainMode.ON_RAIL,
+    });
   }
 }
 
