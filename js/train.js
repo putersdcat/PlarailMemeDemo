@@ -21,6 +21,7 @@ import { leaveRails, stepOffRail } from "./train/off-rail.js";
 import {
   ensureConsist,
   placeFollowers,
+  getPoweredChain,
   threeCarConsistSpec,
   COUPLER_DIST,
   uncoupleCar,
@@ -76,6 +77,7 @@ export {
 export {
   ensureConsist,
   placeFollowers,
+  getPoweredChain,
   threeCarConsistSpec,
   COUPLER_DIST,
   uncoupleCar,

@@ -134,26 +134,78 @@ test("updateTrain pulls coupled mid and trail when lead advances", () => {
   assert(trailMoved > 20, `trail moved ${trailMoved}`);
 });
 
-test("uncoupleCar separates follower; setActiveEngine switches power", () => {
+test("uncoupleCar splits consist — trail free, not snapped onto mid", () => {
   const train = createTrain();
   train.x = 0;
   train.y = 0;
   train.ang = 0;
   ensureConsist(train, threeCarConsistSpec(), { hard: true });
-  const midId = train.cars[1].id;
-  const trailId = train.cars.find((c) => c.kind === "engine" && !c.powered).id;
+  placeFollowers(train, { hard: true });
+  const mid = train.cars[1];
+  const trail = train.cars[2];
+  const midId = mid.id;
+  const trailId = trail.id;
+  const midPos = { x: mid.x, y: mid.y };
+  const trailPos = { x: trail.x, y: trail.y };
+
   assert(uncoupleCar(train, midId));
   assertEq(train.cars.find((c) => c.id === midId).coupled, false);
-  // Mid no longer moves with hard place of lead
-  const midX = train.cars.find((c) => c.id === midId).x;
-  train.x += 50;
+  // Trail must also uncouple (split) — not stay coupled and hard-hitch onto mid
+  assertEq(train.cars.find((c) => c.id === trailId).coupled, false);
+
+  train.x += 80;
   placeFollowers(train, { hard: true });
-  assertEq(train.cars.find((c) => c.id === midId).x, midX);
+  const mid2 = train.cars.find((c) => c.id === midId);
+  const trail2 = train.cars.find((c) => c.id === trailId);
+  // Free cars stay put (not teleported onto each other)
+  assert(Math.hypot(mid2.x - midPos.x, mid2.y - midPos.y) < 1e-6, "mid stays");
+  assert(
+    Math.hypot(trail2.x - trailPos.x, trail2.y - trailPos.y) < 1e-6,
+    "trail stays"
+  );
+  const gap = Math.hypot(mid2.x - trail2.x, mid2.y - trail2.y);
+  assert(gap > COUPLER_DIST * 0.5, `mid/trail must not collapse, gap=${gap}`);
+});
+
+test("setActiveEngine reverses chain in place (no teleport mid onto rear)", () => {
+  const train = createTrain();
+  train.x = 0;
+  train.y = 0;
+  train.ang = 0;
+  ensureConsist(train, threeCarConsistSpec(), { hard: true });
+  placeFollowers(train, { hard: true });
+  const before = train.cars.map((c) => ({
+    id: c.id,
+    x: c.x,
+    y: c.y,
+    kind: c.kind,
+  }));
+  const trailId = train.cars.find((c) => c.facing === -1 || c.role === "trail")
+    .id;
+  const trailBefore = before.find((c) => c.id === trailId);
 
   assert(setActiveEngine(train, trailId));
   assertEq(train.poweredId, trailId);
-  assert(train.cars.find((c) => c.id === trailId).powered);
-  assert(!train.cars.find((c) => c.id === "lead" || c.role === "lead")?.powered || train.cars[0].id === trailId);
+  assert(train.cars[0].id === trailId && train.cars[0].powered);
+
+  // Powered car stays at its former world pose (not a random hitch slot)
+  assert(
+    Math.hypot(train.x - trailBefore.x, train.y - trailBefore.y) < 2,
+    `powered stayed in place, d=${Math.hypot(train.x - trailBefore.x, train.y - trailBefore.y)}`
+  );
+  // All three cars remain spaced (no overlap after reverse)
+  placeFollowers(train, { hard: true });
+  for (let i = 1; i < train.cars.length; i++) {
+    if (!train.cars[i].coupled) continue;
+    const d = Math.hypot(
+      train.cars[i].x - train.cars[i - 1].x,
+      train.cars[i].y - train.cars[i - 1].y
+    );
+    assert(
+      d > COUPLER_DIST * 0.4 && d < COUPLER_DIST * 1.5,
+      `chain spacing after power switch d=${d}`
+    );
+  }
 });
 
 test("mid car snapCarPoseToHit seats on path like engine", () => {
@@ -169,7 +221,7 @@ test("mid car snapCarPoseToHit seats on path like engine", () => {
   assert(car.pathRef);
 });
 
-test("rotateSelectionAboutCenter keeps relative offsets around shared center", () => {
+test("rotateSelectionAboutCenter orbits shared center (not independent pivots)", () => {
   const board = createBoard();
   const a = addPiece(board, "R01", 0, 0, 0);
   const b = addPiece(board, "R01", UNIT, 0, 0);
@@ -187,7 +239,14 @@ test("rotateSelectionAboutCenter keeps relative offsets around shared center", (
   const b2 = getPiece(board, b.id);
   const pivA1 = worldPivot(a2);
   const pivB1 = worldPivot(b2);
-  // Distances to original center preserved (rigid about shared center)
+
+  // Pivots must MOVE in world space (orbit) — independent per-pivot rotate leaves pivots fixed
+  const movedA = Math.hypot(pivA1.x - pivA0.x, pivA1.y - pivA0.y);
+  const movedB = Math.hypot(pivB1.x - pivB0.x, pivB1.y - pivB0.y);
+  assert(movedA > UNIT * 0.3, `A pivot must orbit, moved=${movedA}`);
+  assert(movedB > UNIT * 0.3, `B pivot must orbit, moved=${movedB}`);
+
+  // Distances to original shared center preserved (rigid body about centroid)
   assert(
     Math.abs(Math.hypot(pivA1.x - cx0, pivA1.y - cy0) - dA0) < 1.5,
     "A distance to group center"
@@ -196,8 +255,8 @@ test("rotateSelectionAboutCenter keeps relative offsets around shared center", (
     Math.abs(Math.hypot(pivB1.x - cx0, pivB1.y - cy0) - dB0) < 1.5,
     "B distance to group center"
   );
-  // Not independent: if each rotated about own pivot, centroids would differ
-  // Both rotSteps advanced by 2
+  // 90° orbit: A was left of center → should be roughly above/below after +90°
+  // (deltaSteps=2 → +90° CCW in standard math if y-down still rotates same)
   assertEq(a2.rotSteps, 2);
   assertEq(b2.rotSteps, 2);
 });

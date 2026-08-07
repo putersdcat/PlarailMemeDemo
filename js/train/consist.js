@@ -104,6 +104,24 @@ export function ensureConsist(train, spec = null, opts = {}) {
 }
 
 /**
+ * Front-to-back chain starting at the powered unit.
+ * Uses cars array order: powered, then following entries that are still coupled,
+ * stopping at the first free car (split).
+ */
+export function getPoweredChain(train) {
+  if (!train?.cars?.length) return [];
+  const cars = train.cars;
+  let pIdx = cars.findIndex((c) => c.powered || c.id === train.poweredId);
+  if (pIdx < 0) pIdx = 0;
+  const chain = [cars[pIdx]];
+  for (let i = pIdx + 1; i < cars.length; i++) {
+    if (!cars[i].coupled) break; // split — free car ends the consist
+    chain.push(cars[i]);
+  }
+  return chain;
+}
+
+/**
  * Place coupled followers behind the powered lead.
  * Trail engines keep facing=-1 (body drawn reversed).
  * Uncoupled cars are left in place.
@@ -118,19 +136,16 @@ export function placeFollowers(train, opts = {}) {
       return { spacingOk: true, minSpacing: 0 };
     }
   }
-  const cars = train.cars;
-  const powered =
-    cars.find((c) => c.powered || c.id === train.poweredId) || cars[0];
+  const chain = getPoweredChain(train);
+  if (!chain.length) return { spacingOk: true, minSpacing: 0 };
+  const powered = chain[0];
 
   // Powered unit is the physics body
   powered.x = train.x;
   powered.y = train.y;
   powered.ang = train.ang;
   powered.powered = true;
-
-  // Chain order: powered first, then remaining *coupled* cars in list order
-  const chain = [powered, ...cars.filter((c) => c !== powered && c.coupled)];
-  // Keep uncoupled out of chain
+  powered.facing = 1;
 
   let minSpacing = Infinity;
   for (let i = 1; i < chain.length; i++) {
@@ -160,8 +175,8 @@ export function placeFollowers(train, opts = {}) {
     car.ang = ang;
     car.x = hitchX - Math.cos(ang) * FRONT_HITCH;
     car.y = hitchY - Math.sin(ang) * FRONT_HITCH;
-    // Trail engines face backward (same body, reversed)
-    if (car.kind === "engine" && car.role === "trail") car.facing = -1;
+    // Non-powered engines in the chain face backward
+    if (car.kind === "engine" && !car.powered) car.facing = -1;
     if (car.kind === "mid") car.facing = 1;
 
     const sp = Math.hypot(car.x - prev.x, car.y - prev.y);
@@ -187,14 +202,7 @@ export function couplerLink(prev, car) {
 
 /** All visible links for coupled chain from powered unit. */
 export function consistLinks(train) {
-  if (!train?.cars?.length) return [];
-  const powered =
-    train.cars.find((c) => c.powered || c.id === train.poweredId) ||
-    train.cars[0];
-  const chain = [
-    powered,
-    ...train.cars.filter((c) => c !== powered && c.coupled),
-  ];
+  const chain = getPoweredChain(train);
   const links = [];
   for (let i = 1; i < chain.length; i++) {
     const L = couplerLink(chain[i - 1], chain[i]);
@@ -203,12 +211,19 @@ export function consistLinks(train) {
   return links;
 }
 
-/** Uncouple a car so it becomes a free unit (still on train.cars). */
+/**
+ * Uncouple a car and every car behind it (split the consist).
+ * Prevents the trail from re-hitching through a free mid onto the lead slot.
+ */
 export function uncoupleCar(train, carId) {
   if (!train?.cars) return false;
-  const car = train.cars.find((c) => c.id === carId);
-  if (!car || car.powered) return false;
-  car.coupled = false;
+  const chain = getPoweredChain(train);
+  const idx = chain.findIndex((c) => c.id === carId);
+  if (idx <= 0) return false; // not in chain, or is powered lead
+  for (let i = idx; i < chain.length; i++) {
+    chain[i].coupled = false;
+    chain[i].powered = false;
+  }
   return true;
 }
 
@@ -217,13 +232,8 @@ export function tryRecoupleCar(train, carId, maxDist = COUPLER_DIST * 1.35) {
   if (!train?.cars) return false;
   const car = train.cars.find((c) => c.id === carId);
   if (!car || car.powered) return false;
-  const powered =
-    train.cars.find((c) => c.powered || c.id === train.poweredId) ||
-    train.cars[0];
-  const chain = [
-    powered,
-    ...train.cars.filter((c) => c !== powered && c.coupled),
-  ];
+  const chain = getPoweredChain(train);
+  if (!chain.length) return false;
   const tail = chain[chain.length - 1];
   const hitchX = tail.x - Math.cos(tail.ang) * REAR_HITCH;
   const hitchY = tail.y - Math.sin(tail.ang) * REAR_HITCH;
@@ -231,44 +241,84 @@ export function tryRecoupleCar(train, carId, maxDist = COUPLER_DIST * 1.35) {
   const noseY = car.y + Math.sin(car.ang) * FRONT_HITCH;
   if (Math.hypot(noseX - hitchX, noseY - hitchY) > maxDist) return false;
   car.coupled = true;
+  // Move free car to end of cars list after chain segment
+  const pIdx = train.cars.findIndex((c) => c.id === chain[0].id);
+  train.cars = train.cars.filter((c) => c.id !== carId);
+  // Insert after last coupled car of chain
+  let insertAt = pIdx + chain.length; // chain no longer includes car
+  // recompute: after filter, find powered again
+  const p2 = train.cars.findIndex(
+    (c) => c.powered || c.id === train.poweredId
+  );
+  let end = p2;
+  while (end + 1 < train.cars.length && train.cars[end + 1].coupled) end++;
+  train.cars.splice(end + 1, 0, car);
   placeFollowers(train, { hard: true });
   return true;
 }
 
 /**
  * Make an engine the powered (driving) unit.
- * Gender/flip UX calls this when an engine car is selected.
+ * Preserves relative consist order by reversing the chain in place so the
+ * chosen engine becomes the new front (no teleporting mid/lead onto the rear).
  */
 export function setActiveEngine(train, carId) {
   if (!train?.cars?.length) return false;
   const car = train.cars.find((c) => c.id === carId);
   if (!car || car.kind !== "engine") return false;
 
-  // Capture pose of new powered unit
-  const px = car.x;
-  const py = car.y;
-  // Body travel direction: if facing reverse, travel is opposite nose
-  let pang = car.ang;
-  if (car.facing === -1) {
-    // Visual nose is reverse of ang; powering it: use current ang as travel
-    pang = car.ang;
+  const chain = getPoweredChain(train);
+  const idx = chain.findIndex((c) => c.id === carId);
+  // Free engine not in chain: power it solo (leave others free)
+  if (idx < 0) {
+    if (!car.coupled && !car.powered) {
+      for (const c of train.cars) c.powered = false;
+      car.powered = true;
+      car.facing = 1;
+      train.poweredId = car.id;
+      train.x = car.x;
+      train.y = car.y;
+      train.ang = car.ang;
+      // Move to front of array
+      train.cars = [car, ...train.cars.filter((c) => c !== car)];
+      return true;
+    }
+    return false;
   }
+  if (idx === 0) return true; // already powered
 
-  for (const c of train.cars) {
+  // Reverse [front .. newEngine] so newEngine is front; keep free cars aside
+  const head = chain.slice(0, idx + 1);
+  const behind = chain.slice(idx + 1); // usually empty for end engines
+  const free = train.cars.filter((c) => !chain.includes(c));
+
+  // Travel away from the rest of the train (from neighbor toward old rear-as-front)
+  const prev = head[idx - 1];
+  const intoX = prev.x - car.x;
+  const intoY = prev.y - car.y;
+  const intoL = Math.hypot(intoX, intoY) || 1;
+  // travel = opposite of "into train"
+  train.ang = Math.atan2(-intoY / intoL, -intoX / intoL);
+  train.x = car.x;
+  train.y = car.y;
+
+  const newHead = head.slice().reverse(); // [newEngine, ..., oldLead]
+  for (const c of newHead) {
+    c.coupled = true;
     c.powered = c.id === carId;
   }
-  train.poweredId = carId;
-  train.x = px;
-  train.y = py;
-  train.ang = pang;
-
-  // Reorder: powered first for bookkeeping
-  train.cars = [car, ...train.cars.filter((c) => c !== car)];
-  // Trail engines that aren't powered keep reverse facing when coupled behind
-  for (const c of train.cars) {
-    if (c.kind === "engine" && !c.powered && c.coupled) c.facing = -1;
-    if (c.powered) c.facing = 1;
+  for (const c of behind) {
+    c.coupled = false; // detached segment if any
+    c.powered = false;
   }
+  car.facing = 1;
+  for (let i = 1; i < newHead.length; i++) {
+    if (newHead[i].kind === "engine") newHead[i].facing = -1;
+    if (newHead[i].kind === "mid") newHead[i].facing = 1;
+  }
+
+  train.poweredId = carId;
+  train.cars = [...newHead, ...behind, ...free];
   placeFollowers(train, { hard: true });
   return true;
 }
