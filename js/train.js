@@ -15,16 +15,24 @@ import {
   FRONT_AXLE_OFFSET,
   PATH_HOP_DIST,
   PATH_HOP_ANGLE,
+  WHEEL_RADIUS,
 } from "./train/constants.js";
 import { frontAxlePos, bodyFromFrontAxle } from "./train/pose.js";
-import { leaveRails, stepOffRail } from "./train/off-rail.js";
+import {
+  leaveRails,
+  stepOffRail,
+  resolvePlayfieldAabb,
+} from "./train/off-rail.js";
 import {
   ensureConsist,
+  ensureSingleEngine,
   placeFollowers,
   seatConsistHard,
   getPoweredChain,
   threeCarConsistSpec,
   COUPLER_DIST,
+  MAX_MID_CARS,
+  countMidCars,
   uncoupleCar,
   tryRecoupleCar,
   setActiveEngine,
@@ -33,6 +41,9 @@ import {
   snapCarPoseToHit,
   consistLinks,
   couplerLink,
+  tryRerailCar,
+  markChainOffRail,
+  markPoweredOnRail,
 } from "./train/consist.js";
 
 export {
@@ -77,11 +88,14 @@ export {
 
 export {
   ensureConsist,
+  ensureSingleEngine,
   placeFollowers,
   seatConsistHard,
   getPoweredChain,
   threeCarConsistSpec,
   COUPLER_DIST,
+  MAX_MID_CARS,
+  countMidCars,
   uncoupleCar,
   tryRecoupleCar,
   setActiveEngine,
@@ -90,11 +104,14 @@ export {
   snapCarPoseToHit,
   consistLinks,
   couplerLink,
+  tryRerailCar,
+  markChainOffRail,
+  markPoweredOnRail,
 };
 
 export function placeTrainOnPath(train, hit, opts = {}) {
   if (!hit?.path) return false;
-  train.mode = TrainMode.IDLE;
+  train.mode = TrainMode.ON_RAIL;
   train.pathRef = {
     path: hit.path,
     pieceId: hit.path.pieceId,
@@ -120,22 +137,41 @@ export function placeTrainOnPath(train, hit, opts = {}) {
   train.offRailDistAcc = 0;
   train.offRailStepsDone = 0;
   train.reRailDistLeft = 0;
-  // Multi-car: re-seat must NOT rebuild from consistSpec (that undoes uncouple /
-  // setActiveEngine). Only build from template when no cars exist yet, or
-  // opts.hardReset is set (layout load / hard reset).
   const board = opts.board || null;
+  // Layout load may hardReset an explicit multi-car spec. Bare engine place
+  // never auto-appends mid/trail from a leftover consistSpec.
   if (opts.hardReset && train.consistSpec?.length) {
     train.cars = null;
     ensureConsist(train, train.consistSpec, { hard: true });
-  } else if (!train.cars?.length && train.consistSpec?.length) {
-    ensureConsist(train, train.consistSpec, { hard: true });
+    for (const c of train.cars || []) {
+      c.mode = TrainMode.ON_RAIL;
+    }
+  } else if (!train.cars?.length) {
+    ensureSingleEngine(train);
+    train.cars[0].mode = TrainMode.ON_RAIL;
+    train.cars[0].pathRef = train.pathRef;
+    train.cars[0].s = train.s;
+    train.cars[0].dir = train.dir;
+  } else {
+    // Re-seat powered unit only onto path; followers keep their modes
+    const powered =
+      train.cars.find((c) => c.powered || c.id === train.poweredId) ||
+      train.cars[0];
+    if (powered) {
+      powered.mode = TrainMode.ON_RAIL;
+      powered.pathRef = train.pathRef;
+      powered.s = train.s;
+      powered.dir = train.dir;
+      powered.x = train.x;
+      powered.y = train.y;
+      powered.ang = train.ang;
+    }
   }
-  // Fixed hitch (+ path heading when board/path available). Never path-walk teleport.
   if (train.cars?.length > 1) {
     placeFollowers(train, {
       hard: true,
-      onRail: !!(board && train.pathRef),
-      board: board && train.pathRef ? board : null,
+      onRail: true,
+      board,
     });
   }
   return true;
@@ -234,8 +270,8 @@ export function updateTrain(train, board, dt, bounds, opts = {}) {
     if (train.cars?.length > 1) {
       placeFollowers(train, {
         hard: true,
-        onRail: !!(train.pathRef && board),
-        board: train.pathRef ? board : null,
+        onRail: false,
+        board: null,
       });
     }
     return;
@@ -249,23 +285,68 @@ export function updateTrain(train, board, dt, bounds, opts = {}) {
     stepOffRail(train, board, dt, bounds, opts);
   }
 
-  // Coupled followers — always fixed hitch length.
-  // On-rail: path-walk behind lead (curves). Off-rail: trailer whip.
-  // Just after re-rail (cooldown): hard hitch only so cars don't jumble
-  // at path mouths / wall tips.
-  if (train.cars?.length > 1 || train.consistSpec?.length > 1) {
-    const off = train.mode === TrainMode.OFF_RAIL;
-    const justRerailed =
-      !off && (train.reRailCooldown == null ? 0 : train.reRailCooldown) > 0.15;
-    if (justRerailed) {
-      placeFollowers(train, { hard: true, whip: false, onRail: false });
-    } else {
-      placeFollowers(train, {
-        hard: !off,
-        whip: off,
-        onRail: !off,
-        board: !off ? board : null,
-      });
+  // Sync powered car from train body after physics
+  const powered =
+    (train.cars || []).find((c) => c.powered || c.id === train.poweredId) ||
+    train.cars?.[0];
+  if (powered) {
+    powered.x = train.x;
+    powered.y = train.y;
+    powered.ang = train.ang;
+    powered.mode = train.mode;
+    powered.pathRef = train.pathRef;
+    powered.s = train.s;
+    powered.dir = train.dir;
+    powered.vx = train.vx;
+    powered.vy = train.vy;
+  }
+
+  // Hitch-pull coupled cars (respects per-car off_rail mode — no force on-rail)
+  if (train.cars?.length > 1) {
+    const anyOff = train.cars.some(
+      (c) => c.coupled && c.mode === TrainMode.OFF_RAIL && !c.powered
+    );
+    placeFollowers(train, {
+      hard: !anyOff && train.mode === TrainMode.ON_RAIL,
+      whip: anyOff || train.mode === TrainMode.OFF_RAIL,
+      onRail: train.mode === TrainMode.ON_RAIL && !anyOff,
+      board: train.mode === TrainMode.ON_RAIL && !anyOff ? board : null,
+    });
+  }
+
+  // Per-car: off-rail followers get wall AABB + individual re-rail
+  const solid = !!opts.solidPlayfield;
+  if (train.cars?.length > 1 && board) {
+    for (const car of train.cars) {
+      if (car.powered) continue;
+      if (car.mode !== TrainMode.OFF_RAIL) continue;
+      // Velocity toward hitch pull direction for wall slide
+      if (car.coupled) {
+        const sp = train.speed || 180;
+        car.vx = Math.cos(car.ang) * sp * 0.85;
+        car.vy = Math.sin(car.ang) * sp * 0.85;
+      }
+      if (solid && bounds) {
+        const sp = Math.hypot(car.vx, car.vy) || 1;
+        let ux = car.vx / sp;
+        let uy = car.vy / sp;
+        const r = resolvePlayfieldAabb(
+          car.x,
+          car.y,
+          ux,
+          uy,
+          car.ang,
+          bounds,
+          WHEEL_RADIUS
+        );
+        car.x = r.x;
+        car.y = r.y;
+        car.ang = r.ang;
+        const spd = Math.hypot(car.vx, car.vy) || sp;
+        car.vx = Math.cos(r.ang) * spd;
+        car.vy = Math.sin(r.ang) * spd;
+      }
+      tryRerailCar(car, board, train);
     }
   }
 }

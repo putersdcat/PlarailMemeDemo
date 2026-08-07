@@ -16,7 +16,7 @@ import {
   RE_RAIL_ANGLE,
 } from "./constants.js";
 import { frontAxlePos, rearAxlePos, bodyFromFrontAxle } from "./pose.js";
-import { placeFollowers, seatConsistHard } from "./consist.js";
+import { placeFollowers, seatConsistHard, markChainOffRail } from "./consist.js";
 
 export const OFF_RAIL_DS = 2.5;
 /** Center-slider reference speed (for re-rail unlock distance). */
@@ -36,6 +36,8 @@ export function leaveRails(train) {
   train.cornerLockSteps = 0;
   train.cornerLockUx = null;
   train.cornerLockUy = null;
+  // Each car becomes its own off-rail entity (keeps world pose)
+  markChainOffRail(train);
 }
 
 /**
@@ -580,9 +582,23 @@ function tryRerail(train, board) {
   train.reRailDistLeft = 0;
   train.reRailCooldown = 0.55;
   train.cornerLockSteps = 0;
-  // Hard-seat the full consist behind the lead at FIXED hitch length.
-  // Never path-walk here: near wall/mouth walk fails and used to pile cars
-  // on the lead. Path-curve seating resumes after reRailCooldown.
+  // Only the powered unit re-rails. Followers keep off_rail until each
+  // catches a rail itself (markPoweredOnRail + hitch pull, no force on-rail).
+  const powered =
+    (train.cars || []).find((c) => c.powered || c.id === train.poweredId) ||
+    train.cars?.[0];
+  if (powered) {
+    powered.mode = TrainMode.ON_RAIL;
+    powered.pathRef = train.pathRef;
+    powered.s = train.s;
+    powered.dir = train.dir;
+    powered.x = train.x;
+    powered.y = train.y;
+    powered.ang = train.ang;
+    powered.vx = 0;
+    powered.vy = 0;
+  }
+  // Pull coupled cars with hitch; do NOT set their mode to on_rail
   if (train.cars?.length > 1) {
     seatConsistHard(train);
   }

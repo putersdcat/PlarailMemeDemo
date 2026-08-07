@@ -49,6 +49,7 @@ import {
   modeLabel,
   TrainMode,
   ensureConsist,
+  ensureSingleEngine,
   placeFollowers,
   threeCarConsistSpec,
   setActiveEngine,
@@ -57,6 +58,8 @@ import {
   tryRecoupleCar,
   spawnFreeCar,
   snapCarPoseToHit,
+  MAX_MID_CARS,
+  countMidCars,
 } from "./train.js";
 import { resizeCanvas, drawScene, drawPaletteIcon, drawPaletteTrainIcon } from "./render.js";
 import { loadRealMemeTrack, TRACK_CATALOG, getTrackById } from "./presets.js";
@@ -1411,26 +1414,30 @@ function onPointerUp(e) {
     if (trainGhost?.onRail && trainGhost.hit) {
       const kind = drag.carKind || carTool || "engine";
       if (kind === "mid" && !drag.fromExisting) {
-        // Place free mid car snapped to rail
-        if (!train.cars?.length) {
-          // Need an engine first for a consist — still place mid as free unit
-          train.cars = train.cars || [];
+        if (countMidCars(train) >= MAX_MID_CARS) {
+          setHint(`Mid car limit reached (max ${MAX_MID_CARS}).`);
+        } else {
+          if (!train.cars?.length) train.cars = [];
+          const car = spawnFreeCar(
+            train,
+            "mid",
+            trainGhost.hit.x,
+            trainGhost.hit.y,
+            trainGhost.ang || 0
+          );
+          if (!car) {
+            setHint(`Mid car limit reached (max ${MAX_MID_CARS}).`);
+          } else {
+            snapCarPoseToHit(car, trainGhost.hit, train.dir || 1);
+            car.coupled = false;
+            trainPlaced = true;
+            train.selected = true;
+            train.selectedCarId = car.id;
+            setHint(
+              `Mid car on rails (${countMidCars(train)}/${MAX_MID_CARS}). Link near coupler · Delete uncouples.`
+            );
+          }
         }
-        const car = spawnFreeCar(
-          train,
-          "mid",
-          trainGhost.hit.x,
-          trainGhost.hit.y,
-          trainGhost.ang || 0
-        );
-        snapCarPoseToHit(car, trainGhost.hit, train.dir || 1);
-        car.coupled = false;
-        trainPlaced = true;
-        train.selected = true;
-        train.selectedCarId = car.id;
-        setHint(
-          "Mid car on rails. Bring near a train coupler to link · Delete uncouples · 🦄 on an engine switches power."
-        );
       } else if (drag.fromExisting && drag.carId && train.cars) {
         // Re-seat a selected car
         const car = train.cars.find((c) => c.id === drag.carId);
@@ -1452,20 +1459,22 @@ function onPointerUp(e) {
         trainPlaced = true;
         train.selected = true;
       } else {
-        // New engine place: only hard-reset consist if no cars yet
-        const firstMulti =
-          !train.cars?.length && train.consistSpec?.length;
+        // Engine place alone — never auto-append mid/trail (no long turd)
+        if (!train.cars?.length) {
+          train.consistSpec = null;
+        }
         placeTrainOnPath(train, trainGhost.hit, {
           dir: train.dir || 1,
           keepDir: true,
-          hardReset: !!firstMulti,
+          hardReset: false,
+          board,
         });
         trainPlaced = true;
         train.selected = true;
         running = false;
         clearSelection();
         setHint(
-          "Engine on rails. 🦄 / F flips direction (or switches powered engine when a car is selected) · Start runs."
+          "Engine on rails. Add mid cars from palette (max 3). 🦄 switches powered engine."
         );
       }
       running = false;

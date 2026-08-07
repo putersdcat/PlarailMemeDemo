@@ -9,13 +9,18 @@ import {
   startTrain,
   TrainMode,
   ensureConsist,
+  ensureSingleEngine,
   placeFollowers,
+  seatConsistHard,
   threeCarConsistSpec,
   COUPLER_DIST,
+  MAX_MID_CARS,
+  countMidCars,
   setActiveEngine,
   uncoupleCar,
   snapCarPoseToHit,
   spawnFreeCar,
+  tryRerailCar,
 } from "../js/train.js";
 import {
   createBoard,
@@ -384,6 +389,117 @@ test("re-rail hard-seats multi-car without pile-up on lead", () => {
     }
   }
   assert(rerailed, "expected re-rail onto track");
+});
+
+test("engine place alone does not auto-append mid+trail", () => {
+  const board = createBoard();
+  for (let i = 0; i < 3; i++) addPiece(board, "R01", i * UNIT, 0, 0);
+  rebuild(board);
+  const hit = closestPathPoint(board, UNIT, 0, 40);
+  const train = createTrain();
+  // Leftover layout template must not force a 3-car turd on bare engine place
+  train.consistSpec = threeCarConsistSpec();
+  train.cars = null;
+  placeTrainOnPath(train, hit, { dir: 1, hardReset: false, board });
+  assertEq(train.cars.length, 1);
+  assertEq(train.cars[0].kind, "engine");
+  assert(!train.consistSpec, "consistSpec cleared for single engine");
+});
+
+test("mid cars capped at three; fourth spawn blocked", () => {
+  const train = createTrain();
+  ensureSingleEngine(train);
+  for (let i = 0; i < MAX_MID_CARS; i++) {
+    const c = spawnFreeCar(train, "mid", i * 50, 0, 0);
+    assert(c, `mid ${i + 1} should spawn`);
+  }
+  assertEq(countMidCars(train), MAX_MID_CARS);
+  const blocked = spawnFreeCar(train, "mid", 200, 0, 0);
+  assertEq(blocked, null);
+  assertEq(countMidCars(train), MAX_MID_CARS);
+});
+
+test("on-rail coupler length matches off-rail hard hitch", () => {
+  const board = createBoard();
+  for (let i = 0; i < 6; i++) addPiece(board, "R01", i * UNIT, 0, 0);
+  rebuild(board);
+  const hit = closestPathPoint(board, UNIT, 0, 40);
+  const train = createTrain();
+  train.consistSpec = threeCarConsistSpec();
+  placeTrainOnPath(train, hit, { dir: 1, hardReset: true, board });
+  placeFollowers(train, { hard: true, onRail: true, board });
+  const onD = Math.hypot(
+    train.cars[0].x - train.cars[1].x,
+    train.cars[0].y - train.cars[1].y
+  );
+  seatConsistHard(train);
+  const offD = Math.hypot(
+    train.cars[0].x - train.cars[1].x,
+    train.cars[0].y - train.cars[1].y
+  );
+  assert(
+    Math.abs(onD - offD) < 4,
+    `on-rail ${onD} vs off-rail hitch ${offD} should match`
+  );
+  assert(Math.abs(offD - COUPLER_DIST) < 2, `hitch ${offD} vs COUPLER ${COUPLER_DIST}`);
+});
+
+test("lead re-rail leaves off-rail followers off-rail until they re-rail", () => {
+  const board = createBoard();
+  for (let i = 0; i < 4; i++) addPiece(board, "R01", i * UNIT, 100, 0);
+  rebuild(board);
+  const hit = closestPathPoint(board, UNIT, 100, 40);
+  const train = createTrain();
+  train.consistSpec = threeCarConsistSpec();
+  placeTrainOnPath(train, hit, { dir: 1, hardReset: true, board });
+  startTrain(train);
+  train.speed = 200;
+  // Derail whole train
+  train.mode = TrainMode.OFF_RAIL;
+  train.pathRef = null;
+  for (const c of train.cars) {
+    c.mode = TrainMode.OFF_RAIL;
+    c.pathRef = null;
+  }
+  train.vx = 0;
+  train.vy = 0;
+  train.reRailDistLeft = 0;
+  train.offRailDistAcc = 0;
+  train.offRailStepsDone = 0;
+  train.offRailPreferAng = 0;
+  // Put lead on path, leave mid far off path so only lead re-rails
+  train.x = hit.x;
+  train.y = hit.y;
+  train.ang = hit.ang;
+  train.vx = Math.cos(hit.ang) * 60;
+  train.vy = Math.sin(hit.ang) * 60;
+  train.cars[1].x = hit.x;
+  train.cars[1].y = hit.y + 200; // far from rails
+  train.cars[1].mode = TrainMode.OFF_RAIL;
+  train.cars[2].x = hit.x;
+  train.cars[2].y = hit.y + 280;
+  train.cars[2].mode = TrainMode.OFF_RAIL;
+
+  const bounds = { minX: 0, minY: 0, maxX: 900, maxY: 500 };
+  let leadOn = false;
+  for (let i = 0; i < 100; i++) {
+    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+    if (train.mode === TrainMode.ON_RAIL) {
+      leadOn = true;
+      // Immediately after lead re-rails, followers must still be off_rail
+      assertEq(train.cars[0].mode, TrainMode.ON_RAIL);
+      assert(
+        train.cars[1].mode === TrainMode.OFF_RAIL,
+        `mid should stay off_rail, got ${train.cars[1].mode}`
+      );
+      assert(
+        train.cars[2].mode === TrainMode.OFF_RAIL,
+        `trail should stay off_rail, got ${train.cars[2].mode}`
+      );
+      break;
+    }
+  }
+  assert(leadOn, "lead should re-rail");
 });
 
 test("placeTrainOnPath re-seat preserves uncouple and active engine", () => {
