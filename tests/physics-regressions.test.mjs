@@ -18,6 +18,7 @@ import {
   threeCarConsistSpec,
   threeMiddleConsistSpec,
   COUPLER_DIST,
+  WHEEL_RADIUS,
 } from "../js/train.js";
 import { createBoard, addPiece, rebuild, closestPathPoint } from "../js/track.js";
 import { angleDiff } from "../js/geometry.js";
@@ -617,4 +618,53 @@ test("a middle rerail while lead is off rail does not whip the follow-on chain",
   }
   assertEq(train.mode, TrainMode.OFF_RAIL, "lead remains off rail in this setup");
   assert(train.cars.slice(1).every((car) => car.mode === TrainMode.ON_RAIL));
+});
+
+test("off-rail followers behind a rerailled lead still collide with solid bounds", () => {
+  const board = createBoard();
+  addPiece(board, "R01", 0, 0, 0);
+  rebuild(board);
+  const hit = closestPathPoint(board, -38, 0, 20);
+  assert(hit);
+
+  const train = createTrain();
+  placeLayoutCars(train, threeCarConsistSpec(), board, { seatHit: hit, dir: 1 });
+  train.mode = TrainMode.ON_RAIL;
+  train.speed = 120;
+  train.reRailCooldown = 0; // Past the brief rigid lead-rerail grace.
+  for (let i = 1; i < train.cars.length; i++) {
+    const car = train.cars[i];
+    car.mode = TrainMode.OFF_RAIL;
+    car.pathRef = null;
+    car.x = -220 - i * COUPLER_DIST;
+    car.y = 0;
+    car.ang = 0;
+    car.vx = 120;
+    car.vy = 0;
+    car.reRailCooldown = 0;
+  }
+
+  const bounds = { minX: -100, minY: -100, maxX: 200, maxY: 100 };
+  const telemetry = createTrainTelemetry({ enabled: true });
+  updateTrain(train, board, 1 / 60, bounds, {
+    solidPlayfield: true,
+    telemetry,
+  });
+
+  for (const car of train.cars.slice(1)) {
+    assertEq(car.mode, TrainMode.OFF_RAIL);
+    assert(
+      car.x >= bounds.minX + WHEEL_RADIUS - 0.5,
+      `off-rail follower ${car.id} escaped left wall x=${car.x}`
+    );
+  }
+  assert(
+    telemetry
+      .snapshot()
+      .events.some(
+        (event) =>
+          event.type === "offrail_contact" && event.entity === train.cars[1].id
+      ),
+    "first detached follower must receive a solid-playfield contact"
+  );
 });

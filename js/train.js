@@ -609,12 +609,15 @@ export function updateTrain(train, board, dt, bounds, opts = {}) {
       if (car.powered) continue;
       if (car.mode !== TrainMode.OFF_RAIL) continue;
 
-      // When the lead is on-rail, a coupled off-rail follower is held by the
-      // rigid hitch. Contact resolution would move it away from that hitch
-      // and make the next car pile into it. The lead's rail pose owns this
-      // mixed transition; let the follower catch the rail or be re-seated on
-      // the next frame instead of shoving the coupled link sideways.
-      if (car.coupled && train.mode === TrainMode.ON_RAIL) {
+      // Keep the rigid link only during the lead's short snap grace. After
+      // that, a follower that has not caught a rail is a real floor body and
+      // must collide with the track/playfield instead of being dragged
+      // through the outside of a curve or off the canvas.
+      const leadRerailGraceHold =
+        car.coupled &&
+        train.mode === TrainMode.ON_RAIL &&
+        (train.reRailCooldown || 0) > 0;
+      if (leadRerailGraceHold) {
         followerRerailChanged =
           tryRerailCar(car, board, train, telemetry) || followerRerailChanged;
         continue;
@@ -682,7 +685,13 @@ export function updateTrain(train, board, dt, bounds, opts = {}) {
       // inside track walls or beyond a solid playfield edge.
       for (const car of train.cars) {
         if (car.powered || car.mode !== TrainMode.OFF_RAIL) continue;
-        if (car.coupled && train.mode === TrainMode.ON_RAIL) continue;
+        if (
+          car.coupled &&
+          train.mode === TrainMode.ON_RAIL &&
+          (train.reRailCooldown || 0) > 0
+        ) {
+          continue;
+        }
         resolveOffRailContacts(car, board, bounds, {
           solidPlayfield: solid,
           telemetry,
