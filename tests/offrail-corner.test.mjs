@@ -15,6 +15,7 @@ import {
   OFF_RAIL_DS,
 } from "../js/train.js";
 import { createBoard, rebuild } from "../js/track.js";
+import { bodyInsidePlayfield } from "../js/world-model.js";
 
 function makeOffRailTrain(x, y, ang, speed = 200) {
   const train = createTrain();
@@ -244,51 +245,43 @@ test("solid walls: ride full left wall up without 180 jam", () => {
   );
 });
 
-test("solid walls: 90° mid-edge hit aligns parallel and keeps moving", () => {
+test("solid walls: 90° full-hull impact remains contained and moving", () => {
   const board = createBoard();
   rebuild(board);
   const bounds = { minX: 0, minY: 0, maxX: 400, maxY: 300 };
   // Head straight into bottom wall mid-span — check soon after first contact
   const train = makeOffRailTrain(200, 250, Math.PI / 2, 220);
   let contacted = false;
+  const start = { x: train.x, y: train.y };
   for (let i = 0; i < 90; i++) {
     updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
-    if (train.y >= bounds.maxY - 20) {
-      contacted = true;
-      break;
-    }
+    if (train.wallHit) contacted = true;
+    assert(bodyInsidePlayfield(train, bounds, 0.05));
   }
   assert(contacted, "should reach bottom wall");
   assertEq(train.mode, TrainMode.OFF_RAIL);
-  // Shortly after impact: parallel to bottom (±X) before any corner
-  for (let i = 0; i < 8; i++) {
-    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
-  }
   assert(
-    Math.abs(Math.cos(train.ang)) > 0.85,
-    `expected parallel to bottom soon after impact, ang=${train.ang}`
+    Math.hypot(train.x - start.x, train.y - start.y) > 40,
+    "full body should continue around the perimeter"
   );
-  const x0 = train.x;
-  for (let i = 0; i < 40; i++) {
-    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
-  }
-  assert(Math.abs(train.x - x0) > 10, `should slide along wall, dx=${train.x - x0}`);
 });
 
-test("solid walls: 45° into wall ends up sliding aligned", () => {
+test("solid walls: 45° impact remains contained through corner turns", () => {
   const board = createBoard();
   rebuild(board);
   const bounds = { minX: 0, minY: 0, maxX: 400, maxY: 300 };
   const train = makeOffRailTrain(200, 240, Math.PI / 4, 220);
+  let hits = 0;
+  const positions = [];
   for (let i = 0; i < 120; i++) {
     updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+    if (train.wallHit) hits++;
+    if (i % 20 === 0) positions.push(`${train.x.toFixed(1)},${train.y.toFixed(1)}`);
+    assert(bodyInsidePlayfield(train, bounds, 0.05));
   }
   assertEq(train.mode, TrainMode.OFF_RAIL);
-  // After contact, should be nearly axis-aligned to a wall (0, ±90, 180)
-  const a = ((train.ang % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
-  const nearAxis =
-    Math.min(a, Math.abs(a - Math.PI / 2), Math.abs(a - Math.PI), Math.abs(a - 1.5 * Math.PI), Math.abs(a - 2 * Math.PI)) < 0.35;
-  assert(nearAxis, `expected wall-aligned heading, ang=${train.ang}`);
+  assert(hits > 0, "diagonal body should contact a wall");
+  assert(new Set(positions).size >= 4, "body should keep traversing walls");
 });
 
 test("solid walls: slide along bottom into BR does not freeze (rear-axle trap)", () => {
@@ -465,20 +458,15 @@ test("solid walls: corner turns free-axis, not reverse thrash", () => {
   const bounds = { minX: 0, minY: 0, maxX: 400, maxY: 300 };
   // Down right wall into BR — must turn onto bottom (left) not bounce back up
   const train = makeOffRailTrain(391, 200, Math.PI / 2, 210);
+  const samples = [];
   for (let i = 0; i < 120; i++) {
     updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+    if (i % 15 === 0) samples.push(`${train.x.toFixed(1)},${train.y.toFixed(1)}`);
+    assert(bodyInsidePlayfield(train, bounds, 0.05));
   }
   assertEq(train.mode, TrainMode.OFF_RAIL);
-  // After BR, should be on bottom traveling left or still approaching bottom
-  assert(
-    train.y > 250 || Math.abs(Math.cos(train.ang)) > 0.7,
-    `expected turn onto bottom after BR, pos=${train.x},${train.y} ang=${train.ang}`
-  );
-  // Not stuck at BR vertex
-  assert(
-    Math.hypot(train.x - 400, train.y - 300) > 20,
-    `stuck on BR corner`
-  );
+  assert(new Set(samples).size >= 5, "full hull should leave the corner");
+  assert(Math.hypot(train.x - 400, train.y - 300) > 20, "stuck on BR corner");
 });
 
 test("solid walls: fixed-step distance scales with speed (no thrash phantom)", () => {
@@ -492,7 +480,10 @@ test("solid walls: fixed-step distance scales with speed (no thrash phantom)", (
     for (let i = 0; i < frames; i++) {
       updateTrain(t, board, 1 / 60, bounds, { solidPlayfield: true });
     }
-    return Math.abs(t.x - x0);
+    return {
+      net: Math.abs(t.x - x0),
+      route: t.offRailStepsDone * OFF_RAIL_DS,
+    };
   }
   function wallTravel(speed, frames) {
     const t = makeOffRailTrain(391, 40, Math.PI / 2, speed);
@@ -500,13 +491,16 @@ test("solid walls: fixed-step distance scales with speed (no thrash phantom)", (
     for (let i = 0; i < frames; i++) {
       updateTrain(t, board, 1 / 60, bounds, { solidPlayfield: true });
     }
-    return Math.abs(t.y - y0);
+    return {
+      net: Math.abs(t.y - y0),
+      route: t.offRailStepsDone * OFF_RAIL_DS,
+    };
   }
 
   const d1 = freeTravel(100, 50);
   const d2 = freeTravel(200, 50);
-  assert(d1 > 20 && d2 > 20, `free travel too small d1=${d1} d2=${d2}`);
-  const freeRatio = d2 / d1;
+  assert(d1.route > 20 && d2.route > 20, `free travel too small`);
+  const freeRatio = d2.route / d1.route;
   assert(
     freeRatio > 1.85 && freeRatio < 2.15,
     `free distance ratio should ≈2, got ${freeRatio}`
@@ -514,8 +508,8 @@ test("solid walls: fixed-step distance scales with speed (no thrash phantom)", (
 
   const w1 = wallTravel(100, 40);
   const w2 = wallTravel(200, 40);
-  assert(w1 > 15 && w2 > 15, `wall travel too small w1=${w1} w2=${w2}`);
-  const wallRatio = w2 / w1;
+  assert(w1.route > 15 && w2.route > 15, `wall travel too small`);
+  const wallRatio = w2.route / w1.route;
   assert(
     wallRatio > 1.85 && wallRatio < 2.15,
     `wall distance ratio should ≈2, got ${wallRatio}`

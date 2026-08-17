@@ -2,6 +2,7 @@
  * One-shot paint bucket: pick a color swatch, click a piece once.
  */
 import { normalizePieceColor } from "../track.js";
+import { t, hasKey } from "../i18n.js";
 
 /** @type {null | "blue"|"green"|"red"|"gray"} */
 let paintColor = null;
@@ -29,11 +30,12 @@ export function createPaintController(deps) {
     refreshSwatches();
     if (paintColor) {
       onArm?.();
-      setHint(
-        `Paint: ${paintColor}. Click a track piece once to color it.`
-      );
+      const colorKey = `color.${paintColor}`;
+      setHint("paint.armed", {
+        color: hasKey(colorKey) ? t(colorKey) : paintColor,
+      });
     } else {
-      setHint("Paint cancelled.");
+      setHint("paint.cancelled");
     }
   }
 
@@ -57,7 +59,10 @@ export function createPaintController(deps) {
     piece.color = normalizePieceColor(paintColor);
     const painted = piece.color;
     clearPaintMode();
-    setHint(`Painted piece ${painted}.`);
+    const colorKey = `color.${painted}`;
+    setHint("paint.applied", {
+      color: hasKey(colorKey) ? t(colorKey) : painted,
+    });
     return true;
   }
 

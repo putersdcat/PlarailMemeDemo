@@ -3,12 +3,15 @@ import {
   createTrain,
   ensureSingleEngine,
   spawnFreeCar,
+  snapCarPoseToHit,
   tryRerailCar,
   resolveCarCollisions,
   carMinCenterDist,
   placeLayoutCars,
+  placeTrainOnPath,
   serializeTrainCars,
   restoreTrainSnapshot,
+  resetConsistMotion,
   railPoseClear,
   createTrainTelemetry,
   startTrain,
@@ -21,9 +24,17 @@ import {
   WHEEL_RADIUS,
 } from "../js/train.js";
 import { createBoard, addPiece, rebuild, closestPathPoint } from "../js/track.js";
-import { angleDiff } from "../js/geometry.js";
+import { angleDiff, HALF_W } from "../js/geometry.js";
+import { FRONT_HITCH } from "../js/train/constants.js";
 import { resolveCircleSegment } from "../js/train/off-rail.js";
 import { loadArntenoughrailsTrack } from "../js/presets.js";
+import {
+  bodyInsidePlayfield,
+  carBodyOverlap,
+  couplerError,
+  findOpenMouthPortal,
+  rearHitch,
+} from "../js/world-model.js";
 
 test("body re-rail probe preserves the body center", () => {
   const board = createBoard();
@@ -241,10 +252,14 @@ test("authored on-rail consist keeps rail-bed contact and solid spacing", () => 
     for (let j = 1; j < train.cars.length; j++) {
       const prev = train.cars[j - 1];
       const car = train.cars[j];
-      const d = Math.hypot(car.x - prev.x, car.y - prev.y);
+      assertEq(
+        carBodyOverlap(prev, car),
+        null,
+        `capsule bodies overlap on rail j=${j}`
+      );
       assert(
-        d + 0.5 >= carMinCenterDist(prev, car),
-        `cars overlap on rail j=${j} d=${d}`
+        couplerError(prev, car) <= 0.05,
+        `pin mismatch on rail j=${j}`
       );
     }
   }
@@ -285,8 +300,8 @@ test("authored R-11 open exit derails cars in physical order", () => {
     (event) => event.type === "car_rail_exit" && event.entity === "trail1"
   );
   assert(lead && mid && trail, "all three cars should report a rail exit");
-  assertEq(lead.fromPath, "p475:main");
-  assertEq(lead.exitConn, "b");
+  assertEq(lead.fromPath, "p475:branch");
+  assertEq(lead.exitConn, "c");
   assert(lead.frame < mid.frame && mid.frame < trail.frame);
 
   const postExit = telemetry
@@ -405,7 +420,94 @@ test("open connector mouth lets a straight derail pass the rail endpoint", () =>
   assert(Math.abs(train.ang) < 0.1, `mouth exit should stay straight ang=${train.ang}`);
 });
 
-test("off-rail followers keep moving and can catch a lead re-rail", () => {
+test("open-mouth capture rejects a lateral side scrape", () => {
+  const board = createBoard();
+  addPiece(board, "R105", 0, 0, 0);
+  rebuild(board);
+
+  const centered = {
+    x: 96,
+    y: -FRONT_HITCH,
+    ang: Math.PI / 2,
+  };
+  const sideScrape = {
+    x: 96 + HALF_W + 1,
+    y: -FRONT_HITCH,
+    ang: Math.PI / 2,
+  };
+
+  assert(findOpenMouthPortal(board, centered));
+  assertEq(findOpenMouthPortal(board, sideScrape), null);
+});
+
+test("over-angle drive-by does not magnetically re-rail", () => {
+  const board = createBoard();
+  addPiece(board, "R01", 0, 0, 0, { flip: false });
+  rebuild(board);
+
+  const train = createTrain();
+  train.mode = TrainMode.OFF_RAIL;
+  train.speed = 210;
+  train.x = 30;
+  train.y = -16;
+  train.ang = (50 * Math.PI) / 180;
+  train.vx = Math.cos(train.ang) * train.speed;
+  train.vy = Math.sin(train.ang) * train.speed;
+  train.reRailDistLeft = 0;
+  train.offRailDistAcc = 0;
+  train.offRailStepsDone = 0;
+
+  const telemetry = createTrainTelemetry({ enabled: true });
+  updateTrain(
+    train,
+    board,
+    1 / 60,
+    { minX: -300, minY: -300, maxX: 300, maxY: 300 },
+    { solidPlayfield: false, telemetry }
+  );
+
+  assertEq(train.mode, TrainMode.OFF_RAIL);
+  assert(
+    !telemetry.snapshot().events.some((event) => event.type === "lead_rerail"),
+    "a 50-degree drive-by must not be captured by the rail mouth"
+  );
+});
+
+test("unconnected 90-degree curve exits on its endpoint tangent", () => {
+  const board = createBoard();
+  addPiece(board, "R105", 0, 0, 0);
+  rebuild(board);
+  const hit = closestPathPoint(board, 70, 70, 120);
+  assert(hit);
+
+  const train = createTrain();
+  placeTrainOnPath(train, hit, { dir: -1, board });
+  startTrain(train);
+  const telemetry = createTrainTelemetry({
+    enabled: true,
+    maxFrames: 100,
+    maxEvents: 1000,
+  });
+  const bounds = { minX: -300, minY: -300, maxX: 300, maxY: 300 };
+  for (let frame = 0; frame < 100; frame++) {
+    updateTrain(train, board, 1 / 60, bounds, {
+      solidPlayfield: true,
+      telemetry,
+    });
+    if (train.mode === TrainMode.OFF_RAIL) break;
+  }
+
+  const exit = telemetry
+    .snapshot()
+    .events.find((event) => event.type === "rail_exit");
+  assert(exit);
+  assert(
+    angleDiff(exit.travelAng, -Math.PI / 2) < (4 * Math.PI) / 180,
+    `90-degree curve exit angle=${exit.travelAng}`
+  );
+});
+
+test("pre-stretched off-rail followers break before lead re-rail motion", () => {
   const board = createBoard();
   for (let i = 0; i < 10; i++) addPiece(board, "R01", i * 96, 0, 0);
   rebuild(board);
@@ -443,27 +545,27 @@ test("off-rail followers keep moving and can catch a lead re-rail", () => {
     car.vy = 0;
   }
 
-  const before = { x: train.cars[1].x, y: train.cars[1].y };
+  const telemetry = createTrainTelemetry({ enabled: true });
   const bounds = { minX: -500, minY: -500, maxX: 1500, maxY: 500 };
-  updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+  updateTrain(train, board, 1 / 60, bounds, {
+    solidPlayfield: true,
+    telemetry,
+  });
   assertEq(train.mode, TrainMode.ON_RAIL);
+  assertEq(train.cars[1].coupled, false);
+  assertEq(train.cars[2].coupled, false);
   assert(
-    Math.hypot(train.cars[1].x - before.x, train.cars[1].y - before.y) > 0.1,
-    "follower must advance while lead re-rails"
+    telemetry
+      .snapshot()
+      .events.some(
+        (event) =>
+          event.type === "coupler_break" &&
+          event.reason === "preexisting_stretch"
+      )
   );
-
-  let caught = false;
-  for (let i = 0; i < 60; i++) {
-    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
-    if (train.cars[1].mode === TrainMode.ON_RAIL) {
-      caught = true;
-      break;
-    }
-  }
-  assert(caught, "follower should catch the rail after lead re-rail");
 });
 
-test("three middle cars recover in predecessor order without downstream whip", () => {
+test("malformed maximum chain breaks rather than healing stretched pins", () => {
   const board = createBoard();
   for (let i = 0; i < 20; i++) addPiece(board, "R01", i * 96, 0, 0);
   rebuild(board);
@@ -505,40 +607,20 @@ test("three middle cars recover in predecessor order without downstream whip", (
   }
 
   const bounds = { minX: -500, minY: -500, maxX: 2500, maxY: 500 };
-  let allRecovered = false;
-  for (let frame = 0; frame < 240; frame++) {
-    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
-
-    for (const car of train.cars) {
-      assert(
-        Number.isFinite(car.x) && Number.isFinite(car.y) && Number.isFinite(car.ang),
-        `car ${car.id} must remain finite at frame ${frame}`
-      );
-    }
-    for (let i = 1; i < train.cars.length; i++) {
-      const prev = train.cars[i - 1];
-      const car = train.cars[i];
-      const d = Math.hypot(car.x - prev.x, car.y - prev.y);
-      assert(
-        d + 0.5 >= carMinCenterDist(prev, car),
-        `cars overlap during recovery i=${i} frame=${frame} d=${d}`
-      );
-    }
-
-    if (train.cars.every((car) => car.mode === TrainMode.ON_RAIL)) {
-      allRecovered = true;
-      break;
-    }
-  }
-
-  assert(allRecovered, "all three mids and the trail should recover");
-  for (const car of train.cars) {
-    assert(car.pathRef, `recovered car ${car.id} needs a rail path`);
-    assert(railPoseClear(board, car), `recovered car ${car.id} must sit on rail`);
+  const telemetry = createTrainTelemetry({ enabled: true });
+  updateTrain(train, board, 1 / 60, bounds, {
+    solidPlayfield: true,
+    telemetry,
+  });
+  assert(train.cars.slice(1).some((car) => !car.coupled));
+  assert(telemetry.snapshot().events.some((event) => event.type === "coupler_break"));
+  for (let i = 1; i < train.cars.length; i++) {
+    if (!train.cars[i].coupled) continue;
+    assert(couplerError(train.cars[i - 1], train.cars[i]) <= 0.05);
   }
 });
 
-test("a middle rerail while lead is off rail does not whip the follow-on chain", () => {
+test("stretched off-rail maximum chain breaks without downstream whip", () => {
   const board = createBoard();
   for (let i = 0; i < 40; i++) addPiece(board, "R01", -400 + i * 96, 0, 0);
   rebuild(board);
@@ -588,7 +670,7 @@ test("a middle rerail while lead is off rail does not whip the follow-on chain",
     maxEvents: 100000,
   });
   const bounds = { minX: -1000, minY: -500, maxX: 4000, maxY: 500 };
-  for (let frame = 0; frame < 500; frame++) {
+  for (let frame = 0; frame < 2; frame++) {
     updateTrain(train, board, 1 / 60, bounds, {
       solidPlayfield: true,
       telemetry,
@@ -601,23 +683,14 @@ test("a middle rerail while lead is off rail does not whip the follow-on chain",
     }
   }
 
-  const rerails = telemetry
-    .snapshot()
-    .events.filter((event) => event.type === "follower_rerail");
-  assertEq(
-    rerails.map((event) => event.carId).join(","),
-    "mid1,mid2,mid3,trail1",
-    "followers must recover from front to back"
-  );
-  for (let i = 0; i < rerails.length; i++) {
-    assertEq(
-      rerails[i].predecessorId,
-      i === 0 ? "lead" : rerails[i - 1].carId
-    );
-    if (i > 0) assert(rerails[i].frame > rerails[i - 1].frame);
-  }
+  const events = telemetry.snapshot().events;
+  assert(events.some((event) => event.type === "coupler_break"));
   assertEq(train.mode, TrainMode.OFF_RAIL, "lead remains off rail in this setup");
-  assert(train.cars.slice(1).every((car) => car.mode === TrainMode.ON_RAIL));
+  assert(train.cars.slice(1).every((car) => !car.coupled));
+  assertEq(
+    events.filter((event) => event.type === "coupler_break").length,
+    1
+  );
 });
 
 test("off-rail followers behind a rerailled lead still collide with solid bounds", () => {
@@ -652,11 +725,7 @@ test("off-rail followers behind a rerailled lead still collide with solid bounds
   });
 
   for (const car of train.cars.slice(1)) {
-    assertEq(car.mode, TrainMode.OFF_RAIL);
-    assert(
-      car.x >= bounds.minX + WHEEL_RADIUS - 0.5,
-      `off-rail follower ${car.id} escaped left wall x=${car.x}`
-    );
+    assert(bodyInsidePlayfield(car, bounds, 0.05));
   }
   assert(
     telemetry
@@ -667,4 +736,185 @@ test("off-rail followers behind a rerailled lead still collide with solid bounds
       ),
     "first detached follower must receive a solid-playfield contact"
   );
+});
+
+test("multi-car snapshot preserves independent lateral coupler slots", () => {
+  const board = createBoard();
+  for (let i = 0; i < 8; i++) addPiece(board, "R01", i * 96, 0, 0);
+  rebuild(board);
+  const hit = closestPathPoint(board, 96 * 3, 0, 40);
+  assert(hit);
+  const source = createTrain();
+  placeLayoutCars(
+    source,
+    [
+      { id: "lead", kind: "engine", powered: true, coupled: true },
+      { id: "mid1", kind: "mid", coupled: true },
+      { id: "trail1", kind: "engine", coupled: true, facing: -1 },
+    ],
+    board,
+    { seatHit: hit, dir: 1 }
+  );
+  source.frontCouplerOffset = -4.5;
+  source.rearCouplerOffset = 7.25;
+  source.cars[0].frontCouplerOffset = source.frontCouplerOffset;
+  source.cars[0].rearCouplerOffset = source.rearCouplerOffset;
+  source.cars[1].frontCouplerOffset = -9;
+  source.cars[1].rearCouplerOffset = 3;
+  source.cars[2].frontCouplerOffset = 6;
+  source.cars[2].rearCouplerOffset = -2;
+  const snapshot = {
+    ...source,
+    cars: serializeTrainCars(source),
+  };
+  const restored = createTrain();
+  placeLayoutCars(restored, snapshot.cars, board, {
+    seatHit: hit,
+    dir: 1,
+    preserveSavedState: true,
+  });
+  assert(restoreTrainSnapshot(restored, board, snapshot));
+  assertEq(restored.frontCouplerOffset, source.frontCouplerOffset);
+  assertEq(restored.rearCouplerOffset, source.rearCouplerOffset);
+  for (let i = 0; i < source.cars.length; i++) {
+    assertEq(
+      restored.cars[i].frontCouplerOffset,
+      source.cars[i].frontCouplerOffset
+    );
+    assertEq(
+      restored.cars[i].rearCouplerOffset,
+      source.cars[i].rearCouplerOffset
+    );
+  }
+});
+
+test("unforced straight motion recenters lateral coupler pockets", () => {
+  const board = createBoard();
+  for (let i = 0; i < 18; i++) addPiece(board, "R01", i * 96, 0, 0);
+  rebuild(board);
+  const hit = closestPathPoint(board, 96 * 5, 0, 40);
+  assert(hit);
+  const train = createTrain();
+  placeLayoutCars(
+    train,
+    [
+      { id: "lead", kind: "engine", powered: true, coupled: true },
+      { id: "mid1", kind: "mid", coupled: true },
+      { id: "trail1", kind: "engine", coupled: true, facing: -1 },
+    ],
+    board,
+    { seatHit: hit, dir: 1 }
+  );
+  // Author a valid straight consist whose connected pin pockets all start at
+  // the lateral extreme. Centers remain on the same rail and every pin still
+  // coincides, so this is a force-free equilibrium test—not a pre-stretched
+  // malformed snapshot.
+  train.frontCouplerOffset = 0;
+  train.rearCouplerOffset = 9;
+  train.cars[0].frontCouplerOffset = 0;
+  train.cars[0].rearCouplerOffset = 9;
+  train.cars[1].frontCouplerOffset = 9;
+  train.cars[1].rearCouplerOffset = 9;
+  train.cars[2].frontCouplerOffset = 9;
+  train.cars[2].rearCouplerOffset = 0;
+  for (let i = 1; i < train.cars.length; i++) {
+    assert(couplerError(train.cars[i - 1], train.cars[i]) <= 0.05);
+  }
+  resetConsistMotion(train);
+  startTrain(train);
+  const bounds = { minX: -1000, minY: -500, maxX: 3000, maxY: 500 };
+  for (let i = 0; i < 120; i++) {
+    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: false });
+    assertEq(train.mode, TrainMode.ON_RAIL);
+  }
+  const railMagnitude =
+    Math.abs(train.cars[0].rearCouplerOffset || 0) +
+    Math.abs(train.cars[1].frontCouplerOffset || 0) +
+    Math.abs(train.cars[1].rearCouplerOffset || 0) +
+    Math.abs(train.cars[2].frontCouplerOffset || 0);
+  assert(railMagnitude < 9, `straight rail should recenter, magnitude=${railMagnitude}`);
+  for (const car of train.cars) {
+    assert(car.frontCouplerOffset <= 9 && car.frontCouplerOffset >= -9);
+    assert(car.rearCouplerOffset <= 9 && car.rearCouplerOffset >= -9);
+  }
+
+  // The same equilibrium must take over after the lead leaves the rail and
+  // all cars continue across an unforced straight floor section.
+  train.mode = TrainMode.OFF_RAIL;
+  train.pathRef = null;
+  train.reRailDistLeft = 9999;
+  train.offRailDistAcc = 0;
+  train.offRailStepsDone = 0;
+  train.x = 600;
+  train.y = 180;
+  train.ang = 0;
+  train.vx = 180;
+  train.vy = 0;
+  for (const [index, car] of train.cars.entries()) {
+    car.mode = TrainMode.OFF_RAIL;
+    car.pathRef = null;
+    car.frontCouplerOffset = index === 0 ? 0 : -9;
+    car.rearCouplerOffset = 9;
+    car.ang = 0;
+    car.vx = 180;
+    car.vy = 0;
+    if (index === 0) {
+      car.x = train.x;
+      car.y = train.y;
+    } else {
+      const pin = rearHitch(train.cars[index - 1]);
+      car.x = pin.x - FRONT_HITCH + car.frontCouplerOffset * 0;
+      car.y = pin.y - car.frontCouplerOffset;
+    }
+  }
+  train.rearCouplerOffset = 9;
+  for (let i = 0; i < 180; i++) {
+    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: false });
+    assertEq(train.mode, TrainMode.OFF_RAIL);
+  }
+  const floorMagnitude = train.cars.reduce(
+    (sum, car) =>
+      sum + Math.abs(car.frontCouplerOffset || 0) + Math.abs(car.rearCouplerOffset || 0),
+    0
+  );
+  assert(floorMagnitude < 18, `straight floor should recenter, magnitude=${floorMagnitude}`);
+});
+
+test("powered engine collides with and pushes uncoupled parked rail stock", () => {
+  const board = createBoard();
+  for (let i = 0; i < 12; i++) addPiece(board, "R01", i * 96, 0, 0);
+  rebuild(board);
+  const hit = closestPathPoint(board, 96, 0, 40);
+  assert(hit);
+  const train = createTrain();
+  placeTrainOnPath(train, hit, { dir: 1, board });
+  const parked = spawnFreeCar(train, "mid", train.x + 145, train.y, 0);
+  assert(parked);
+  const parkedHit = closestPathPoint(board, parked.x + 8, parked.y, 40);
+  assert(parkedHit);
+  snapCarPoseToHit(parked, parkedHit, 1);
+  parked.coupled = false;
+  parked.mode = TrainMode.ON_RAIL;
+  parked.pathRef = {
+    path: parkedHit.path,
+    pieceId: parkedHit.path.pieceId,
+    pathId: parkedHit.path.id,
+  };
+  const before = { x: parked.x, y: parked.y };
+  const bounds = { minX: -500, minY: -500, maxX: 2000, maxY: 500 };
+  startTrain(train);
+  let impacted = false;
+  for (let i = 0; i < 120; i++) {
+    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: false });
+    if (parked.mode === TrainMode.OFF_RAIL) {
+      impacted = true;
+      break;
+    }
+  }
+  assert(impacted, "powered engine should impact parked uncoupled stock");
+  assert(
+    Math.hypot(parked.x - before.x, parked.y - before.y) > 0.1,
+    "parked stock should be displaced by the impact"
+  );
+  assertEq(parked.pathRef, null);
 });

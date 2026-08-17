@@ -3,7 +3,12 @@
  */
 
 import { UNIT } from "./geometry.js";
-import { FRONT_AXLE_OFFSET, TrainMode } from "./train.js";
+import {
+  FRONT_AXLE_OFFSET,
+  TRAIN_LENGTH,
+  TRAIN_RADIUS,
+  TrainMode,
+} from "./train.js";
 import { drawTrain, drawPaletteTrainIcon } from "./render/draw-train.js";
 export { drawTrain, drawPaletteTrainIcon } from "./render/draw-train.js";
 import { drawPiece } from "./render/draw-piece.js";
@@ -175,10 +180,52 @@ export function drawScene(ctx, view, board, train, ghost, opts = {}) {
     ctx.setLineDash([]);
   }
 
+  // Keep the existing consist visible while a new car is being dragged. When
+  // re-dragging an existing car, omit only that car so the ghost is not drawn
+  // twice at the old and new poses.
+  if (opts.trainVisible && train?.cars?.length) {
+    let visibleTrain = train;
+    if (opts.trainGhost?.fromExisting && opts.trainGhost.carId) {
+      const cars = train.cars.filter((car) => car.id !== opts.trainGhost.carId);
+      visibleTrain = cars.length ? { ...train, cars } : null;
+    }
+    if (visibleTrain) drawTrain(ctx, visibleTrain);
+  }
+
   // Train ghost while placing / dragging (piece-like)
   if (opts.trainGhost) {
     const g = opts.trainGhost;
     ctx.save();
+    const targets = g.insertionTargets || [];
+    if (targets.length) {
+      for (const target of targets) {
+        const active = target === g.insertion;
+        const targetAng = target.ang || 0;
+        const tx = target.x;
+        const ty = target.y;
+        ctx.save();
+        ctx.globalAlpha = active ? 0.95 : 0.5;
+        ctx.translate(tx, ty);
+        ctx.rotate(targetAng);
+        ctx.strokeStyle = active
+          ? "rgba(245, 158, 11, 0.98)"
+          : "rgba(58, 143, 214, 0.7)";
+        ctx.fillStyle = active
+          ? "rgba(245, 158, 11, 0.12)"
+          : "rgba(58, 143, 214, 0.06)";
+        ctx.lineWidth = active ? 2.5 : 1.5;
+        ctx.setLineDash([7, 5]);
+        ctx.beginPath();
+        ctx.roundRect?.(-TRAIN_LENGTH * 0.46, -TRAIN_RADIUS, TRAIN_LENGTH * 0.92, TRAIN_RADIUS * 2, 8);
+        if (!ctx.roundRect) {
+          ctx.rect(-TRAIN_LENGTH * 0.46, -TRAIN_RADIUS, TRAIN_LENGTH * 0.92, TRAIN_RADIUS * 2);
+        }
+        ctx.fill();
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
+      }
+    }
     ctx.globalAlpha = g.onRail ? 0.95 : 0.4;
     const ang = g.ang || 0;
     const ghostTrain = {
@@ -187,6 +234,20 @@ export function drawScene(ctx, view, board, train, ghost, opts = {}) {
       ang,
       mode: TrainMode.IDLE,
       selected: true,
+      cars: [
+        {
+          id: "ghost",
+          x: g.onRail ? g.x - Math.cos(ang) * FRONT_AXLE_OFFSET : g.x,
+          y: g.onRail ? g.y - Math.sin(ang) * FRONT_AXLE_OFFSET : g.y,
+          ang,
+          mode: TrainMode.IDLE,
+          role: g.carKind === "mid" ? "mid" : "trail",
+          kind: g.carKind === "mid" ? "mid" : "engine",
+          facing: g.powerIntent === "passive" ? -1 : 1,
+          powered: g.powerIntent === "active",
+          coupled: false,
+        },
+      ],
     };
     drawTrain(ctx, ghostTrain);
     if (g.onRail) {
@@ -209,8 +270,6 @@ export function drawScene(ctx, view, board, train, ghost, opts = {}) {
       ctx.fill();
     }
     ctx.restore();
-  } else if (opts.trainVisible && train) {
-    drawTrain(ctx, train);
   }
 
   ctx.restore();

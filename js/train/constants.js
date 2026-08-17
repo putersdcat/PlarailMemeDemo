@@ -7,7 +7,7 @@ export const TrainMode = {
   IDLE: "idle",
   ON_RAIL: "on_rail",
   OFF_RAIL: "off_rail",
-  STOPPED: "stopped",
+  STALLED: "stalled",
 };
 
 /**
@@ -16,6 +16,36 @@ export const TrainMode = {
  */
 export const TRAIN_RADIUS = HALF_W - 2; // 18
 export const TRAIN_LENGTH = Math.round(TRACK_W * 2.15 * (4 / 3)); // ~115
+
+/**
+ * Coupling geometry.
+ *
+ * The two extended hitch tips occupy half of the visible air gap each. A
+ * healthy coupled pair therefore has coincident hitch tips (zero error), not
+ * a spring whose center spacing is allowed to drift around COUPLER_DIST.
+ */
+export const COUPLER_AIR_GAP = 12;
+export const COUPLER_DIST = TRAIN_LENGTH + COUPLER_AIR_GAP;
+export const REAR_HITCH = TRAIN_LENGTH * 0.5 + COUPLER_AIR_GAP * 0.5;
+export const FRONT_HITCH = TRAIN_LENGTH * 0.5 + COUPLER_AIR_GAP * 0.5;
+/**
+ * Real coupler pins can float laterally in their pockets while the bar keeps
+ * its fixed length. Each car end gets an independent slot equal to one
+ * quarter of the visible 36 px car width (9 px at the current scale).
+ */
+export const COUPLER_LATERAL_LIMIT = TRAIN_RADIUS * 0.5;
+/** Per-60 Hz frame return toward a centered pin pocket when unforced. */
+export const COUPLER_CENTER_BIAS_OFF_RAIL = 0.32;
+export const COUPLER_CENTER_BIAS_ON_RAIL = 0.24;
+/** Heading delta over which a rail curve fully overcomes centering. */
+export const COUPLER_CENTER_CURVE_ANGLE = Math.PI / 3;
+
+/** Runtime quantization. Fine enough to be invisible, coarse enough that
+ * telemetry and saved state do not accumulate floating-point confetti. */
+export const POSITION_QUANTUM = 0.001;
+export const ANGLE_QUANTUM = 0.000001;
+/** Camera fit margin that leaves one full-width car corridor outside track. */
+export const SOLID_PLAYFIELD_FIT_PAD = 64;
 
 /**
  * Physics wheelbase — pre-scale compact train (L=48 era).
@@ -28,13 +58,9 @@ export const REAR_AXLE_OFFSET = -PHYS_LEN * 0.28; // ~-13.4
 /** Compact contact radius used before the visual scale-up. */
 export const WHEEL_RADIUS = 9;
 
-/**
- * Re-rail snap window — intentionally tight so drive-bys past
- * perpendicular track do not steal the train.
- * Mouth re-entry is a bit looser than mid-path.
- */
+/** Re-rail approach window — drive-bys more than 15° off a rail do not steal. */
 export const RE_RAIL_LATERAL = 14;
-export const RE_RAIL_ANGLE = (38 * Math.PI) / 180;
+export const RE_RAIL_ANGLE = (15 * Math.PI) / 180;
 /** Geometric hop between path ends when graph link is missing. */
 export const PATH_HOP_DIST = 30;
 export const PATH_HOP_ANGLE = (40 * Math.PI) / 180;

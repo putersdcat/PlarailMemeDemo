@@ -272,6 +272,7 @@ function stopStraightTemplate(flip) {
     { x1: bx0, y1: by1, x2: bx1, y2: by1 },
     { x1: bx1, y1: by1, x2: bx1, y2: by0 }
   );
+  base.solidPolys = [rectPoly(bx0, by0, bx1 - bx0, by1 - by0)];
   base.bump = true;
   return base;
 }
@@ -697,16 +698,16 @@ function uTurnTemplate(flip, mirror) {
   const p0 = pts[0];
   const p1 = pts[pts.length - 1];
 
-  // Tangents at semicircle ends
-  // a=π point (−r,0): CCW tangent is −Y if going π→0? path π→0 is CW decreasing...
-  // sampleArc from a0 to a1: for !mirror a0=π a1=0, going through (0,r) top if y-up... 
-  // Our y+ is down. a=π/2 is (0,r) = screen down.
-  // !mirror: π → 0 via π/2: starts (−r,0) ends (r,0) through (0,+r) bottom of screen.
-  const startDir = mirror ? Math.PI / 2 : -Math.PI / 2;
-  const endDir = mirror ? Math.PI / 2 : -Math.PI / 2;
-  // Outward connector angles (pointing out of the piece)
-  // At start: coming from path direction startDir; outward opposite entry = startDir+π for port a
-  // Port "a" at p0 faces outward against path start
+  // Derive connector directions from the sampled path itself. The previous
+  // hand-authored signs were reversed for both mirrors (~176° discontinuity).
+  const startDir = Math.atan2(
+    pts[1].y - pts[0].y,
+    pts[1].x - pts[0].x
+  );
+  const endDir = Math.atan2(
+    pts[pts.length - 1].y - pts[pts.length - 2].y,
+    pts[pts.length - 1].x - pts[pts.length - 2].x
+  );
   const angA = normalizeAngle(startDir + Math.PI);
   const angB = normalizeAngle(endDir);
 
@@ -918,7 +919,11 @@ function offsetPolylinePoly(pts, halfW) {
     left.push({ x: pts[i].x + nx * halfW, y: pts[i].y + ny * halfW });
     right.push({ x: pts[i].x - nx * halfW, y: pts[i].y - ny * halfW });
   }
-  return [...left, ...right.reverse()];
+  const poly = [...left, ...right.reverse()];
+  // Physics treats connector mouths as portals, not end-cap walls. Array
+  // metadata is intentionally non-JSON: worldGeometry copies it explicitly.
+  poly.openEdges = [left.length - 1, poly.length - 1];
+  return poly;
 }
 
 function rectPoly(x, y, w, h) {
@@ -1014,6 +1019,25 @@ export function worldGeometry(piece) {
     const p2 = transformPoint({ x: w.x2, y: w.y2 }, piece);
     return { x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, pieceId: piece.id };
   });
+  const localSolidPolys = tpl.webbingPolys?.length
+    ? tpl.webbingPolys
+    : tpl.bed
+      ? [tpl.bed]
+      : [];
+  const solidPolys = [
+    ...localSolidPolys.map((poly) => ({
+      pieceId: piece.id,
+      points: poly.map((pt) => transformPoint(pt, piece)),
+      openEdges: Array.isArray(poly.openEdges) ? [...poly.openEdges] : [],
+      kind: "track-bed",
+    })),
+    ...(tpl.solidPolys || []).map((poly) => ({
+      pieceId: piece.id,
+      points: poly.map((pt) => transformPoint(pt, piece)),
+      openEdges: [],
+      kind: "fixture",
+    })),
+  ];
   let lever = null;
   if (tpl.lever) {
     const p = transformPoint(tpl.lever, piece);
@@ -1023,6 +1047,6 @@ export function worldGeometry(piece) {
     const p = transformPoint(lv, piece);
     return { x: p.x, y: p.y };
   });
-  return { tpl, connectors, paths, walls, lever, levers };
+  return { tpl, connectors, paths, walls, solidPolys, lever, levers };
 }
 

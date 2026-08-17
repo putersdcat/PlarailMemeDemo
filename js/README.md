@@ -20,6 +20,7 @@ No npm runtime dependencies. Browser loads ES modules; tests run with Node.
 | `render/draw-train.js` | Bullet-train sprite |
 | `sound.js` | Web Audio plastic gear motor + clacks |
 | `presets.js` | Gold-standard layout + oval helpers |
+| `i18n.js` | Locale registry + `t()` — catalogs in `/locales/*.json` |
 | `app/paint.js` | One-shot paint bucket UI |
 | `app/io.js` | Save/load/localStorage |
 | `app/camera.js` | Pan, zoom, fit, playfield bounds |
@@ -47,4 +48,4 @@ Smoke tests cover: full catalog templates, meme layout round-trip, derail motion
 | Script | Role |
 |--------|------|
 | `scripts/record-demo.mjs` | Playwright demo capture (1080p/480p + screenshot) |
-| `scripts/gen-presets.mjs` | Regenerate `presets.js` body from `layouts/real-meme-track.json` |
+| `scripts/gen-presets.mjs` | Regenerate `presets.js` + `layouts-arntenoughrails.js` from `layouts/real-meme-track.json` and `layouts/arntenoughrails.json` |

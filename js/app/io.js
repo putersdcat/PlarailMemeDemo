@@ -2,6 +2,7 @@
  * Save / load / localStorage persistence for layouts.
  */
 import { serializeBoard, loadBoard } from "../track.js";
+import { t, hasKey } from "../i18n.js";
 
 /**
  * @param {{
@@ -43,10 +44,18 @@ export function createIo(deps) {
     clearSelection,
     lsKey,
     defaultSpeed = 210,
+    getSolidPlayfield,
+    getWorldPersistence,
+    solidFitPad = 64,
   } = deps;
 
   function buildSavePayload() {
     const payload = serializeBoard(board);
+    const solid = !!getSolidPlayfield?.();
+    payload.solidPlayfield = solid;
+    if (solid) payload.northAlign = true;
+    const world = getWorldPersistence?.();
+    if (world) payload.world = world;
     if (getTrainPlaced()) {
       payload.train = {
         x: train.x,
@@ -58,6 +67,8 @@ export function createIo(deps) {
         dir: train.dir,
         vx: train.vx,
         vy: train.vy,
+        frontCouplerOffset: train.frontCouplerOffset || 0,
+        rearCouplerOffset: train.rearCouplerOffset || 0,
         poweredId: train.poweredId,
         selectedCarId: train.selectedCarId,
         pathRef: train.pathRef
@@ -72,6 +83,7 @@ export function createIo(deps) {
         reRailDistLeft: train.reRailDistLeft,
         reRailCooldown: train.reRailCooldown,
         openMouthClearSteps: train.openMouthClearSteps,
+        openMouthAdjacentPieceId: train.openMouthAdjacentPieceId,
         cornerLockSteps: train.cornerLockSteps,
         cornerLockUx: train.cornerLockUx,
         cornerLockUy: train.cornerLockUy,
@@ -112,7 +124,7 @@ export function createIo(deps) {
   function applyLoadedLayout(data, label = "layout") {
     const result = loadBoard(board, data);
     if (!result.ok) {
-      setHint(result.error || "Could not load layout.");
+      setHint(result.error || t("io.loadError"));
       return false;
     }
     // A saved file may need the same board alignment/feature setup as a
@@ -199,11 +211,19 @@ export function createIo(deps) {
     applySpeed(
       trainData?.speed ?? loadedData.speed ?? defaultSpeed
     );
-    persistLayout();
     fitBoardToView(
-      loadedData?.solidPlayfield || loadedData?.northAlign ? 18 : 48
+      loadedData?.solidPlayfield || loadedData?.northAlign
+        ? solidFitPad
+        : 48
     );
-    setHint(`Loaded ${result.pieceCount} pieces from ${label}.`);
+    // Legacy solid layouts acquire stable world bounds during fit, so save
+    // only afterward. Current normalized saves retain their exact bounds.
+    persistLayout();
+    const labelKey = label === "autosave" ? "io.autosave" : null;
+    setHint("io.loaded", {
+      count: result.pieceCount,
+      label: labelKey && hasKey(labelKey) ? t(labelKey) : label,
+    });
     updateStatus();
     return true;
   }
@@ -239,12 +259,13 @@ export function createIo(deps) {
       const defaultName = `plarail-layout-${dateStamp()}.json`;
       persistLayout();
       downloadJsonFile(json, defaultName);
-      setHint(
-        `Saved ${board.pieces.length} pieces → Downloads/${defaultName} (+ browser autosave).`
-      );
+      setHint("io.saveOk", {
+        count: board.pieces.length,
+        name: defaultName,
+      });
     } catch (err) {
       console.error("Save failed:", err);
-      setHint(`Save failed: ${err?.message || err}`);
+      setHint("io.saveFail", { error: err?.message || err });
     }
   }
 
@@ -279,7 +300,7 @@ export function createIo(deps) {
           const data = JSON.parse(text);
           applyLoadedLayout(data, file.name);
         } catch (err) {
-          setHint(`Load failed: ${err.message || err}`);
+          setHint("io.loadFail", { error: err.message || err });
         }
       });
   }

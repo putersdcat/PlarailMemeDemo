@@ -7,44 +7,50 @@
       name="description"
       content="Plarail Meme Real-2-Sim — browser track builder and train physics (MIT)."
     />
-    <meta name="theme-color" content="#1a2332" />
+    <link rel="icon" href="data:," />
     <title>Plarail Meme - Real-2-Sim</title>
-    <link rel="stylesheet" href="css/styles.css?v=20260806m" />
+    <link rel="stylesheet" href="css/styles.css?v=20260817c" />
   </head>
   <body>
     <div id="app">
-      <aside id="sidebar" aria-label="Track palette and tools">
+      <aside id="sidebar" aria-label="Track palette and tools" data-i18n-aria="ui.sidebar">
         <header>
           <div class="sidebar-header-row">
-            <h1>Plarail Meme - Real-2-Sim</h1>
+            <h1 data-i18n="app.title">Plarail Meme - Real-2-Sim</h1>
+            <div class="lang-toggle" role="group" data-i18n-aria="lang.group">
+              <button type="button" data-locale="en" title="English" aria-label="English">🇺🇸</button>
+              <button type="button" data-locale="ja" title="日本語" aria-label="日本語">🇯🇵</button>
+            </div>
             <button
               type="button"
               class="sidebar-toggle"
               id="btn-sidebar-toggle"
               title="Collapse sidebar"
               aria-label="Collapse sidebar"
+              data-i18n-title="ui.collapseSidebar"
+              data-i18n-aria="ui.collapseSidebar"
               aria-expanded="true"
               aria-controls="sidebar"
             >
               ‹
             </button>
           </div>
-          <p>
+          <p data-i18n-html="app.blurb">
             Unit = R-01 = R-03 radius.<br />
             <strong>Left-drag</strong> place · <strong>Right-click</strong> train/rotate.
           </p>
         </header>
 
-        <div class="section-label">Track pieces</div>
+        <div class="section-label" data-i18n="ui.trackPieces">Track pieces</div>
         <div id="palette">
           <!-- Populated by main.js from catalog list -->
         </div>
 
         <div class="tools">
-          <div class="section-label" style="padding: 0 0 4px">File</div>
+          <div class="section-label" data-i18n="ui.file">File</div>
           <div class="tool-row">
-            <button type="button" class="ui primary" id="btn-save">Save JSON</button>
-            <button type="button" class="ui" id="btn-load">Load JSON</button>
+            <button type="button" class="ui primary" id="btn-save" data-i18n="ui.saveJson">Save JSON</button>
+            <button type="button" class="ui" id="btn-load" data-i18n="ui.loadJson">Load JSON</button>
           </div>
           <input
             type="file"
@@ -52,17 +58,17 @@
             accept="application/json,.json"
             hidden
           />
-          <div class="track-load-row" role="group" aria-label="Built-in tracks">
-            <select id="track-select" title="Choose a built-in track" aria-label="Track layout">
+          <div class="track-load-row" role="group" aria-label="Built-in tracks" data-i18n-aria="ui.builtInTracks">
+            <select id="track-select" title="Choose a built-in track" aria-label="Track layout" data-i18n-title="ui.chooseTrack" data-i18n-aria="ui.trackLayout">
               <!-- Populated by main.js from TRACK_CATALOG -->
             </select>
-            <button type="button" class="ui primary" id="btn-load-track" title="Load selected track">
+            <button type="button" class="ui primary" id="btn-load-track" title="Load selected track" data-i18n="ui.load" data-i18n-title="ui.loadTrack">
               Load
             </button>
           </div>
           <div class="tool-row">
-            <button type="button" class="ui" id="btn-walls">Wall debug</button>
-            <button type="button" class="ui" id="btn-help">Help</button>
+            <button type="button" class="ui" id="btn-walls" data-i18n="ui.wallDebug">Wall debug</button>
+            <button type="button" class="ui" id="btn-help" data-i18n="ui.help">Help</button>
           </div>
           <div class="tool-row">
             <button
@@ -70,6 +76,8 @@
               class="ui"
               id="btn-fit"
               title="Fit whole track in view"
+              data-i18n="ui.fitTrack"
+              data-i18n-title="ui.fitTrackTitle"
             >
               Fit track
             </button>
@@ -84,6 +92,8 @@
           id="btn-sidebar-open"
           title="Show sidebar"
           aria-label="Show sidebar"
+          data-i18n-title="ui.showSidebar"
+          data-i18n-aria="ui.showSidebar"
           aria-expanded="false"
           aria-controls="sidebar"
           hidden
@@ -92,19 +102,21 @@
         </button>
         <canvas id="stage"></canvas>
         <div id="hud">
-          <div id="mode-badge" class="badge">Mode: <strong>Build</strong></div>
+          <div id="mode-badge" class="badge" data-i18n-html="badge.build">Mode: <strong>Build</strong></div>
         </div>
-        <div id="hint">Loading…</div>
+        <div id="hint" data-i18n="ui.loading">Loading…</div>
       </div>
 
       <footer id="toolbar">
-        <div class="toolbar-edit" role="group" aria-label="Edit">
+        <div class="toolbar-edit" role="group" aria-label="Edit" data-i18n-aria="ui.edit">
           <button
             type="button"
             class="icon-btn"
             id="btn-rotate"
             title="Rotate 45° (R)"
             aria-label="Rotate 45 degrees"
+            data-i18n-title="ui.rotateTitle"
+            data-i18n-aria="ui.rotate"
           >
             ↻
           </button>
@@ -114,6 +126,8 @@
             id="btn-flip"
             title="Flip: piece gender M↔F, or train direction when train selected (F)"
             aria-label="Flip gender or train direction"
+            data-i18n-title="ui.flipTitle"
+            data-i18n-aria="ui.flip"
           >
             🦄
           </button>
@@ -123,6 +137,8 @@
             id="btn-mirror"
             title="Mirror L/R or A/B (M) — curve bend / turnout side"
             aria-label="Mirror left right"
+            data-i18n-title="ui.mirrorTitle"
+            data-i18n-aria="ui.mirror"
           >
             ⇋
           </button>
@@ -132,6 +148,8 @@
             id="btn-delete"
             title="Delete selected"
             aria-label="Delete selected"
+            data-i18n-title="ui.delete"
+            data-i18n-aria="ui.delete"
           >
             🗑
           </button>
@@ -141,6 +159,8 @@
             id="btn-clear"
             title="Clear board"
             aria-label="Clear board"
+            data-i18n-title="ui.clearBoard"
+            data-i18n-aria="ui.clearBoard"
           >
             ✕
           </button>
@@ -150,27 +170,31 @@
             id="btn-solid-walls"
             title="Playfield walls: bounce at the edge (off = stop at edge)"
             aria-label="Toggle solid playfield walls"
+            data-i18n-title="ui.solidWallsTitle"
+            data-i18n-aria="ui.solidWalls"
             aria-pressed="false"
           >
             🧱
           </button>
         </div>
         <div class="sep"></div>
-        <button type="button" class="ui primary" id="btn-start">Start</button>
-        <button type="button" class="ui" id="btn-stop">Stop</button>
-        <button type="button" class="ui" id="btn-reset-train">Reset train</button>
+        <button type="button" class="ui primary" id="btn-start" data-i18n="ui.start">Start</button>
+        <button type="button" class="ui" id="btn-stop" data-i18n="ui.stop">Stop</button>
+        <button type="button" class="ui" id="btn-reset-train" data-i18n="ui.resetTrain">Reset train</button>
         <div class="sep"></div>
         <button
           type="button"
           class="ui"
           id="btn-fit-toolbar"
           title="Fit whole track in view (0)"
+          data-i18n="ui.fit"
+          data-i18n-title="ui.fitTrackToolbar"
         >
           Fit
         </button>
         <div class="sep"></div>
         <label>
-          Speed
+          <span data-i18n="ui.speed">Speed</span>
           <input
             id="speed"
             type="range"
@@ -181,22 +205,25 @@
           />
         </label>
         <div class="sep"></div>
-        <span id="status-text">Ready</span>
+        <span id="status-text" data-i18n="ui.ready">Ready</span>
         <div class="sep paint-sep"></div>
         <div
           class="paint-swatches"
           role="group"
           aria-label="Paint track color"
           title="Click a color, then click a piece to paint once"
+          data-i18n-aria="ui.paintGroup"
+          data-i18n-title="ui.paintTitle"
         >
-          <span class="paint-label">Paint</span>
+          <span class="paint-label" data-i18n="ui.paint">Paint</span>
           <button
             type="button"
             class="paint-swatch"
             data-color="blue"
             title="Blue (default)"
             aria-label="Paint blue"
-            style="--swatch: #3a8fd6"
+            data-i18n-title="color.blue"
+            data-i18n-aria="color.paintBlue"
           ></button>
           <button
             type="button"
@@ -204,7 +231,8 @@
             data-color="green"
             title="Green"
             aria-label="Paint green"
-            style="--swatch: #3d9e5c"
+            data-i18n-title="color.green"
+            data-i18n-aria="color.paintGreen"
           ></button>
           <button
             type="button"
@@ -212,7 +240,8 @@
             data-color="red"
             title="Red"
             aria-label="Paint red"
-            style="--swatch: #c94c4c"
+            data-i18n-title="color.red"
+            data-i18n-aria="color.paintRed"
           ></button>
           <button
             type="button"
@@ -220,7 +249,8 @@
             data-color="yellow"
             title="Yellow"
             aria-label="Paint yellow"
-            style="--swatch: #e0b833"
+            data-i18n-title="color.yellow"
+            data-i18n-aria="color.paintYellow"
           ></button>
           <button
             type="button"
@@ -228,79 +258,85 @@
             data-color="gray"
             title="Gray"
             aria-label="Paint gray"
-            style="--swatch: #7a828c"
+            data-i18n-title="color.gray"
+            data-i18n-aria="color.paintGray"
           ></button>
+        </div>
+        <div class="sep"></div>
+        <div class="lang-toggle lang-toggle-toolbar" role="group" data-i18n-aria="lang.group">
+          <button type="button" data-locale="en" title="English" aria-label="English">🇺🇸</button>
+          <button type="button" data-locale="ja" title="日本語" aria-label="日本語">🇯🇵</button>
         </div>
       </footer>
     </div>
 
     <div id="help-modal" role="dialog" aria-modal="true">
       <div class="card">
-        <h2>Controls</h2>
+        <h2 data-i18n="ui.controls">Controls</h2>
         <ul>
-          <li>
+          <li data-i18n-html="help.drag">
             <strong>Left-drag</strong> from palette — magnetic snap joins open ends
             (no auto-rotate / auto-flip). Rotate with ↻ / R first if needed.
           </li>
-          <li>
+          <li data-i18n-html="help.rightClick">
             <strong>Right-click piece</strong> — rotate 45° ·
             <strong>lever</strong> — switch ·
             <strong>empty + palette</strong> — stamp.
             (Train is <em>not</em> placed with right-click.)
           </li>
-          <li>
+          <li data-i18n-html="help.toolbar">
             Bottom bar: ↻ rotate · <strong>🦄 gender / train flip</strong> · <strong>⇋ mirror</strong> ·
             🗑 delete · ✕ clear. <strong>Ctrl+S</strong> save · <strong>Ctrl+A</strong> select all.
           </li>
-          <li>
+          <li data-i18n-html="help.train">
             <strong>🚂 Train</strong> — drag from palette onto a rail (like a piece).
             Click train to select · drag to re-seat · 🦄 / F reverses direction · Start / Space runs.
           </li>
-          <li>
+          <li data-i18n-html="help.boxSelect">
             <strong>Box-select:</strong> drag empty floor to multi-select, then drag any
             selected piece to move the group. Shift-click to add/remove.
           </li>
-          <li>
+          <li data-i18n-html="help.save">
             <strong>Save JSON</strong> downloads a file and autosaves to the browser
             (restored on reload). Never loses the layout to a stuck save dialog.
           </li>
-          <li>
+          <li data-i18n-html="help.paint">
             <strong>Paint</strong> (toolbar swatches): click Blue / Green / Red / Gray,
             then click a piece once — color applies and the cursor returns to normal.
           </li>
-          <li>
+          <li data-i18n-html="help.view">
             <strong>View:</strong> scroll / pinch to zoom · drag empty floor to pan ·
             <strong>Fit track</strong> frames the whole layout. Sidebar collapses on
             narrow screens (› reopens it).
           </li>
-          <li>
+          <li data-i18n-html="help.walls">
             <strong>🧱 Walls:</strong> solid wood playfield border — train bounces at
             the edge instead of stopping. Toggle on the bottom toolbar.
           </li>
-          <li>
+          <li data-i18n-html="help.tracks">
             <strong>Tracks:</strong> pick a built-in layout in the sidebar dropdown,
             then <strong>Load</strong>.
           </li>
-          <li>
+          <li data-i18n-html="help.sound">
             <strong>Sound</strong> is pure Web Audio (no libraries): plastic gear
             mesh (bandpass noise × square AM). Same motor on-rail and off-rail
             (quieter off-rail; tooth rate follows speed). Unlocks after first click.
           </li>
         </ul>
-        <h2>Units (critical)</h2>
-        <p>
+        <h2 data-i18n="ui.unitsCritical">Units (critical)</h2>
+        <p data-i18n-html="help.units">
           <strong>1 unit = R-01 length = R-03 radius</strong> (sim <code>UNIT</code> px).
           R-20 = ¼ · R-02 = ½ · R-07 = 2 · R-21 / R-10.5 = 90° at r=1 · R-04 large r≈1.4 ·
           R-13 double-track gap ≈ 0.32 unit. Catalog extras: R-10 U-turn, R-22 Y, R-23 wavy.
         </p>
         <div class="close-row">
-          <button type="button" class="ui primary" id="btn-help-close">
+          <button type="button" class="ui primary" id="btn-help-close" data-i18n="ui.close">
             Close
           </button>
         </div>
       </div>
     </div>
 
-    <script type="module" src="js/main.js?v=20260808h"></script>
+    <script type="module" src="js/main.js?v=20260817c"></script>
   </body>
 </html>

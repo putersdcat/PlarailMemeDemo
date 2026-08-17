@@ -43,6 +43,18 @@ test("rebuild weld does not break perfect joins", () => {
   assertEq(board.connectors.filter((c) => c.linked).length, 2);
 });
 
+test("a residual connector gap is not promoted to a physics link", () => {
+  const board = createBoard();
+  const a = addPiece(board, "R01", 0, 0, 0, { flip: false });
+  addPiece(board, "R01", UNIT + 20, 0, 0, { flip: false });
+  rebuild(board);
+
+  assertEq(
+    board.graph.nodes.get(`${a.id}:b`)?.edges.some((edge) => edge.link),
+    false
+  );
+});
+
 test("meme layout linked gaps stay within soft-link range after rebuild", () => {
   const board = createBoard();
   const r = loadBoard(board, REAL_MEME_LAYOUT);

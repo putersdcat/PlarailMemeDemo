@@ -5,7 +5,7 @@
  * Solid playfield: separate AABB resolve (align + slide / corner free-axis),
  * not mixed into track segment thrash.
  */
-import { angleDiff, normalizeAngle } from "../geometry.js";
+import { HALF_W, angleDiff, normalizeAngle } from "../geometry.js";
 import { closestPathPoint } from "../track.js";
 import {
   TrainMode,
@@ -14,19 +14,35 @@ import {
   WHEEL_RADIUS,
   RE_RAIL_LATERAL,
   RE_RAIL_ANGLE,
+  FRONT_HITCH,
+  TRAIN_RADIUS,
 } from "./constants.js";
 import {
   frontAxlePos,
   rearAxlePos,
   bodyFromRailProbe,
 } from "./pose.js";
-import { placeFollowers, seatConsistHard, markChainOffRail } from "./consist.js";
+import { markChainOffRail, railPoseClear } from "./consist.js";
+import {
+  carBodyExtents,
+  findOpenMouthPortal,
+  findOpenMouthExitPortal,
+  playfieldBodyContact,
+  playfieldPortalSides,
+  quantizePose,
+  trackBodyContact,
+} from "../world-model.js";
 
 export const OFF_RAIL_DS = 2.5;
 /** Center-slider reference speed (for re-rail unlock distance). */
 export const OFF_RAIL_REF_SPEED = 210;
 
-export function leaveRails(train, reason = "unknown", telemetry = null) {
+export function leaveRails(
+  train,
+  reason = "unknown",
+  telemetry = null,
+  details = {}
+) {
   telemetry?.event("leave_rails", {
     reason,
     fromMode: train.mode,
@@ -51,6 +67,14 @@ export function leaveRails(train, reason = "unknown", telemetry = null) {
   train.cornerLockUx = null;
   train.cornerLockUy = null;
   train.openMouthClearSteps = reason === "no_next_path" ? 32 : 0;
+  train.openMouthPieceId =
+    reason === "no_next_path"
+      ? details.openMouthPieceId || details.pieceId || null
+      : null;
+  train.openMouthAdjacentPieceId =
+    reason === "no_next_path"
+      ? details.openMouthAdjacentPieceId || null
+      : null;
   // The powered lead leaves first. Followers with valid rail references keep
   // their own rail domain until they reach their own open endpoint; this
   // avoids teleporting the entire visible consist into floor physics.
@@ -268,47 +292,263 @@ function isOpenMouthExit(board, x, y, ux, uy) {
   return null;
 }
 
-function resolveTrackWallPose(x, y, ang, ux, uy, preferAng, board) {
+function turnToward(current, target, maxTurn = 0.1) {
+  let delta = normalizeAngle(target - current);
+  delta = Math.max(-maxTurn, Math.min(maxTurn, delta));
+  return normalizeAngle(current + delta);
+}
+
+function mouthApproachAligned(portal, travelAng) {
+  if (!portal) return false;
+  const inwardAng = normalizeAngle(portal.wang + Math.PI);
+  return angleDiff(travelAng, inwardAng) <= RE_RAIL_ANGLE + 1e-6;
+}
+
+function resolveAxleWallPose(
+  x,
+  y,
+  ang,
+  ux,
+  uy,
+  preferAng,
+  board,
+  ignorePieceIds = []
+) {
+  // Keep the proven main-branch floor response: compact front/rear axle
+  // circles settle against the renderer's outer wall segments, and the
+  // front contact supplies the slide tangent. Full visual-hull polygon
+  // ejection here makes a shallow corner contact look like a teleport and
+  // sends the train across the R-14 pocket instead of around its inside.
   const walls = board?.walls || [];
   let hit = false;
   for (let iter = 0; iter < 4; iter++) {
-    const ra = {
-      x: x + Math.cos(ang) * REAR_AXLE_OFFSET,
-      y: y + Math.sin(ang) * REAR_AXLE_OFFSET,
+    const ca = Math.cos(ang);
+    const sa = Math.sin(ang);
+    const rear = {
+      x: x + ca * REAR_AXLE_OFFSET,
+      y: y + sa * REAR_AXLE_OFFSET,
     };
-    const rearMouth = isOpenMouthExit(board, ra.x, ra.y, ux, uy);
-    const rearHit = rearMouth ? null : deepestWallHit(ra.x, ra.y, walls);
+    const rearHit = deepestWallHit(rear.x, rear.y, walls);
     if (rearHit) {
       hit = true;
-      x += (rearHit.x - ra.x) * 0.55;
-      y += (rearHit.y - ra.y) * 0.55;
+      x += (rearHit.x - rear.x) * 0.55;
+      y += (rearHit.y - rear.y) * 0.55;
     }
 
-    const fa = {
-      x: x + Math.cos(ang) * FRONT_AXLE_OFFSET,
-      y: y + Math.sin(ang) * FRONT_AXLE_OFFSET,
+    const front = {
+      x: x + ca * FRONT_AXLE_OFFSET,
+      y: y + sa * FRONT_AXLE_OFFSET,
     };
-    const frontMouth = isOpenMouthExit(board, fa.x, fa.y, ux, uy);
-    const frontHit = frontMouth ? null : deepestWallHit(fa.x, fa.y, walls);
+    const frontHit = deepestWallHit(front.x, front.y, walls);
     if (frontHit) {
       hit = true;
-      x += (frontHit.x - fa.x) * 0.75;
-      y += (frontHit.y - fa.y) * 0.75;
-      const { tx, ty } = wallSlideDir(
+      x += (frontHit.x - front.x) * 0.75;
+      y += (frontHit.y - front.y) * 0.75;
+      const slide = wallSlideDir(
         frontHit.nx,
         frontHit.ny,
         ux,
         uy,
         preferAng
       );
-      ux = tx;
-      uy = ty;
+      ux = slide.tx;
+      uy = slide.ty;
       ang = Math.atan2(uy, ux);
     }
 
     if (!rearHit && !frontHit) break;
   }
   return { x, y, ang, ux, uy, hit };
+}
+
+function resolveTrackWallPose(
+  x,
+  y,
+  ang,
+  ux,
+  uy,
+  preferAng,
+  board,
+  ignorePieceIds = [],
+  useMainWallPhysics = false
+) {
+  if (useMainWallPhysics) {
+    return resolveAxleWallPose(
+      x,
+      y,
+      ang,
+      ux,
+      uy,
+      preferAng,
+      board,
+      ignorePieceIds
+    );
+  }
+
+  let hit = false;
+  let pushBudget = OFF_RAIL_DS * 2.5;
+  for (let iter = 0; iter < 10; iter++) {
+    const contact = trackBodyContact(
+      { x, y, ang },
+      board,
+      { ignorePieceIds }
+    );
+    if (!contact || contact.penetration <= 0.01) break;
+    hit = true;
+    const push = Math.min(contact.penetration + 0.02, pushBudget);
+    x += contact.nx * push;
+    y += contact.ny * push;
+    pushBudget -= push;
+    if (iter === 0) {
+      const slide = wallSlideDir(
+        contact.nx,
+        contact.ny,
+        ux,
+        uy,
+        preferAng
+      );
+      ang = turnToward(ang, Math.atan2(slide.ty, slide.tx), 0.12);
+      ux = Math.cos(ang);
+      uy = Math.sin(ang);
+    }
+    if (pushBudget <= 0.01) break;
+  }
+  return { x, y, ang, ux, uy, hit };
+}
+
+function playfieldTangent(
+  side,
+  ux,
+  uy,
+  x,
+  y,
+  ang,
+  bounds,
+  lockUx = null,
+  lockUy = null
+) {
+  const ext = carBodyExtents(ang);
+  const cornerTol = OFF_RAIL_DS * 2 + 1;
+  const nearLeft = x - ext.x <= bounds.minX + cornerTol;
+  const nearRight = x + ext.x >= bounds.maxX - cornerTol;
+  const nearTop = y - ext.y <= bounds.minY + cornerTol;
+  const nearBottom = y + ext.y >= bounds.maxY - cornerTol;
+  let tangent;
+  const dualCorner =
+    (nearTop || nearBottom) && (nearLeft || nearRight);
+  if (
+    dualCorner &&
+    Number.isFinite(lockUx) &&
+    Number.isFinite(lockUy) &&
+    Math.hypot(lockUx, lockUy) > 0.9
+  ) {
+    return { x: lockUx, y: lockUy, dualCorner };
+  }
+  // At a corner, both incident walls can alternately be the deepest contact.
+  // Pick one exit from the incoming direction before consulting `side`, so
+  // the target cannot flap between the two tangents while the body rotates.
+  if (nearTop && nearRight) {
+    tangent =
+      ux < -0.05 ||
+      (uy <= 0.05 && Math.abs(uy) >= Math.abs(ux))
+        ? { x: -1, y: 0 }
+        : { x: 0, y: 1 };
+  } else if (nearRight && nearBottom) {
+    tangent =
+      ux < -0.05 ||
+      (uy >= -0.05 && Math.abs(uy) >= Math.abs(ux))
+        ? { x: -1, y: 0 }
+        : { x: 0, y: -1 };
+  } else if (nearBottom && nearLeft) {
+    tangent =
+      ux > 0.05 ||
+      (uy >= -0.05 && Math.abs(uy) >= Math.abs(ux))
+        ? { x: 1, y: 0 }
+        : { x: 0, y: -1 };
+  } else if (nearLeft && nearTop) {
+    tangent =
+      ux > 0.05 ||
+      (uy <= 0.05 && Math.abs(uy) >= Math.abs(ux))
+        ? { x: 1, y: 0 }
+        : { x: 0, y: 1 };
+  } else if (side === "top") {
+    tangent = nearRight ? { x: -1, y: 0 } : { x: 1, y: 0 };
+  } else if (side === "bottom") {
+    tangent = nearLeft ? { x: 1, y: 0 } : { x: -1, y: 0 };
+  } else if (side === "right") {
+    tangent = nearBottom ? { x: 0, y: -1 } : { x: 0, y: 1 };
+  } else {
+    tangent = nearTop ? { x: 0, y: 1 } : { x: 0, y: -1 };
+  }
+  const along = ux * tangent.x + uy * tangent.y;
+  if (Math.abs(along) > 0.05 && along < 0) {
+    tangent.x = -tangent.x;
+    tangent.y = -tangent.y;
+  }
+  return { ...tangent, dualCorner };
+}
+
+/** Full capsule-vs-playfield solve with bounded angular change. */
+function resolvePlayfieldBodyPose(
+  x,
+  y,
+  ang,
+  ux,
+  uy,
+  bounds,
+  cornerLockUx = null,
+  cornerLockUy = null,
+  ignoredSides = null
+) {
+  let hit = false;
+  let side = null;
+  for (let iter = 0; iter < 10; iter++) {
+    const contact = playfieldBodyContact({ x, y, ang }, bounds);
+    if (!contact || contact.penetration <= 0.01) break;
+    if (ignoredSides?.has(contact.side)) break;
+    hit = true;
+    side = side || contact.side;
+    x += contact.nx * (contact.penetration + 0.02);
+    y += contact.ny * (contact.penetration + 0.02);
+    if (iter === 0) {
+      const tangent = playfieldTangent(
+        contact.side,
+        ux,
+        uy,
+        x,
+        y,
+        ang,
+        bounds,
+        cornerLockUx,
+        cornerLockUy
+      );
+      if (tangent.dualCorner) {
+        cornerLockUx = tangent.x;
+        cornerLockUy = tangent.y;
+      } else {
+        cornerLockUx = null;
+        cornerLockUy = null;
+      }
+      ang = turnToward(ang, Math.atan2(tangent.y, tangent.x), 0.1);
+      ux = Math.cos(ang);
+      uy = Math.sin(ang);
+    }
+  }
+  if (!hit) {
+    cornerLockUx = null;
+    cornerLockUy = null;
+  }
+  return {
+    x,
+    y,
+    ang,
+    ux,
+    uy,
+    hit,
+    side,
+    cornerLockUx,
+    cornerLockUy,
+  };
 }
 
 /**
@@ -338,9 +578,47 @@ export function resolveOffRailContacts(
 
   const preferAng =
     entity.offRailPreferAng != null ? entity.offRailPreferAng : ang;
-  const track = entity.openMouthClearSteps > 0
-    ? { x, y, ang, ux, uy, hit: false }
-    : resolveTrackWallPose(x, y, ang, ux, uy, preferAng, board);
+  const portalCandidate = findOpenMouthPortal(board, { x, y, ang });
+  const travelAng = speed > 1e-3 ? Math.atan2(uy, ux) : ang;
+  // A mouth can be nearby without being an entry portal. Do not steer a
+  // floor body toward it until its actual travel velocity is already within
+  // the re-rail approach window; otherwise the portal becomes a magnet.
+  const portal = mouthApproachAligned(portalCandidate, travelAng)
+    ? portalCandidate
+    : null;
+  const exitPortal = findOpenMouthExitPortal(
+    board,
+    { x, y, ang },
+    entity.openMouthPieceId
+  );
+  const ignoredPieceIds = [
+    portal?.pieceId,
+    exitPortal?.pieceId,
+    entity.openMouthClearSteps > 0
+      ? entity.openMouthAdjacentPieceId
+      : null,
+  ].filter(Boolean);
+  if (portal) {
+    const inwardX = -Math.cos(portal.wang);
+    const inwardY = -Math.sin(portal.wang);
+    const targetX = portal.wx + inwardX * FRONT_HITCH * 0.75;
+    const targetY = portal.wy + inwardY * FRONT_HITCH * 0.75;
+    const targetAng = Math.atan2(targetY - y, targetX - x);
+    ang = turnToward(ang, targetAng, 0.075);
+    ux = Math.cos(ang);
+    uy = Math.sin(ang);
+  }
+  const track = resolveTrackWallPose(
+    x,
+    y,
+    ang,
+    ux,
+    uy,
+    preferAng,
+    board,
+    ignoredPieceIds,
+    !!opts.mainWallPhysics
+  );
   x = track.x;
   y = track.y;
   ang = track.ang;
@@ -350,14 +628,27 @@ export function resolveOffRailContacts(
   let playfieldHit = false;
 
   if (opts.solidPlayfield && bounds) {
-    const r = resolvePlayfieldAabb(
+    const portalSides = playfieldPortalSides(
+      board,
+      {
+        ...entity,
+        x,
+        y,
+        ang,
+        openMouthPieceId: entity.openMouthPieceId,
+      },
+      bounds
+    );
+    const r = resolvePlayfieldBodyPose(
       x,
       y,
+      ang,
       ux,
       uy,
-      preferAng,
       bounds,
-      WHEEL_RADIUS
+      entity.cornerLockUx,
+      entity.cornerLockUy,
+      portalSides
     );
     x = r.x;
     y = r.y;
@@ -365,6 +656,8 @@ export function resolveOffRailContacts(
     uy = r.uy;
     ang = r.ang;
     playfieldHit = r.hit;
+    entity.cornerLockUx = r.cornerLockUx;
+    entity.cornerLockUy = r.cornerLockUy;
     hit = hit || playfieldHit;
   }
 
@@ -374,6 +667,7 @@ export function resolveOffRailContacts(
   entity.ang = travel.ang;
   entity.vx = travel.ux * speed;
   entity.vy = travel.uy * speed;
+  quantizePose(entity);
   if (hit) {
     opts.telemetry?.event("offrail_contact", {
       entity: entity.id ?? "follower",
@@ -384,7 +678,16 @@ export function resolveOffRailContacts(
       ang: travel.ang,
     });
   }
-  return { x, y, ang: travel.ang, ux: travel.ux, uy: travel.uy, hit };
+  return {
+    x,
+    y,
+    ang: travel.ang,
+    ux: travel.ux,
+    uy: travel.uy,
+    hit,
+    cornerLockUx: entity.cornerLockUx ?? null,
+    cornerLockUy: entity.cornerLockUy ?? null,
+  };
 }
 
 /**
@@ -446,11 +749,16 @@ export function stepOffRailEntity(entity, board, dt, bounds, opts = {}) {
         vy: uy * speed,
         offRailPreferAng: entity.offRailPreferAng,
         openMouthClearSteps: entity.openMouthClearSteps || 0,
+        openMouthPieceId: entity.openMouthPieceId || null,
+        openMouthAdjacentPieceId: entity.openMouthAdjacentPieceId || null,
+        cornerLockUx: entity.cornerLockUx ?? null,
+        cornerLockUy: entity.cornerLockUy ?? null,
       },
       board,
       bounds,
       {
         solidPlayfield,
+        mainWallPhysics: opts.mainWallPhysics,
         telemetry: opts.telemetry,
       }
     );
@@ -468,6 +776,8 @@ export function stepOffRailEntity(entity, board, dt, bounds, opts = {}) {
     entity.vx = ux * speed;
     entity.vy = uy * speed;
     entity.wallHit = hitAny;
+    entity.cornerLockUx = contact.cornerLockUx;
+    entity.cornerLockUy = contact.cornerLockUy;
   }
   return true;
 }
@@ -483,6 +793,8 @@ export function stepOffRail(train, board, dt, bounds, opts = {}) {
   const telemetry = opts.telemetry;
   const speed = Math.max(1, train.speed);
   const solidPlayfield = !!opts.solidPlayfield;
+  const mainWallPhysics =
+    opts.mainWallPhysics ?? !(train.cars?.length > 1);
 
   train.offRailDistAcc = (train.offRailDistAcc || 0) + speed * dt;
   const targetSteps = Math.floor(train.offRailDistAcc / OFF_RAIL_DS + 1e-9);
@@ -535,6 +847,18 @@ export function stepOffRail(train, board, dt, bounds, opts = {}) {
       return;
     }
 
+    // A correctly aligned mouth crossing must become rail-owned before the
+    // solid bed union rejects the body as an obstacle.
+    if (train.reRailDistLeft <= 0) {
+      train.x = x;
+      train.y = y;
+      train.ang = ang;
+      train.vx = ux * speed;
+      train.vy = uy * speed;
+      tryRerail(train, board, telemetry);
+      if (train.mode !== TrainMode.OFF_RAIL) return;
+    }
+
     const contact = resolveOffRailContacts(
       {
         id: "lead",
@@ -545,10 +869,15 @@ export function stepOffRail(train, board, dt, bounds, opts = {}) {
         vy: uy * speed,
         offRailPreferAng: train.offRailPreferAng,
         openMouthClearSteps: train.openMouthClearSteps,
+        openMouthPieceId: train.openMouthPieceId || null,
+        openMouthAdjacentPieceId:
+          train.openMouthAdjacentPieceId || null,
+        cornerLockUx: train.cornerLockUx ?? null,
+        cornerLockUy: train.cornerLockUy ?? null,
       },
       board,
       bounds,
-      { solidPlayfield }
+      { solidPlayfield, mainWallPhysics }
     );
     x = contact.x;
     y = contact.y;
@@ -556,6 +885,8 @@ export function stepOffRail(train, board, dt, bounds, opts = {}) {
     ux = contact.ux;
     uy = contact.uy;
     if (contact.hit) hitAny = true;
+    train.cornerLockUx = contact.cornerLockUx;
+    train.cornerLockUy = contact.cornerLockUy;
     if (train.openMouthClearSteps > 0) train.openMouthClearSteps--;
     // Update leave-rails prefer to current free motion, not stale derail ang.
     if (solidPlayfield && bounds) train.offRailPreferAng = ang;
@@ -759,6 +1090,7 @@ function tryRerail(train, board, telemetry = null) {
   // the body near the rail while the front axle is still slightly off.
   const fa = frontAxlePos(train);
   const ra = rearAxlePos(train);
+  const excludePieceIds = [];
   const probes = [
     { anchor: "front", x: fa.x, y: fa.y, max: RE_RAIL_LATERAL + 6 },
     { anchor: "body", x: train.x, y: train.y, max: RE_RAIL_LATERAL + 8 },
@@ -766,9 +1098,37 @@ function tryRerail(train, board, telemetry = null) {
   ];
   let hit = null;
   for (const p of probes) {
-    const h = closestPathPoint(board, p.x, p.y, p.max);
+    const h = closestPathPoint(board, p.x, p.y, p.max, {
+      excludePieceIds,
+    });
     if (!h) continue;
-    if (!hit || h.dist < hit.dist) hit = { ...h, anchor: p.anchor };
+    const d1 = angleDiff(train.ang, h.ang);
+    const d2 = angleDiff(train.ang, h.ang + Math.PI);
+    const dir = d1 <= d2 ? 1 : -1;
+    const candidateAng =
+      dir > 0 ? h.ang : normalizeAngle(h.ang + Math.PI);
+    const candidateBody = bodyFromRailProbe(
+      h.x,
+      h.y,
+      candidateAng,
+      p.anchor
+    );
+    const translation = Math.hypot(
+      candidateBody.x - train.x,
+      candidateBody.y - train.y
+    );
+    const score = translation + h.dist * 0.2;
+    if (!hit || score < hit.score) {
+      hit = {
+        ...h,
+        anchor: p.anchor,
+        score,
+        candidateAng,
+        candidateBody,
+        candidateDir: dir,
+        translation,
+      };
+    }
   }
   if (!hit) {
     telemetry?.event("lead_rerail_miss", { reason: "no_near_path" });
@@ -783,9 +1143,7 @@ function tryRerail(train, board, telemetry = null) {
   const nearMouth = hit.s < 0.12 || hit.s > 0.88;
   // Slightly looser near mouths and when multi-car (wall adjacency)
   const multi = !!(train.cars && train.cars.length > 1);
-  const angLimit =
-    (nearMouth ? RE_RAIL_ANGLE * 1.2 : RE_RAIL_ANGLE * 0.78) *
-    (multi ? 1.12 : 1);
+  const angLimit = RE_RAIL_ANGLE;
   const latLimit =
     (nearMouth ? RE_RAIL_LATERAL + 5 : RE_RAIL_LATERAL * 0.9) *
     (multi ? 1.15 : 1);
@@ -811,6 +1169,31 @@ function tryRerail(train, board, telemetry = null) {
     return;
   }
 
+  const snapLimit = nearMouth ? 14 : 8;
+  if (hit.translation > snapLimit) {
+    telemetry?.event("lead_rerail_miss", {
+      reason: "snap_distance",
+      pathKey: `${hit.path.pieceId}:${hit.path.id}`,
+      translation: hit.translation,
+      snapLimit,
+    });
+    return;
+  }
+
+  const clearCandidate = {
+    ...train,
+    x: hit.candidateBody.x,
+    y: hit.candidateBody.y,
+    ang: hit.candidateAng,
+  };
+  if (!nearMouth && !railPoseClear(board, clearCandidate)) {
+    telemetry?.event("lead_rerail_miss", {
+      reason: "rail_bed_clearance",
+      pathKey: `${hit.path.pieceId}:${hit.path.id}`,
+    });
+    return;
+  }
+
   train.mode = TrainMode.ON_RAIL;
   train.pathRef = {
     path: hit.path,
@@ -818,9 +1201,9 @@ function tryRerail(train, board, telemetry = null) {
     pathId: hit.path.id,
   };
   train.s = hit.s;
-  train.dir = d1 <= d2 ? 1 : -1;
-  const ang = train.dir > 0 ? pathAng : normalizeAngle(pathAng + Math.PI);
-  const body = bodyFromRailProbe(hit.x, hit.y, ang, hit.anchor);
+  train.dir = hit.candidateDir;
+  const ang = hit.candidateAng;
+  const body = hit.candidateBody;
   train.x = body.x;
   train.y = body.y;
   train.ang = ang;
@@ -834,6 +1217,7 @@ function tryRerail(train, board, telemetry = null) {
   // allowed to catch up immediately afterward rather than waiting half a
   // second while the hitch drags them past their rails.
   train.reRailCooldown = 0.1;
+  train.railEntryGraceDistance = nearMouth ? 28 : 0;
   train.cornerLockSteps = 0;
   // Only the powered unit re-rails. Followers keep off_rail until each
   // catches a rail itself (markPoweredOnRail + hitch pull, no force on-rail).
@@ -851,15 +1235,17 @@ function tryRerail(train, board, telemetry = null) {
     powered.vx = 0;
     powered.vy = 0;
   }
-  // Pull coupled cars with hitch; do NOT set their mode to on_rail
-  if (train.cars?.length > 1) {
-    seatConsistHard(train, telemetry);
-  }
+  // Followers are solved once by the shared swept-route pin constraint after
+  // this lead step. Moving them here would create a second, conflicting
+  // solver and was the source of the top-wall teleport.
   telemetry?.event("lead_rerail", {
     pathKey: `${hit.path.pieceId}:${hit.path.id}`,
     s: hit.s,
     anchor: hit.anchor,
     dir: train.dir,
+    approachAngle: best,
+    approachAngleDeg: (best * 180) / Math.PI,
+    pathAngle: pathAng,
     x: train.x,
     y: train.y,
     ang: train.ang,

@@ -6,6 +6,7 @@ import {
   TRAIN_RADIUS,
   FRONT_AXLE_OFFSET,
   REAR_AXLE_OFFSET,
+  couplerLink,
   TrainMode,
 } from "../train.js";
 
@@ -184,14 +185,17 @@ export function drawTrainCar(ctx, car, mode = TrainMode.IDLE) {
     ctx.stroke();
   }
 
-  // Powered engine highlight ring
-  if (car.powered) {
-    ctx.strokeStyle = "rgba(80, 200, 120, 0.85)";
-    ctx.lineWidth = 2.2;
+  // Compact powered marker — no large halo obscuring body/wall contact.
+  if (car.powered && !isMid) {
+    ctx.fillStyle = "#d93636";
+    ctx.strokeStyle = "rgba(255,255,255,0.95)";
+    ctx.lineWidth = 1.2;
     ctx.beginPath();
-    ctx.ellipse(0, 0, L * 0.5, R + 5, 0, 0, Math.PI * 2);
+    ctx.arc(tail + L * 0.3, 0, 3.2, 0, Math.PI * 2);
+    ctx.fill();
     ctx.stroke();
-  } else if (car.selected) {
+  }
+  if (car.selected) {
     ctx.strokeStyle = "rgba(58, 143, 214, 0.9)";
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -284,16 +288,7 @@ export function drawTrain(ctx, train) {
       const prev = ord[i - 1];
       const car = ord[i];
       if (car.coupled === false) continue;
-      // Body half-length (mid cars slightly shorter visually)
-      const halfPrev =
-        TRAIN_LENGTH * ((prev.kind === "mid" ? 0.92 : 1) * 0.5);
-      const halfCar =
-        TRAIN_LENGTH * ((car.kind === "mid" ? 0.92 : 1) * 0.5);
-      const x1 = prev.x - Math.cos(prev.ang) * halfPrev;
-      const y1 = prev.y - Math.sin(prev.ang) * halfPrev;
-      const x2 = car.x + Math.cos(car.ang) * halfCar;
-      const y2 = car.y + Math.sin(car.ang) * halfCar;
-      drawCouplerLink(ctx, { x1, y1, x2, y2 });
+      drawCouplerLink(ctx, couplerLink(prev, car));
     }
   }
 
@@ -318,9 +313,9 @@ export function drawPaletteTrainIcon(canvas, kind = "engine") {
     y: h / 2,
     ang: 0,
     kind: kind === "mid" ? "mid" : "engine",
-    facing: kind === "trail" ? -1 : 1,
+    facing: kind === "passive" || kind === "trail" ? -1 : 1,
     role: kind === "mid" ? "mid" : "lead",
-    powered: kind === "engine",
+    powered: kind === "active" || kind === "engine",
   };
   ctx.save();
   // Scale down for icon

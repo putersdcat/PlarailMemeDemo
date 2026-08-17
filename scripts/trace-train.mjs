@@ -19,6 +19,7 @@ import {
   updateTrain,
   createTrainTelemetry,
   TrainMode,
+  SOLID_PLAYFIELD_FIT_PAD,
 } from "../js/train.js";
 
 function arg(name, fallback = null) {
@@ -109,7 +110,12 @@ if (!startTrain(train)) throw new Error("Could not start traced train");
 // Match the browser’s solid-wall framing so a saved-track trace exercises the
 // same rerail pocket instead of an arbitrary oversized fixed rectangle.
 const view = createView(1546, 645);
-fitBoardToView(view, board, solidPlayfield ? 18 : 48, 96);
+fitBoardToView(
+  view,
+  board,
+  solidPlayfield ? SOLID_PLAYFIELD_FIT_PAD : 48,
+  96
+);
 const bounds = playfieldBounds(view, 20);
 
 const telemetry = createTrainTelemetry({

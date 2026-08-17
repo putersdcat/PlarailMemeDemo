@@ -12,7 +12,8 @@
   --danger: #e25555;
   --floor: #e8e4dc;
   --rail-blue: #3a8fd6;
-  --font: "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font: "Segoe UI", "Hiragino Sans", "Yu Gothic UI", "Noto Sans JP", system-ui,
+    -apple-system, sans-serif;
   --sidebar-w: 300px;
   --sidebar-slide: 0.28s cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -90,7 +91,40 @@ body {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
+}
+
+.lang-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.lang-toggle button {
+  width: 30px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel-2);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.lang-toggle button:hover {
+  border-color: var(--accent);
+}
+
+.lang-toggle button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: #2a3544;
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.lang-toggle-toolbar {
+  margin-left: 2px;
 }
 
 #sidebar h1 {
@@ -252,6 +286,10 @@ body {
   flex-shrink: 0;
 }
 
+.tools .section-label {
+  padding: 0 0 4px;
+}
+
 .tool-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -372,6 +410,7 @@ button.ui:disabled {
   border-radius: 999px;
   padding: 6px 12px;
   font-size: 12px;
+  -webkit-backdrop-filter: blur(6px);
   backdrop-filter: blur(6px);
 }
 
@@ -519,6 +558,7 @@ button.ui:disabled {
   letter-spacing: 0.06em;
   color: var(--muted);
   margin-right: 2px;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -543,6 +583,26 @@ button.ui:disabled {
   box-sizing: border-box;
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
   transition: transform 0.08s, border-color 0.12s, box-shadow 0.12s;
+}
+
+#toolbar button.paint-swatch[data-color="blue"] {
+  --swatch: #3a8fd6;
+}
+
+#toolbar button.paint-swatch[data-color="green"] {
+  --swatch: #3d9e5c;
+}
+
+#toolbar button.paint-swatch[data-color="red"] {
+  --swatch: #c94c4c;
+}
+
+#toolbar button.paint-swatch[data-color="yellow"] {
+  --swatch: #e0b833;
+}
+
+#toolbar button.paint-swatch[data-color="gray"] {
+  --swatch: #7a828c;
 }
 
 #toolbar button.paint-swatch:hover {

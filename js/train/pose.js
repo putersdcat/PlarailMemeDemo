@@ -22,6 +22,8 @@ export function createTrain() {
     dir: 1,
     vx: 0,
     vy: 0,
+    frontCouplerOffset: 0,
+    rearCouplerOffset: 0,
     reRailCooldown: 0,
     selected: false,
     /** Set true when walls were hit this simulation step (for SFX) */
@@ -40,6 +42,10 @@ export function createTrain() {
     cornerLockUy: null,
     /** Fixed geometry steps allowed to clear an open turnout mouth/footprint. */
     openMouthClearSteps: 0,
+    /** Connected predecessor bed allowed while the hull clears an exit mouth. */
+    openMouthAdjacentPieceId: null,
+    /** Rail distance allowed for the rear axle to clear an entry mouth. */
+    railEntryGraceDistance: 0,
     /**
      * Linked cars (lead + followers). Empty/absent → single engine.
      * Powered car mirrors train.x/y/ang after placeFollowers.
@@ -51,6 +57,10 @@ export function createTrain() {
     poweredId: null,
     /** Selected car id for power switch / uncouple UI */
     selectedCarId: null,
+    /** Shared swept route for an exactly constrained coupled consist. */
+    motionTrail: null,
+    /** Non-null when an impossible collision/coupler frame stops motion. */
+    stallReason: null,
   };
 }
 

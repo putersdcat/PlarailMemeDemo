@@ -20,7 +20,11 @@ const hint = realLayout.train
   ? { x: realLayout.train.x, y: realLayout.train.y }
   : { x: 528.73, y: 653 };
 
-const arntenoughModule = `/** Auto: not-enough-rails layout (godi3 meme). */
+const ARNT_NAME = "aren't enough rails (godi3)";
+if (!arntenoughLayout.name) arntenoughLayout.name = ARNT_NAME;
+if (!arntenoughLayout.id) arntenoughLayout.id = "arntenoughrails";
+
+const arntenoughModule = `/** Auto: aren't-enough-rails layout (godi3 meme). */
 export const ARNTENOUGHRAILS_LAYOUT = ${JSON.stringify(
   arntenoughLayout,
   null,
@@ -114,7 +118,7 @@ export function loadArntenoughrailsTrack(board) {
     northAlign: true,
     cars,
     consist: null,
-    note: \`Loaded “Not enough rails” (\${result.pieceCount} pieces, 3 separate cars coupled, solid walls). Mid in palette · 🦄 switches engine · Delete removes car.\`,
+    note: \`Loaded “aren't enough rails” (\${result.pieceCount} pieces, 3 separate cars coupled, solid walls). Mid in palette · 🦄 switches engine · Delete removes car.\`,
   };
 }
 
@@ -122,13 +126,56 @@ export const TRACK_CATALOG = [
   { id: "real-meme", name: "Real-2-Sim meme track", load: loadRealMemeTrack },
   {
     id: "arntenoughrails",
-    name: "Not enough rails (godi3)",
+    name: "aren't enough rails (godi3)",
     load: loadArntenoughrailsTrack,
   },
 ];
 
+/** Query / README slugs that open a built-in layout. */
+const TRACK_ALIASES = {
+  "real-meme": "real-meme",
+  real: "real-meme",
+  meme: "real-meme",
+  real2sim: "real-meme",
+  "real-2-sim": "real-meme",
+  arntenoughrails: "arntenoughrails",
+  "arent-enough-rails": "arntenoughrails",
+  "aren't-enough-rails": "arntenoughrails",
+  "arent-enough": "arntenoughrails",
+  arentenoughrails: "arntenoughrails",
+  godi3: "arntenoughrails",
+  "not-enough-rails": "arntenoughrails",
+  notenoughrails: "arntenoughrails",
+};
+
+export function normalizeTrackQuery(raw) {
+  return String(raw || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[’']/g, "'")
+    .replace(/\\s+/g, "-");
+}
+
+/** Resolve a catalog id from a \`?track=\` / \`?layout=\` value. Unknown → null. */
+export function resolveTrackId(raw) {
+  const key = normalizeTrackQuery(raw);
+  if (!key) return null;
+  if (TRACK_ALIASES[key]) return TRACK_ALIASES[key];
+  if (TRACK_CATALOG.some((track) => track.id === key)) return key;
+  return null;
+}
+
+/** Parse \`window.location.search\` or a query string into a catalog id. */
+export function trackIdFromSearch(search) {
+  const query = new URLSearchParams(
+    typeof search === "string" ? search.replace(/^\\?/, "") : search || ""
+  );
+  return resolveTrackId(query.get("track") ?? query.get("layout"));
+}
+
 export function getTrackById(id) {
-  return TRACK_CATALOG.find((t) => t.id === id) || TRACK_CATALOG[0] || null;
+  const resolved = resolveTrackId(id);
+  return TRACK_CATALOG.find((t) => t.id === resolved) || TRACK_CATALOG[0] || null;
 }
 
 /** Alias used by older call sites. */

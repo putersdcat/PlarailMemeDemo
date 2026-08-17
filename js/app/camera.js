@@ -90,6 +90,17 @@ export function playfieldBounds(view, padScreen = 20) {
 }
 
 /**
+ * Stable solid-world AABB: the north wall is flush with the renderer-solid
+ * track envelope while the other sides retain full-body camera-fit clearance.
+ */
+export function solidPlayfieldBounds(view, board, padScreen = 20) {
+  const bounds = playfieldBounds(view, padScreen);
+  const boardBounds = computeBoardBounds(board);
+  if (Number.isFinite(boardBounds?.minY)) bounds.minY = boardBounds.minY;
+  return bounds;
+}
+
+/**
  * World AABB of board walls/pieces.
  * @returns {{minX:number,minY:number,maxX:number,maxY:number}|null}
  */

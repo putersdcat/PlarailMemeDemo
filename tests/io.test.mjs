@@ -90,5 +90,9 @@ test("saved legacy consist loads aligned and does not restore stale coordinates"
   assertEq(placedMeta.y, saved.train.y + (36 - (-78.39999999999992)));
   assert(!restored, "legacy consist metadata must not restore stale runtime pose");
   assertEq(appliedSpeed, 200);
-  assertEq(fitPad, 18, "solid saved layout should use the tight wall fit");
+  assertEq(
+    fitPad,
+    64,
+    "solid saved layout should leave a full-car wall corridor"
+  );
 });

@@ -1,11 +1,12 @@
 # Plarail Meme — Real-2-Sim
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Play demo](https://img.shields.io/badge/demo-github.io-blue)](https://putersdcat.github.io/PlarailMemeDemo/)
+[![Play demo](https://img.shields.io/badge/demo-github.io-blue)](https://putersdcat.github.io/PlarailMemeDemo/?track=real-meme)
 
-[![Demo screenshot — on rails → derail → re-rail](docs/demo-screenshot.jpg)](https://putersdcat.github.io/PlarailMemeDemo/)
+[![Demo screenshot — on rails → derail → re-rail](docs/demo-screenshot.jpg)](https://putersdcat.github.io/PlarailMemeDemo/?track=real-meme)
 
-**[▶ Play live demo](https://putersdcat.github.io/PlarailMemeDemo/)** ·
+**[▶ Play Real-2-Sim meme track](https://putersdcat.github.io/PlarailMemeDemo/?track=real-meme)** ·
+**[▶ Play aren't enough rails (godi3)](https://putersdcat.github.io/PlarailMemeDemo/?track=arent-enough-rails)** ·
 **[1080p video](recordings/plarail-meme-demo-1080p.mp4)** ·
 **[480p video](recordings/plarail-meme-demo-480p.mp4)**
 
@@ -18,6 +19,32 @@ The layout and vibe come from this meme / layout energy (the primal pitch deck):
 > [how my codebase written entirely with claude code runs](https://t.co/sPDmqn63I2)
 > — Markov ([@MarkovMagnifico](https://x.com/MarkovMagnifico)), 18 Jan 2026
 
+**[▶ Open this track in the live demo](https://putersdcat.github.io/PlarailMemeDemo/?track=real-meme)**
+
+## aren't enough rails (godi3)
+
+A second built-in layout, from this 2017 clip of a train leaving the rails because — well — there aren't enough rails:
+
+[![Original ごぢ / @godi3 clip — レールが足りないので。](docs/Inspiration-arent-enough-rails.jpg)](https://x.com/godi3/status/945956752515670016?s=20)
+
+> [レールが足りないので。](https://x.com/godi3/status/945956752515670016?s=20)
+> — ごぢ ([@godi3](https://x.com/godi3)), 27 Dec 2017
+
+The sim version is a sparse open-C with a three-car consist (active engine, mid, reverse-facing passive engine) and solid playfield walls, so the derail is the point: floor-glide the gap, then recapture at an open mouth.
+
+[![aren't enough rails (godi3) — three-car consist on the open C](docs/arent-enough-rails-screenshot.jpg)](https://putersdcat.github.io/PlarailMemeDemo/?track=arent-enough-rails)
+
+**[▶ Play aren't enough rails (godi3)](https://putersdcat.github.io/PlarailMemeDemo/?track=arent-enough-rails)**
+
+Deep links use `?track=` (alias `?layout=`) and skip whatever is in localStorage so the README URL always opens that catalog entry:
+
+| Track | Live URL |
+| --- | --- |
+| Real-2-Sim meme track | [https://putersdcat.github.io/PlarailMemeDemo/?track=real-meme](https://putersdcat.github.io/PlarailMemeDemo/?track=real-meme) |
+| aren't enough rails (godi3) | [https://putersdcat.github.io/PlarailMemeDemo/?track=arent-enough-rails](https://putersdcat.github.io/PlarailMemeDemo/?track=arent-enough-rails) |
+
+Accepted slugs include `real-meme`, `meme`, `arntenoughrails`, `arent-enough-rails`, `aren't-enough-rails`, and `godi3`.
+
 ## Develop Please it's buggy slop!
 
 ```bash
@@ -28,13 +55,40 @@ npm run trace:train -- --frames=500  # backend train telemetry trace
 
 Hard-refresh after JS changes (cache-busted `?v=` on entry assets).
 
+### Portable handoff patch
+
+When this working tree cannot be committed or pushed, create one flat patch file containing both tracked changes and non-ignored new files:
+
+````powershell
+npm run export:patch
+````
+
+The default output is `portable-plarail.patch` in the repository root. To choose another path through npm on Windows, pass it positionally:
+
+````powershell
+npm run export:patch -- portable-plarail.patch
+````
+
+Copy `portable-plarail.patch` to the target checkout, review it first, then apply it from that repository's root:
+
+````powershell
+git apply --check --binary .\portable-plarail.patch
+git apply --3way --binary --whitespace=fix .\portable-plarail.patch
+````
+
+The exporter compares the working tree with `HEAD`, includes staged and unstaged changes, preserves binary diffs, and intentionally excludes ignored files and the generated patch itself. If the target checkout starts from another ref, run the script directly with `--base=<ref>`, for example `node scripts/export-portable-diff.mjs --base=master --out=portable-plarail.patch`.
+
 ### Physics telemetry
 
 Open the browser with `?debug=1` to record frame-by-frame train telemetry.
-The live hooks are available as `window.__sim.getTelemetry()` and
-`window.__plarailDemo.getTelemetry()` for Playwright or the developer console.
-The backend equivalent is `npm run trace:train`; add `--out=<file>` to save
-the complete JSON trace instead of only the compact event summary.
+Add `?track=real-meme` or `?track=arent-enough-rails` to force a built-in
+layout (skips autosave). Add `?lang=ja` or `?lang=en` to preview a language
+without depending on the browser locale (🇺🇸 / 🇯🇵 in the UI overrides and
+remembers the choice). The live hooks are available as
+`window.__sim.getTelemetry()` and `window.__plarailDemo.getTelemetry()` for
+Playwright or the developer console. The backend equivalent is
+`npm run trace:train`; add `--out=<file>` to save the complete JSON trace
+instead of only the compact event summary.
 
 ## Thanks
 
@@ -89,7 +143,9 @@ Browser simulation of a Takara Tomy **Plarail**-style track set: magnetic snap b
 
 ## Play online
 
-### [▶ Open the live demo on GitHub Pages](https://putersdcat.github.io/PlarailMemeDemo/)
+### [▶ Open the Real-2-Sim meme track](https://putersdcat.github.io/PlarailMemeDemo/?track=real-meme)
+
+### [▶ Open aren't enough rails (godi3)](https://putersdcat.github.io/PlarailMemeDemo/?track=arent-enough-rails)
 
 Serve locally if you prefer:
 
@@ -99,7 +155,7 @@ python -m http.server 8765
 # or: npm run serve
 ```
 
-Then open [http://127.0.0.1:8765/](http://127.0.0.1:8765/).
+Then open [http://127.0.0.1:8765/](http://127.0.0.1:8765/) or a deep link such as [http://127.0.0.1:8765/?track=arent-enough-rails](http://127.0.0.1:8765/?track=arent-enough-rails).
 
 ## License
 

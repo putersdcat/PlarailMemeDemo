@@ -16,6 +16,7 @@ import {
   COUPLER_DIST,
   MAX_MID_CARS,
   countMidCars,
+  getTrainInsertionTargets,
   setActiveEngine,
   uncoupleCar,
   tryRecoupleCar,
@@ -42,12 +43,15 @@ import {
   getPiece,
 } from "../js/track.js";
 import { UNIT, worldPivot } from "../js/geometry.js";
+import { couplerError } from "../js/world-model.js";
 import {
   TRACK_CATALOG,
   getTrackById,
   loadArntenoughrailsTrack,
   ARNTENOUGHRAILS_LAYOUT,
   loadRealMemeTrack,
+  resolveTrackId,
+  trackIdFromSearch,
 } from "../js/presets.js";
 import { readFileSync } from "fs";
 import { join, dirname } from "path";
@@ -59,6 +63,27 @@ test("TRACK_CATALOG exposes arntenoughrails without removing real-meme", () => {
   assert(TRACK_CATALOG.some((t) => t.id === "real-meme"));
   assert(TRACK_CATALOG.some((t) => t.id === "arntenoughrails"));
   assertEq(getTrackById("arntenoughrails").id, "arntenoughrails");
+  assertEq(
+    getTrackById("arntenoughrails").name,
+    "aren't enough rails (godi3)"
+  );
+  assertEq(ARNTENOUGHRAILS_LAYOUT.name, "aren't enough rails (godi3)");
+  assertEq(
+    ARNTENOUGHRAILS_LAYOUT.source,
+    "arent-enough-rails_plarail-layout-20260817-1108.json"
+  );
+});
+
+test("?track= and ?layout= query aliases resolve built-in layouts", () => {
+  assertEq(resolveTrackId("arent-enough-rails"), "arntenoughrails");
+  assertEq(resolveTrackId("aren't-enough-rails"), "arntenoughrails");
+  assertEq(resolveTrackId("godi3"), "arntenoughrails");
+  assertEq(resolveTrackId("real-meme"), "real-meme");
+  assertEq(resolveTrackId("meme"), "real-meme");
+  assertEq(resolveTrackId("nope"), null);
+  assertEq(trackIdFromSearch("?track=arent-enough-rails"), "arntenoughrails");
+  assertEq(trackIdFromSearch("?layout=godi3&debug=1"), "arntenoughrails");
+  assertEq(trackIdFromSearch("?debug=1"), null);
 });
 
 test("loadArntenoughrailsTrack: pieces, solid walls, 3 separate cars, no pots", () => {
@@ -340,12 +365,15 @@ test("multi-car re-rail works near solid wall bounds", () => {
 test("north-aligned layout minY sits near wall margin", () => {
   const board = createBoard();
   loadArntenoughrailsTrack(board);
-  // apply same north shift as main does
-  let minY = Infinity;
-  for (const p of board.pieces) minY = Math.min(minY, p.y);
-  // Layout file already north-shifted to ~56; load path may shift again
-  assert(minY < 120, `north edge should be high on board, minY=${minY}`);
-  assert(minY >= 40, `not above wall margin wildly, minY=${minY}`);
+  let minPathY = Infinity;
+  for (const path of board.pathIndex || []) {
+    if (!path.active) continue;
+    for (const pt of path.points || []) minPathY = Math.min(minPathY, pt.y);
+  }
+  assert(
+    Math.abs(minPathY - 36) < 1,
+    `north path should sit at y=36, got ${minPathY}`
+  );
 });
 
 test("real-meme still loads as single-engine default", () => {
@@ -402,7 +430,7 @@ test("seatConsistHard after whip angles restores full coupler spacing", () => {
   assert(Math.abs(d12 - COUPLER_DIST) < 2, `d12 exact hitch ${d12}`);
 });
 
-test("re-rail with whipped mid/trail keeps full spacing (shipped updateTrain)", () => {
+test("pre-stretched whipped followers break instead of teleporting on re-rail", () => {
   const board = createBoard();
   for (let i = 0; i < 4; i++) addPiece(board, "R01", i * UNIT, 100, 0);
   rebuild(board);
@@ -435,34 +463,10 @@ test("re-rail with whipped mid/trail keeps full spacing (shipped updateTrain)", 
   train.offRailStepsDone = 0;
   train.offRailPreferAng = hit.ang;
   const bounds = { minX: 0, minY: 0, maxX: 900, maxY: 500 };
-  let ok = false;
-  for (let i = 0; i < 100; i++) {
-    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
-    if (train.mode === TrainMode.ON_RAIL) {
-      const d01 = Math.hypot(
-        train.cars[0].x - train.cars[1].x,
-        train.cars[0].y - train.cars[1].y
-      );
-      const d12 = Math.hypot(
-        train.cars[1].x - train.cars[2].x,
-        train.cars[1].y - train.cars[2].y
-      );
-      assert(
-        d01 >= COUPLER_DIST * 0.75,
-        `re-rail frame mid pile d01=${d01}`
-      );
-      assert(
-        d12 >= COUPLER_DIST * 0.75,
-        `re-rail frame trail pile d12=${d12}`
-      );
-      // Followers still off_rail entities
-      assertEq(train.cars[1].mode, TrainMode.OFF_RAIL);
-      assertEq(train.cars[2].mode, TrainMode.OFF_RAIL);
-      ok = true;
-      break;
-    }
-  }
-  assert(ok, "lead should re-rail");
+  updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+  assertEq(train.cars[1].coupled, false);
+  assertEq(train.cars[2].coupled, false);
+  assert(!train.stallReason, "preexisting stretch breaks rather than stalls");
 });
 
 test("re-rail hard-seats multi-car without pile-up on lead", () => {
@@ -614,6 +618,95 @@ test("build train one car at a time: engine then mids then trail", () => {
   assert(!train.consistSpec);
 });
 
+test("insertion targets split a live chain and preserve downstream order", () => {
+  const board = createBoard();
+  for (let i = 0; i < 20; i++) addPiece(board, "R01", i * UNIT, 0, 0);
+  rebuild(board);
+  const hit = closestPathPoint(board, UNIT * 10, 0, 40);
+  assert(hit);
+  const train = createTrain();
+  placeLayoutCars(
+    train,
+    [
+      { id: "lead", kind: "engine", powered: true, coupled: true },
+      { id: "mid1", kind: "mid", coupled: true },
+      { id: "trail1", kind: "engine", coupled: true, facing: -1 },
+    ],
+    board,
+    { seatHit: hit, dir: 1 }
+  );
+
+  const target = getTrainInsertionTargets(train, board)[0];
+  assert(target && target.afterCarId === "lead");
+  assert(target.beforeCarId === "mid1");
+  assert(target.hit, "rail insertion target should have a connected path hit");
+
+  const inserted = spawnFreeCar(train, "mid", target.x, target.y, target.ang);
+  assert(inserted);
+  snapCarPoseToHit(inserted, target.hit, 1);
+  inserted.coupled = false;
+  assert(
+    tryRecoupleCar(
+      train,
+      inserted.id,
+      COUPLER_DIST * 1.5,
+      board,
+      target.afterCarId
+    )
+  );
+  assertEq(
+    train.cars.map((car) => car.id).join(","),
+    "lead," + inserted.id + ",mid1,trail1"
+  );
+  for (let i = 1; i < train.cars.length; i++) {
+    assert(train.cars[i].coupled);
+    assert(
+      couplerError(train.cars[i - 1], train.cars[i]) <= 0.05,
+      `inserted link ${i} must stay pinned`
+    );
+  }
+});
+
+test("real-meme insertion seats added cars to both local axles", () => {
+  const board = createBoard();
+  const info = loadRealMemeTrack(board);
+  assert(info.ok);
+  const hit = closestPathPoint(board, info.trainHint.x, info.trainHint.y, 160);
+  assert(hit);
+  const train = createTrain();
+  placeTrainOnPath(train, hit, { dir: 1, board });
+
+  for (const kind of ["mid", "mid", "engine"]) {
+    const target = getTrainInsertionTargets(train, board).at(-1);
+    assert(target?.hit, `insertion target for ${kind} must be on a connected rail`);
+    const car = spawnFreeCar(train, kind, target.x, target.y, target.ang);
+    assert(car);
+    snapCarPoseToHit(car, target.hit, 1);
+    car.coupled = false;
+    assert(tryRecoupleCar(train, car.id, COUPLER_DIST * 1.5, board, target.afterCarId));
+  }
+
+  for (const car of train.cars.slice(1)) {
+    const ca = Math.cos(car.ang);
+    const sa = Math.sin(car.ang);
+    const front = closestPathPoint(
+      board,
+      car.x + ca * 8,
+      car.y + sa * 8,
+      24
+    );
+    const rear = closestPathPoint(
+      board,
+      car.x - ca * 13.4,
+      car.y - sa * 13.4,
+      24
+    );
+    assert(front && rear, `${car.id} must keep both axles near a rail`);
+    assert(front.dist < 3, `${car.id} front axle dist=${front.dist}`);
+    assert(rear.dist < 3, `${car.id} rear axle dist=${rear.dist}`);
+  }
+});
+
 test("mid cars capped at three; fourth spawn blocked", () => {
   const train = createTrain();
   ensureSingleEngine(train);
@@ -708,8 +801,7 @@ test("lead re-rail leaves off-rail followers off-rail until they re-rail", () =>
   assert(leadOn, "lead should re-rail");
 });
 
-test("after lead re-rail, mid and trail each become on_rail with full spacing", () => {
-  // Skeptic: followers must not stay permanent hitch-turds — each re-rails itself.
+test("malformed whipped chain is broken before individual follower rerail", () => {
   const board = createBoard();
   // Long straight so trail hitch seat eventually sits over path
   for (let i = 0; i < 10; i++) addPiece(board, "R01", i * UNIT, 100, 0);
@@ -743,40 +835,10 @@ test("after lead re-rail, mid and trail each become on_rail with full spacing", 
   train.offRailPreferAng = hit.ang;
 
   const bounds = { minX: -200, minY: 0, maxX: 1200, maxY: 500 };
-  let sawLeadOn = false;
-  let midOn = false;
-  let trailOn = false;
-  for (let i = 0; i < 240; i++) {
-    updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
-    if (train.mode === TrainMode.ON_RAIL) sawLeadOn = true;
-    if (train.cars[1].mode === TrainMode.ON_RAIL) midOn = true;
-    if (train.cars[2].mode === TrainMode.ON_RAIL) trailOn = true;
-    if (sawLeadOn && midOn && trailOn) {
-      const d01 = Math.hypot(
-        train.cars[0].x - train.cars[1].x,
-        train.cars[0].y - train.cars[1].y
-      );
-      const d12 = Math.hypot(
-        train.cars[1].x - train.cars[2].x,
-        train.cars[1].y - train.cars[2].y
-      );
-      assert(
-        d01 >= COUPLER_DIST * 0.75,
-        `mid piled after individual re-rail d01=${d01}`
-      );
-      assert(
-        d12 >= COUPLER_DIST * 0.75,
-        `trail piled after individual re-rail d12=${d12}`
-      );
-      break;
-    }
-  }
-  assert(sawLeadOn, "lead should re-rail");
-  assert(midOn, "mid should re-rail as its own entity within N frames");
-  assert(trailOn, "trail should re-rail as its own entity within N frames");
-  assertEq(train.cars[0].mode, TrainMode.ON_RAIL);
-  assertEq(train.cars[1].mode, TrainMode.ON_RAIL);
-  assertEq(train.cars[2].mode, TrainMode.ON_RAIL);
+  updateTrain(train, board, 1 / 60, bounds, { solidPlayfield: true });
+  assertEq(train.cars[1].coupled, false);
+  assertEq(train.cars[2].coupled, false);
+  assert(!train.stallReason);
 });
 
 test("placeTrainOnPath re-seat preserves uncouple and active engine", () => {

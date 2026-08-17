@@ -15,15 +15,24 @@ import {
   FRONT_AXLE_OFFSET,
   PATH_HOP_DIST,
   PATH_HOP_ANGLE,
+  SOLID_PLAYFIELD_FIT_PAD,
 } from "./train/constants.js";
 import { frontAxlePos, bodyFromFrontAxle } from "./train/pose.js";
 import { snapshotTrain } from "./train/telemetry.js";
+import { couplerError } from "./world-model.js";
 import {
   leaveRails,
   stepOffRail,
   stepOffRailEntity,
   resolveOffRailContacts,
 } from "./train/off-rail.js";
+import {
+  captureConsistFrame,
+  consistPinState,
+  initializeCoupledConsist,
+  resetConsistMotion,
+  solveCoupledConsist,
+} from "./train/motion-trail.js";
 import {
   ensureConsist,
   ensureSingleEngine,
@@ -36,6 +45,7 @@ import {
   COUPLER_DIST,
   MAX_MID_CARS,
   countMidCars,
+  getTrainInsertionTargets,
   uncoupleCar,
   tryRecoupleCar,
   setActiveEngine,
@@ -56,6 +66,10 @@ import {
   removeCar,
   placeLayoutCars,
   serializeTrainCars,
+  capturePlacementState,
+  commitCoupledPlacement,
+  trainBodyOverlaps,
+  validateTrainPlacement,
 } from "./train/consist.js";
 
 export {
@@ -65,11 +79,16 @@ export {
   FRONT_AXLE_FROM_NOSE,
   FRONT_AXLE_OFFSET,
   REAR_AXLE_OFFSET,
+  COUPLER_LATERAL_LIMIT,
+  COUPLER_CENTER_BIAS_OFF_RAIL,
+  COUPLER_CENTER_BIAS_ON_RAIL,
+  COUPLER_CENTER_CURVE_ANGLE,
   WHEEL_RADIUS,
   RE_RAIL_LATERAL,
   RE_RAIL_ANGLE,
   PATH_HOP_DIST,
   PATH_HOP_ANGLE,
+  SOLID_PLAYFIELD_FIT_PAD,
   EDGE_RESTITUTION,
   TRAIN_HIT_R,
 } from "./train/constants.js";
@@ -85,6 +104,14 @@ export {
 } from "./train/pose.js";
 
 export { createTrainTelemetry, snapshotTrain } from "./train/telemetry.js";
+
+export {
+  captureConsistFrame,
+  consistPinState,
+  initializeCoupledConsist,
+  resetConsistMotion,
+  solveCoupledConsist,
+} from "./train/motion-trail.js";
 
 export {
   OFF_RAIL_DS,
@@ -116,6 +143,7 @@ export {
   COUPLER_DIST,
   MAX_MID_CARS,
   countMidCars,
+  getTrainInsertionTargets,
   uncoupleCar,
   tryRecoupleCar,
   setActiveEngine,
@@ -136,10 +164,17 @@ export {
   removeCar,
   placeLayoutCars,
   serializeTrainCars,
+  capturePlacementState,
+  commitCoupledPlacement,
+  trainBodyOverlaps,
+  validateTrainPlacement,
 };
 
 export function placeTrainOnPath(train, hit, opts = {}) {
   if (!hit?.path) return false;
+  const placementSnapshot =
+    train.cars?.length > 1 ? capturePlacementState(train) : null;
+  resetConsistMotion(train);
   train.mode = TrainMode.ON_RAIL;
   train.pathRef = {
     path: hit.path,
@@ -165,6 +200,9 @@ export function placeTrainOnPath(train, hit, opts = {}) {
   train.offRailPreferAng = null;
   train.offRailDistAcc = 0;
   train.offRailStepsDone = 0;
+  train.openMouthClearSteps = 0;
+  train.openMouthPieceId = null;
+  train.openMouthAdjacentPieceId = null;
   train.reRailDistLeft = 0;
   const board = opts.board || null;
   // No hardReset multi-car template. Multi-car layouts use placeLayoutCars
@@ -197,6 +235,12 @@ export function placeTrainOnPath(train, hit, opts = {}) {
       seatConsistOnPath(train, board);
     } else {
       placeFollowers(train, { hard: true, onRail: true, board: null });
+    }
+    if (board) {
+      const committed = commitCoupledPlacement(train, board, {
+        snapshot: placementSnapshot,
+      });
+      if (!committed.ok && !committed.rejected.length) return false;
     }
   }
   return true;
@@ -261,6 +305,14 @@ export function restoreTrainSnapshot(train, board, snapshot) {
 
   train.x = finiteSnapshotValue(snapshot.x, train.x);
   train.y = finiteSnapshotValue(snapshot.y, train.y);
+  train.frontCouplerOffset = finiteSnapshotValue(
+    snapshot.frontCouplerOffset,
+    train.frontCouplerOffset || 0
+  );
+  train.rearCouplerOffset = finiteSnapshotValue(
+    snapshot.rearCouplerOffset,
+    train.rearCouplerOffset || 0
+  );
   train.ang = finiteSnapshotValue(snapshot.ang, train.ang);
   train.s = finiteSnapshotValue(snapshot.s, train.s);
   train.dir = snapshot.dir === -1 || snapshot.dir === 1 ? snapshot.dir : train.dir;
@@ -294,6 +346,14 @@ export function restoreTrainSnapshot(train, board, snapshot) {
     0,
     Math.floor(
       finiteSnapshotValue(snapshot.openMouthClearSteps, train.openMouthClearSteps || 0)
+    )
+  );
+  train.openMouthAdjacentPieceId = snapshot.openMouthAdjacentPieceId || null;
+  train.railEntryGraceDistance = Math.max(
+    0,
+    finiteSnapshotValue(
+      snapshot.railEntryGraceDistance,
+      train.railEntryGraceDistance || 0
     )
   );
   train.cornerLockSteps = Math.max(
@@ -348,6 +408,14 @@ export function restoreTrainSnapshot(train, board, snapshot) {
     car.dir = saved.dir === -1 || saved.dir === 1 ? saved.dir : car.dir;
     car.vx = finiteSnapshotValue(saved.vx, car.vx);
     car.vy = finiteSnapshotValue(saved.vy, car.vy);
+    car.frontCouplerOffset = finiteSnapshotValue(
+      saved.frontCouplerOffset,
+      car.frontCouplerOffset || 0
+    );
+    car.rearCouplerOffset = finiteSnapshotValue(
+      saved.rearCouplerOffset,
+      car.rearCouplerOffset || 0
+    );
     car.reRailCooldown = Math.max(
       0,
       finiteSnapshotValue(saved.reRailCooldown, car.reRailCooldown || 0)
@@ -356,6 +424,14 @@ export function restoreTrainSnapshot(train, board, snapshot) {
     car.openMouthClearSteps = Math.max(
       0,
       Math.floor(finiteSnapshotValue(saved.openMouthClearSteps, car.openMouthClearSteps || 0))
+    );
+    car.openMouthAdjacentPieceId = saved.openMouthAdjacentPieceId || null;
+    car.railEntryGraceDistance = Math.max(
+      0,
+      finiteSnapshotValue(
+        saved.railEntryGraceDistance,
+        car.railEntryGraceDistance || 0
+      )
     );
     car.facing = saved.facing === -1 || saved.facing === 1 ? saved.facing : car.facing;
     car.coupled = saved.coupled !== false;
@@ -396,11 +472,14 @@ export function restoreTrainSnapshot(train, board, snapshot) {
   }
   train.consistSpec = null;
   train.wallHit = false;
+  resetConsistMotion(train);
   return true;
 }
 
 export function startTrain(train) {
-  if (train.mode === TrainMode.STOPPED) return false;
+  if (train.mode === TrainMode.STOPPED || train.mode === TrainMode.STALLED) {
+    return false;
+  }
   if (train.mode === TrainMode.OFF_RAIL) {
     const sp = train.speed;
     train.vx = Math.cos(train.ang) * sp;
@@ -441,16 +520,70 @@ export function updateTrain(train, board, dt, bounds, opts = {}) {
         solidPlayfield: !!opts.solidPlayfield,
         bounds: bounds ? { ...bounds } : null,
       },
-      snapshotTrain(train, board)
+      snapshotTrain(train, board, {
+        bounds,
+        solidPlayfield: !!opts.solidPlayfield,
+      })
     );
   }
 
-  if (train.mode === TrainMode.IDLE || train.mode === TrainMode.STOPPED) {
+  if (
+    train.mode === TrainMode.IDLE ||
+    train.mode === TrainMode.STOPPED ||
+    train.mode === TrainMode.STALLED
+  ) {
     // Paused/stopped physics is a true freeze. Re-seating here used to
     // teleport mixed rail/floor followers into a straight hitch every frame.
-    if (tracing) telemetry.end(snapshotTrain(train, board));
+    if (tracing) {
+      telemetry.end(
+        snapshotTrain(train, board, {
+          bounds,
+          solidPlayfield: !!opts.solidPlayfield,
+        })
+      );
+    }
     return;
   }
+  // External editors/snapshots can present an already-impossible link. A
+  // toy coupler cannot heal a stretched gap by teleporting either body, so
+  // break at the first bad pin. Runtime-created constraints use rollback +
+  // STALLED instead; both policies guarantee no moving stretched link.
+  const incomingChain = getPoweredChain(train);
+  if (incomingChain[0]) {
+    Object.assign(incomingChain[0], {
+      x: train.x,
+      y: train.y,
+      ang: train.ang,
+      mode: train.mode,
+      pathRef: train.pathRef,
+      s: train.s,
+      dir: train.dir,
+      vx: train.vx,
+      vy: train.vy,
+    });
+  }
+  for (let i = 1; i < incomingChain.length; i++) {
+    const error = couplerError(incomingChain[i - 1], incomingChain[i]);
+    if (error <= 1) continue;
+    telemetry?.event("coupler_break", {
+      from: incomingChain[i - 1].id,
+      to: incomingChain[i].id,
+      error,
+      reason: "preexisting_stretch",
+    });
+    for (let j = i; j < incomingChain.length; j++) {
+      incomingChain[j].coupled = false;
+      incomingChain[j].powered = false;
+    }
+    resetConsistMotion(train);
+    break;
+  }
+
+  // Snapshot the exact pre-step pin state. If any follower pose is
+  // unsatisfiable, the shared solver restores this frame and stalls; it never
+  // leaves a one-frame stretched coupling behind.
+  const consistFrame =
+    train.cars?.length > 1 ? captureConsistFrame(train) : null;
 
   if (train.reRailCooldown > 0) {
     train.reRailCooldown = Math.max(0, train.reRailCooldown - dt);
@@ -464,7 +597,20 @@ export function updateTrain(train, board, dt, bounds, opts = {}) {
 
   if (train.mode === TrainMode.ON_RAIL) {
     stepOnRail(train, board, dt, telemetry);
-    if (train.mode === TrainMode.ON_RAIL && !railPoseClear(board, train)) {
+    if (train.mode === TrainMode.OFF_RAIL) {
+      // A rail exit owns the current pose until the first floor step. Project
+      // that transition pose immediately so the hull cannot spend one
+      // telemetry frame intersecting a neighboring solid bed.
+      resolveOffRailContacts(train, board, bounds, {
+        solidPlayfield: !!opts.solidPlayfield,
+        telemetry,
+      });
+    }
+    if (
+      train.mode === TrainMode.ON_RAIL &&
+      (train.railEntryGraceDistance || 0) <= 0 &&
+      !railPoseClear(board, train)
+    ) {
       // A path centerline is not permission to drive an axle through a solid
       // active rail bed. Leave the rails and let the normal wall-glide solver
       // resolve the contact instead of silently phasing through it.
@@ -480,227 +626,137 @@ export function updateTrain(train, board, dt, bounds, opts = {}) {
     stepOffRail(train, board, dt, bounds, opts);
   }
 
-  // Lead-first derail: valid followers continue their own rail simulation
-  // until they reach an actual open endpoint. This is intentionally a mixed
-  // domain window; forcing every car off here was the source of the visible
-  // follower teleport/whip bug.
-  if (train.mode === TrainMode.OFF_RAIL) {
-    for (const car of getPoweredChain(train).slice(1)) {
-      if (car.mode !== TrainMode.ON_RAIL || !car.pathRef) continue;
-      stepOnRailCar(car, board, dt, telemetry, train.speed);
-      if (car.mode === TrainMode.ON_RAIL && !railPoseClear(board, car)) {
-        telemetry?.event("rail_bed_violation", {
-          entity: car.id,
-          pathKey: car.pathRef
-            ? `${car.pathRef.pieceId}:${car.pathRef.pathId}`
-            : null,
-        });
-        car.mode = TrainMode.OFF_RAIL;
-        car.pathRef = null;
+  const chain = getPoweredChain(train);
+  if (chain.length > 1) {
+    const solved = solveCoupledConsist(
+      train,
+      board,
+      dt,
+      bounds,
+      { ...opts, telemetry },
+      consistFrame
+    );
+    if (!solved.ok) {
+      if (tracing) {
+        telemetry.end(
+          snapshotTrain(train, board, {
+            bounds,
+            solidPlayfield: !!opts.solidPlayfield,
+          })
+        );
       }
+      return;
+    }
+  } else {
+    // Single powered entity mirrors the train state directly.
+    const powered = chain[0] || train.cars?.find((car) => car.powered);
+    if (powered) {
+      powered.x = train.x;
+      powered.y = train.y;
+      powered.ang = train.ang;
+      powered.mode = train.mode;
+      powered.pathRef = train.pathRef;
+      powered.s = train.s;
+      powered.dir = train.dir;
+      powered.vx = train.vx;
+      powered.vy = train.vy;
+      powered.frontCouplerOffset = train.frontCouplerOffset || 0;
+      powered.rearCouplerOffset = train.rearCouplerOffset || 0;
+      powered.wallHit = !!train.wallHit;
+      powered.openMouthClearSteps = train.openMouthClearSteps || 0;
+      powered.openMouthPieceId = train.openMouthPieceId || null;
+      powered.openMouthAdjacentPieceId =
+        train.openMouthAdjacentPieceId || null;
+      powered.railEntryGraceDistance = train.railEntryGraceDistance || 0;
     }
   }
 
-  // Normalize only stale on-rail flags with no valid path context. A valid
-  // follower path is preserved while the lead is on the floor.
-  if (train.mode === TrainMode.OFF_RAIL || train.mode === TrainMode.STOPPED) {
-    for (const car of getPoweredChain(train).slice(1)) {
-      if (car.mode === TrainMode.OFF_RAIL) continue;
-      if (car.mode === TrainMode.ON_RAIL && car.pathRef) continue;
+  // Loose cars remain independent floor bodies. Coupled cars are excluded:
+  // applying this resolver to them after the pin solve would reintroduce
+  // stretch by construction.
+  const chainIds = new Set(chain.map((car) => car.id));
+  const parkedRailIds = new Set(
+    (train.cars || [])
+      .filter(
+        (car) =>
+          !chainIds.has(car.id) &&
+          car.coupled === false &&
+          car.mode === TrainMode.ON_RAIL
+      )
+      .map((car) => car.id)
+  );
+  const looseCars = (train.cars || []).filter(
+    (car) => !chainIds.has(car.id) && car.mode === TrainMode.OFF_RAIL
+  );
+  for (const car of looseCars) {
+    stepOffRailEntity(car, board, dt, bounds, {
+      speed: train.speed,
+      solidPlayfield: !!opts.solidPlayfield,
+      telemetry,
+    });
+    // Even with zero pending fixed-distance steps, an externally moved or
+    // newly broken-away body must be projected out of solids immediately.
+    resolveOffRailContacts(car, board, bounds, {
+      solidPlayfield: !!opts.solidPlayfield,
+      telemetry,
+    });
+    const chainIndex = getPoweredChain(train).findIndex(
+      (item) => item.id === car.id
+    );
+    const predecessor = chainIndex > 0 ? getPoweredChain(train)[chainIndex - 1] : null;
+    if (
+      !car.coupled ||
+      !predecessor ||
+      predecessor.mode === TrainMode.ON_RAIL
+    ) {
+      tryRerailCar(car, board, train, telemetry);
+    }
+  }
+  const parkedRailCars = (train.cars || []).filter(
+    (car) =>
+      parkedRailIds.has(car.id) &&
+      car.mode === TrainMode.ON_RAIL
+  );
+  const parkedBefore = new Map(
+    parkedRailCars.map((car) => [car.id, { x: car.x, y: car.y }])
+  );
+  if (chain.length <= 1 && train.cars?.length > 1) {
+    resolveCarCollisions(train, {
+      movableRailCarIds: parkedRailIds,
+    });
+  } else if (parkedRailCars.length) {
+    resolveCarCollisions(train, { parkedRailCars });
+  }
+  if (parkedRailCars.length) {
+    for (const car of parkedRailCars) {
+      const old = parkedBefore.get(car.id);
+      if (!old) continue;
+      const moved = Math.hypot(car.x - old.x, car.y - old.y);
+      if (moved <= 0.001) continue;
+      // A pushed parked car is no longer rail-owned. Preserve its new body
+      // pose and let the normal off-rail wall solver own subsequent motion.
       car.mode = TrainMode.OFF_RAIL;
       car.pathRef = null;
-      car.vx = Math.cos(car.ang || train.ang || 0) * (train.speed || 180);
-      car.vy = Math.sin(car.ang || train.ang || 0) * (train.speed || 180);
-    }
-  }
-
-  // Sync powered car from train body after physics
-  const powered =
-    (train.cars || []).find((c) => c.powered || c.id === train.poweredId) ||
-    train.cars?.[0];
-  if (powered) {
-    powered.x = train.x;
-    powered.y = train.y;
-    powered.ang = train.ang;
-    powered.mode = train.mode;
-    powered.pathRef = train.pathRef;
-    powered.s = train.s;
-    powered.dir = train.dir;
-    powered.vx = train.vx;
-    powered.vy = train.vy;
-  }
-
-  // Hitch-pull coupled cars (respects per-car off_rail mode — no force on-rail)
-  const solid = !!opts.solidPlayfield;
-  let followerRerailChanged = false;
-  if (train.cars?.length > 1) {
-    const leadOn = train.mode === TrainMode.ON_RAIL;
-    const chain = getPoweredChain(train);
-    let anyOff = chain.some(
-      (c, i) => i > 0 && c.mode === TrainMode.OFF_RAIL
-    );
-    const anyOnRailFollower = chain.some(
-      (c, i) => i > 0 && c.mode === TrainMode.ON_RAIL && c.pathRef
-    );
-    // Mixed domains can exist while the lead is still off the rails: a
-    // middle car may catch a rail before the lead does. The old leadOn gate
-    // sent every downstream car through the whip solver in that window.
-    const mixed = anyOnRailFollower && anyOff;
-    if (mixed) {
-      // Continue every follower in its own domain. The previous hard hitch /
-      // whip branch overwrote floor poses every frame, so followers could
-      // never reach the rail mouth where tryRerailCar() was waiting.
-      for (const car of chain.slice(1)) {
-        if (car.mode === TrainMode.ON_RAIL && car.pathRef) {
-          stepOnRailCar(car, board, dt, telemetry, train.speed);
-        } else if (car.mode === TrainMode.OFF_RAIL) {
-          stepOffRailEntity(car, board, dt, bounds, {
-            speed: train.speed,
-            solidPlayfield: solid,
-            telemetry,
-          });
-        }
-      }
-      anyOff = chain.some(
-        (c, i) => i > 0 && c.mode === TrainMode.OFF_RAIL
-      );
-    }
-
-    // When the lead is on the floor, do not whip-place every off-rail car
-    // before it gets a chance to catch a nearby rail. This is the important
-    // middle-rerail window: try cars in chain order so a recovered middle car
-    // becomes the predecessor for the next car in the same frame.
-    if (train.mode === TrainMode.OFF_RAIL && board) {
-      for (const car of chain.slice(1)) {
-        if (car.mode !== TrainMode.OFF_RAIL) continue;
-        followerRerailChanged =
-          tryRerailCar(car, board, train, telemetry) || followerRerailChanged;
-      }
-    }
-
-    // Rerailing can change the domain mix, so recompute it before seating.
-    anyOff = chain.some(
-      (c, i) => i > 0 && c.mode === TrainMode.OFF_RAIL
-    );
-    const mixedAfterRerail = chain.some(
-      (c, i) => i > 0 && c.mode === TrainMode.ON_RAIL && c.pathRef
-    ) && anyOff;
-    // Lead on + off-rail followers: hard fixed hitch (no whip pile-up).
-    // All on-rail: pathSeat every frame so mid/trail follow curves on rails.
-    // Lead off: trailer whip, but only after the chain has been normalized
-    // entirely off-rail above.
-    placeFollowers(train, {
-      hard: leadOn && anyOff,
-      whip: train.mode === TrainMode.OFF_RAIL && !mixedAfterRerail,
-      pathSeat: leadOn && !anyOff,
-      onRail: leadOn && !anyOff,
-      hybridOffRail: mixedAfterRerail,
-      telemetry,
-      // Need board whenever lead is on so path-seat / heading can snap to rails
-      board: leadOn ? board : null,
-    });
-  }
-
-  // Per-car: every off-rail car gets track-wall + optional playfield contact,
-  // then an individual re-rail attempt. The powered lead is handled by
-  // stepOffRail; followers need the same wall geometry after hitch placement.
-  if (train.cars?.length > 1) {
-    for (const car of train.cars) {
-      if (car.powered) continue;
-      if (car.mode !== TrainMode.OFF_RAIL) continue;
-
-      // Keep the rigid link only during the lead's short snap grace. After
-      // that, a follower that has not caught a rail is a real floor body and
-      // must collide with the track/playfield instead of being dragged
-      // through the outside of a curve or off the canvas.
-      const leadRerailGraceHold =
-        car.coupled &&
-        train.mode === TrainMode.ON_RAIL &&
-        (train.reRailCooldown || 0) > 0;
-      if (leadRerailGraceHold) {
-        followerRerailChanged =
-          tryRerailCar(car, board, train, telemetry) || followerRerailChanged;
-        continue;
-      }
-
-      // Velocity toward hitch pull direction for wall slide
-      if (car.coupled) {
-        const sp = train.speed || 180;
-        car.vx = Math.cos(car.ang) * sp * 0.85;
-        car.vy = Math.sin(car.ang) * sp * 0.85;
-      }
-      resolveOffRailContacts(car, board, bounds, {
-        solidPlayfield: solid,
-        telemetry,
+      car.s = 0;
+      car.vx = (car.x - old.x) / Math.max(dt, 1e-6);
+      car.vy = (car.y - old.y) / Math.max(dt, 1e-6);
+      car.offRailDistAcc = 0;
+      car.offRailStepsDone = 0;
+      telemetry?.event("uncoupled_car_impact", {
+        carId: car.id,
+        distance: moved,
       });
-      if (car.openMouthClearSteps > 0) car.openMouthClearSteps--;
-      if (board) {
-        followerRerailChanged =
-          tryRerailCar(car, board, train, telemetry) || followerRerailChanged;
-      }
     }
   }
 
-  // A middle car may have recovered before the next car was processed. Give
-  // the downstream chain one same-frame handoff pass so its pose is based on
-  // the recovered predecessor, not the predecessor's pre-rerail coordinates.
-  // This is deliberately chain-length agnostic (lead + 0..3 mids + trail).
-  if (followerRerailChanged && train.cars?.length > 1) {
-    const leadOn = train.mode === TrainMode.ON_RAIL;
-    const chain = getPoweredChain(train);
-    const anyOff = chain.some(
-      (car, index) => index > 0 && car.mode === TrainMode.OFF_RAIL
+  if (tracing) {
+    telemetry.end(
+      snapshotTrain(train, board, {
+        bounds,
+        solidPlayfield: !!opts.solidPlayfield,
+      })
     );
-    const mixed = chain.some(
-      (car, index) => index > 0 && car.mode === TrainMode.ON_RAIL && car.pathRef
-    ) && anyOff;
-    placeFollowers(train, {
-      hard: leadOn && anyOff,
-      whip: train.mode === TrainMode.OFF_RAIL && !mixed,
-      pathSeat: leadOn && !anyOff,
-      onRail: leadOn && !anyOff,
-      hybridOffRail: mixed,
-      telemetry,
-      board: leadOn ? board : null,
-    });
   }
-
-  // Solid bodies: cars never occupy the same space (train-on-train).
-  // Skip when the whole coupled chain is on-rail — path seat already
-  // keeps spacing, and OBB resolve shoves cars off the curve.
-  if (train.cars?.length > 1) {
-    const allOnRail =
-      train.mode === TrainMode.ON_RAIL &&
-      train.cars.every(
-        (c) =>
-          !c.coupled ||
-          c.powered ||
-          c.mode === TrainMode.ON_RAIL ||
-          c.mode === TrainMode.IDLE
-      );
-    if (!allOnRail) {
-      resolveCarCollisions(train);
-      // Body separation can move a follower after its wall pass. Re-seat all
-      // free/off-rail cars once more so body collision cannot leave them
-      // inside track walls or beyond a solid playfield edge.
-      for (const car of train.cars) {
-        if (car.powered || car.mode !== TrainMode.OFF_RAIL) continue;
-        if (
-          car.coupled &&
-          train.mode === TrainMode.ON_RAIL &&
-          (train.reRailCooldown || 0) > 0
-        ) {
-          continue;
-        }
-        resolveOffRailContacts(car, board, bounds, {
-          solidPlayfield: solid,
-          telemetry,
-        });
-      }
-    }
-  }
-
-  if (tracing) telemetry.end(snapshotTrain(train, board));
 }
 
 
@@ -711,6 +767,18 @@ function resolveLivePath(board, pref) {
       (p) => p.pieceId === pref.pieceId && p.id === pref.pathId && p.active
     ) || null
   );
+}
+
+function adjacentPieceAtPathExit(board, path, exitConn) {
+  if (!board?.graph?.nodes || !path || !exitConn) return null;
+  const oppositeConn = exitConn === path.fromC ? path.toC : path.fromC;
+  const node = board.graph.nodes.get(`${path.pieceId}:${oppositeConn}`);
+  for (const edge of node?.edges || []) {
+    if (!edge.link || !edge.to) continue;
+    const split = edge.to.indexOf(":");
+    if (split > 0) return edge.to.slice(0, split);
+  }
+  return null;
 }
 
 function stepOnRail(train, board, dt, telemetry = null) {
@@ -724,6 +792,7 @@ function stepOnRailCar(car, board, dt, telemetry, speed) {
 function stepRailEntity(entity, board, dt, telemetry, isLead, speed) {
   const pref = entity.pathRef;
   const entityId = isLead ? "lead" : entity.id;
+  let live = null;
   const fail = (reason, data = {}) => {
     telemetry?.event(isLead ? "rail_exit" : "car_rail_exit", {
       entity: entityId,
@@ -731,13 +800,25 @@ function stepRailEntity(entity, board, dt, telemetry, isLead, speed) {
       ...data,
     });
     if (isLead) {
-      leaveRails(entity, reason, telemetry);
+      const sourcePieceId =
+        data.exitPieceId || entity.pathRef?.pieceId || null;
+      leaveRails(entity, reason, telemetry, {
+        openMouthPieceId: sourcePieceId,
+        openMouthAdjacentPieceId:
+          reason === "no_next_path"
+            ? adjacentPieceAtPathExit(board, live, data.exitConn)
+            : null,
+      });
     } else {
       entity.reRailCooldown = 0.35;
       entity.lastRailExitKey = entity.pathRef
         ? `${entity.pathRef.pieceId}:${entity.pathRef.pathId}`
         : null;
       entity.openMouthClearSteps = reason === "no_next_path" ? 32 : 0;
+            entity.openMouthPieceId =
+              reason === "no_next_path"
+                ? data.exitPieceId || entity.pathRef?.pieceId || null
+                : null;
       entity.mode = TrainMode.OFF_RAIL;
       entity.pathRef = null;
       entity.vx = Math.cos(entity.ang || 0) * (speed || 180);
@@ -748,7 +829,7 @@ function stepRailEntity(entity, board, dt, telemetry, isLead, speed) {
 
   if (!pref) return fail("missing_path_ref");
 
-  let live = resolveLivePath(board, pref);
+  live = resolveLivePath(board, pref);
   if (!live) {
     // A switch may have deactivated the referenced route. Re-seat the entity
     // only if the nearby active path has a compatible travel heading.
@@ -795,6 +876,12 @@ function stepRailEntity(entity, board, dt, telemetry, isLead, speed) {
 
   let len = live.length || 1e-6;
   const dist = (speed || 180) * dt;
+  if ((entity.railEntryGraceDistance || 0) > 0) {
+    entity.railEntryGraceDistance = Math.max(
+      0,
+      entity.railEntryGraceDistance - dist
+    );
+  }
   entity.s += (dist / len) * entity.dir;
 
   let guard = 0;
@@ -826,6 +913,7 @@ function stepRailEntity(entity, board, dt, telemetry, isLead, speed) {
     if (!next) {
       return fail("no_next_path", {
         fromPath: `${live.pieceId}:${live.id}`,
+        exitPieceId: live.pieceId,
         exitConn,
         travelAng,
         overshootPx,
@@ -997,6 +1085,8 @@ export function modeLabel(mode) {
       return "On rails";
     case TrainMode.OFF_RAIL:
       return "Off rails (floor)";
+    case TrainMode.STALLED:
+      return "Stalled (constraint blocked)";
     case TrainMode.STOPPED:
       return "Stopped at edge ΓÇö reset train";
     case TrainMode.IDLE:

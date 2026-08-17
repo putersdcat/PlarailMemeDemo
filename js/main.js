@@ -62,14 +62,22 @@ import {
   spawnFreeCar,
   snapCarPoseToHit,
   MAX_MID_CARS,
+  COUPLER_DIST,
   countMidCars,
+  getTrainInsertionTargets,
   clearTrainCars,
   removeCar,
   placeLayoutCars,
   serializeTrainCars,
+  SOLID_PLAYFIELD_FIT_PAD,
 } from "./train.js";
 import { resizeCanvas, drawScene, drawPaletteIcon, drawPaletteTrainIcon } from "./render.js";
-import { loadRealMemeTrack, TRACK_CATALOG, getTrackById } from "./presets.js";
+import {
+  loadRealMemeTrack,
+  TRACK_CATALOG,
+  getTrackById,
+  trackIdFromSearch,
+} from "./presets.js";
 import {
   unlockAudio,
   syncTrainAudio,
@@ -80,15 +88,35 @@ import {
 import { createPaintController } from "./app/paint.js";
 import { createIo } from "./app/io.js";
 import {
+  buildWorldPersistence,
+  prepareLoadedWorld,
+} from "./app/world-persistence.js";
+import {
   createView,
   viewScale as camViewScale,
   screenToWorld,
   zoomAtScreen,
   panByScreen,
   playfieldBounds,
+  solidPlayfieldBounds,
   fitBoardToView as camFitBoard,
   fitWorldRect as camFitWorldRect,
 } from "./app/camera.js";
+import {
+  buildWorldContract,
+  inspectTrainState,
+  renderWorldAscii,
+} from "./world-model.js";
+import { analyzeTrainTrace } from "./train/trace-analysis.js";
+import {
+  t,
+  hasKey,
+  initI18n,
+  onLocaleChange,
+  rememberHint,
+} from "./i18n.js";
+
+initI18n();
 
 const canvas = document.getElementById("stage");
 const badgeEl = document.getElementById("mode-badge");
@@ -144,6 +172,8 @@ let trainGhost = null;
 let showWalls = false;
 /** Feature: solid wood playfield border — bounce instead of STOPPED */
 let solidPlayfield = false;
+/** Stable world-space collision walls, independent of camera pan/zoom/resize. */
+let fixedPlayfieldBounds = null;
 const SOLID_WALLS_LS = "plarail-solid-playfield";
 let lastT = performance.now();
 let hidePieceId = null;
@@ -177,8 +207,10 @@ const paletteEl = document.getElementById("palette");
 
 function refreshPaletteActive() {
   document.querySelectorAll(".piece-btn").forEach((btn) => {
-    if (btn.dataset.tool === "train") {
-      btn.classList.toggle("active", trainTool && carTool === "engine");
+    if (btn.dataset.tool === "active-engine") {
+      btn.classList.toggle("active", trainTool && carTool === "active-engine");
+    } else if (btn.dataset.tool === "passive-engine") {
+      btn.classList.toggle("active", trainTool && carTool === "passive-engine");
     } else if (btn.dataset.tool === "midcar") {
       btn.classList.toggle("active", trainTool && carTool === "mid");
     } else {
@@ -197,46 +229,83 @@ function clearSelection() {
   board.selectedId = null;
 }
 
-/** carTool: null | "engine" | "mid" — which rolling stock the palette places */
+/** carTool: null | "active-engine" | "passive-engine" | "mid" */
 let carTool = null;
 
 function ensurePaletteButtons() {
   paletteEl.innerHTML = "";
 
-  // ── Engine (drag onto rails) — rendered icon, not emoji ──
+  // ── Active engine (the one powered side) ──
   {
     const btn = document.createElement("button");
     btn.className = "piece-btn train-btn";
     btn.type = "button";
-    btn.dataset.tool = "train";
+    btn.dataset.tool = "active-engine";
     btn.innerHTML = `
       <canvas class="train-icon-canvas" width="72" height="52" aria-hidden="true"></canvas>
       <div class="meta">
-        <strong>Engine</strong>
-        <span>Drag onto a rail · powered unit</span>
+        <strong>${t("palette.activeEngine")}</strong>
+        <span>${t("palette.activeEngineDesc")}</span>
       </div>`;
-    drawPaletteTrainIcon(btn.querySelector("canvas"), "engine");
+    drawPaletteTrainIcon(btn.querySelector("canvas"), "active");
     btn.addEventListener("click", (e) => {
       if (drag?.kind === "train" || drag?.suppressClick) return;
       trainTool = !trainTool;
-      carTool = trainTool ? "engine" : null;
+      carTool = trainTool ? "active-engine" : null;
       if (trainTool) paletteTool = null;
       refreshPaletteActive();
-      setHint(
-        trainTool
-          ? "Engine tool: left-drag onto a rail. 🦄 on a selected engine switches which is powered."
-          : "Engine tool off."
-      );
+      setHint(trainTool ? "palette.activeEngineOn" : "palette.activeEngineOff");
     });
     btn.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
       e.preventDefault();
       e.stopPropagation();
       trainTool = true;
-      carTool = "engine";
+      carTool = "active-engine";
       paletteTool = null;
       refreshPaletteActive();
-      beginTrainDrag(e, null, { carKind: "engine" });
+      beginTrainDrag(e, null, {
+        carKind: "engine",
+        powerIntent: "active",
+      });
+    });
+    paletteEl.appendChild(btn);
+  }
+
+  // ── Passive engine (unpowered end or parked unit) ──
+  {
+    const btn = document.createElement("button");
+    btn.className = "piece-btn train-btn";
+    btn.type = "button";
+    btn.dataset.tool = "passive-engine";
+    btn.innerHTML = `
+      <canvas class="train-icon-canvas" width="72" height="52" aria-hidden="true"></canvas>
+      <div class="meta">
+        <strong>${t("palette.passiveEngine")}</strong>
+        <span>${t("palette.passiveEngineDesc")}</span>
+      </div>`;
+    drawPaletteTrainIcon(btn.querySelector("canvas"), "passive");
+    btn.addEventListener("click", (e) => {
+      if (drag?.kind === "train" || drag?.suppressClick) return;
+      const on = carTool !== "passive-engine";
+      trainTool = on;
+      carTool = on ? "passive-engine" : null;
+      if (on) paletteTool = null;
+      refreshPaletteActive();
+      setHint(on ? "palette.passiveEngineOn" : "palette.passiveEngineOff");
+    });
+    btn.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      trainTool = true;
+      carTool = "passive-engine";
+      paletteTool = null;
+      refreshPaletteActive();
+      beginTrainDrag(e, null, {
+        carKind: "engine",
+        powerIntent: "passive",
+      });
     });
     paletteEl.appendChild(btn);
   }
@@ -250,8 +319,8 @@ function ensurePaletteButtons() {
     btn.innerHTML = `
       <canvas class="train-icon-canvas" width="72" height="52" aria-hidden="true"></canvas>
       <div class="meta">
-        <strong>Mid car</strong>
-        <span>Drag onto a rail · couple behind engine</span>
+        <strong>${t("palette.mid")}</strong>
+        <span>${t("palette.midDesc")}</span>
       </div>`;
     drawPaletteTrainIcon(btn.querySelector("canvas"), "mid");
     btn.addEventListener("click", (e) => {
@@ -261,11 +330,7 @@ function ensurePaletteButtons() {
       carTool = on ? "mid" : null;
       if (on) paletteTool = null;
       refreshPaletteActive();
-      setHint(
-        on
-          ? "Mid car tool: left-drag onto a rail. Select + Delete uncouples."
-          : "Mid car tool off."
-      );
+      setHint(on ? "palette.midOn" : "palette.midOff");
     });
     btn.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
@@ -283,6 +348,7 @@ function ensurePaletteButtons() {
   for (const type of paletteOrder) {
     const meta = PIECE_META[type];
     if (!meta) continue;
+    const copy = pieceCopy(type);
     const btn = document.createElement("button");
     btn.className = "piece-btn";
     btn.type = "button";
@@ -290,8 +356,8 @@ function ensurePaletteButtons() {
     btn.innerHTML = `
       <canvas width="72" height="52"></canvas>
       <div class="meta">
-        <strong>${meta.code} ${meta.name}</strong>
-        <span>${meta.desc}</span>
+        <strong>${copy.code} ${copy.name}</strong>
+        <span>${copy.desc}</span>
       </div>`;
     const c = btn.querySelector("canvas");
     c.width = 72;
@@ -305,8 +371,9 @@ function ensurePaletteButtons() {
       refreshPaletteActive();
       setHint(
         paletteTool
-          ? `Selected: ${meta.code} ${meta.name}. Left-drag to place · 🦄 gender · ⇋ L/R · box-drag empty to multi-select.`
-          : "Palette selection cleared."
+          ? "palette.pieceSelected"
+          : "palette.cleared",
+        paletteTool ? { code: copy.code, name: copy.name } : undefined
       );
     });
     btn.addEventListener("pointerdown", (e) => {
@@ -336,7 +403,7 @@ document.getElementById("btn-rotate").addEventListener("click", () => {
     if (ids.length > 1) {
       // Rigid group rotate about shared visual-pivot centroid
       rotateSelectionAboutCenter(board, ids, 1);
-      setHint(`Rotated ${ids.length} pieces about group center.`);
+      setHint("hint.rotatedGroup", { count: ids.length });
     } else {
       for (const id of ids) {
         if (id) rotatePiece(board, id, 1);
@@ -357,19 +424,13 @@ document.getElementById("btn-flip").addEventListener("click", () => {
     const ok = setActiveEngine(train, train.selectedCarId);
     train.selected = true;
     clearSelection();
-    setHint(
-      ok
-        ? `Powered engine switched. Green ring = active. Only one engine drives.`
-        : "Could not switch powered engine."
-    );
+    setHint(ok ? "hint.powerSwitched" : "hint.powerSwitchFail");
   } else if (trainPlaced && (train.selected || (!board.selectedId && selectedIds.size === 0))) {
     // Flip train travel direction when train is the selection target
     flipTrainDirection(train, board);
     train.selected = true;
     clearSelection();
-    setHint(
-      `Train facing ${train.dir > 0 ? "forward" : "reverse"}. Start to run that way.`
-    );
+    setHint(train.dir > 0 ? "hint.trainForward" : "hint.trainReverse");
   } else {
     for (const id of selectedIds.size ? selectedIds : [board.selectedId]) {
       if (id) flipPiece(board, id);
@@ -387,8 +448,8 @@ document.getElementById("btn-mirror").addEventListener("click", () => {
       const p = getPiece(board, id);
       if (p && isMirrorable(p.type) && mirrorPiece(board, id)) n++;
     }
-    if (!n) setHint("No L/R variant in selection.");
-    else setHint(`Mirrored ${n} piece(s).`);
+    if (!n) setHint("hint.noMirror");
+    else setHint("hint.mirrored", { count: n });
     persistLayout();
   }
 });
@@ -405,16 +466,12 @@ document.getElementById("btn-delete").addEventListener("click", () => {
       if (r.cleared) {
         trainPlaced = false;
         running = false;
-        setHint(
-          "Train deleted. Drag 🚂 engine onto a rail, then add mid cars (max 3)."
-        );
+        setHint("hint.trainDeleted");
         updateStatus();
         return;
       }
       if (r.removed) {
-        setHint(
-          "Car deleted. Add units from palette (engine / mid) · max 3 mids."
-        );
+        setHint("hint.carDeleted");
         updateStatus();
         return;
       }
@@ -424,7 +481,7 @@ document.getElementById("btn-delete").addEventListener("click", () => {
       clearTrainCars(train);
       trainPlaced = false;
       running = false;
-      setHint("Train cleared. Place engine alone, then build mid cars.");
+      setHint("hint.trainCleared");
       updateStatus();
       return;
     }
@@ -437,13 +494,14 @@ document.getElementById("btn-delete").addEventListener("click", () => {
   for (const id of ids) removePiece(board, id);
   clearSelection();
   persistLayout();
-  setHint(ids.length ? `Deleted ${ids.length} piece(s).` : "Nothing selected.");
+  setHint(
+    ids.length ? "hint.deletedPieces" : "hint.nothingSelected",
+    ids.length ? { count: ids.length } : undefined
+  );
 });
 document.getElementById("btn-clear").addEventListener("click", () => {
   if (
-    !window.confirm(
-      "Clear the entire track board? This cannot be undone (autosave will also be cleared)."
-    )
+    !window.confirm(t("confirm.clearBoard"))
   ) {
     return;
   }
@@ -462,19 +520,11 @@ document.getElementById("btn-clear").addEventListener("click", () => {
   } catch {
     /* ignore */
   }
-  setHint("Board cleared.");
+  setHint("hint.boardCleared");
 });
 // Built-in track dropdown + Load
 const trackSelect = document.getElementById("track-select");
-if (trackSelect) {
-  trackSelect.innerHTML = "";
-  for (const t of TRACK_CATALOG) {
-    const opt = document.createElement("option");
-    opt.value = t.id;
-    opt.textContent = t.name;
-    trackSelect.appendChild(opt);
-  }
-}
+fillTrackSelect();
 
 /**
  * Shift layout so the northern-most *rail path* sits near targetMinY
@@ -523,6 +573,9 @@ function applyTrackLoadInfo(info) {
   // Always separate entities — never a hard-coded multi-car template
   train.consistSpec = null;
   train.cars = null;
+  fixedPlayfieldBounds = info?.playfieldBounds
+    ? { ...info.playfieldBounds }
+    : null;
   // Explicit true/false so switching back from arntenoughrails turns walls off
   if (info && Object.prototype.hasOwnProperty.call(info, "solidPlayfield")) {
     setSolidPlayfield(!!info.solidPlayfield);
@@ -546,7 +599,7 @@ function applyTrackLoadInfo(info) {
     c && c.y != null ? { ...c, y: c.y + dy } : { ...c }
   );
   const hit = findTrainSeatHit(hint, 160);
-  if (hit) {
+  if (hit || insertion) {
     let dir = 1;
     if (hint && typeof hint.ang === "number") {
       const d1 = Math.abs(
@@ -573,24 +626,33 @@ function applyTrackLoadInfo(info) {
     trainPlaced = true;
   } else {
     trainPlaced = false;
-    setHint("Track loaded but no rail found for the train — drag Engine onto a path.");
+    setHint("track.noRail");
   }
   applySpeed(info.speed ?? info.trainHint?.speed ?? 210);
-  persistLayout();
   // Tight fit so north rails sit near the wood wall (re-rail geometry)
-  fitBoardToView(info?.northAlign || info?.solidPlayfield ? 18 : 48);
+  fitBoardToView(
+    info?.northAlign || info?.solidPlayfield
+      ? SOLID_PLAYFIELD_FIT_PAD
+      : 48
+  );
+  persistLayout();
 }
 
 function loadSelectedTrack() {
   const id = trackSelect?.value || TRACK_CATALOG[0]?.id;
   const entry = getTrackById(id);
   if (!entry?.load) {
-    setHint("No track selected.");
+    setHint("track.noneSelected");
     return;
   }
   const info = entry.load(board);
   applyTrackLoadInfo(info);
-  setHint(info.note || `Loaded ${entry.name}.`);
+  const trackName = hasKey(`track.${entry.id}`) ? t(`track.${entry.id}`) : entry.name;
+  if (hasKey(`track.note.${entry.id}`)) {
+    setHint(`track.note.${entry.id}`, { count: info.pieceCount, name: trackName });
+  } else {
+    setHint("track.loadedGeneric", { name: trackName });
+  }
 }
 
 document.getElementById("btn-load-track")?.addEventListener("click", () => {
@@ -612,28 +674,26 @@ document.getElementById("btn-walls").addEventListener("click", () => {
 
 function setSolidPlayfield(on) {
   solidPlayfield = !!on;
+  if (!solidPlayfield) fixedPlayfieldBounds = null;
   const btn = document.getElementById("btn-solid-walls");
   if (btn) {
     btn.classList.toggle("active", solidPlayfield);
     btn.setAttribute("aria-pressed", solidPlayfield ? "true" : "false");
-    btn.title = solidPlayfield
-      ? "Playfield walls ON — bounce at the wood edge (click to turn off)"
-      : "Playfield walls OFF — train stops at the red dashed edge (click to enable bounce)";
+    btn.title = solidPlayfield ? t("ui.solidWallsOn") : t("ui.solidWallsOff");
   }
   try {
     localStorage.setItem(SOLID_WALLS_LS, solidPlayfield ? "1" : "0");
   } catch {
     /* ignore */
   }
-  setHint(
-    solidPlayfield
-      ? "🧱 Playfield walls on — wood border, train bounces at the edge."
-      : "Playfield walls off — train stops if it leaves the dashed edge."
-  );
+  setHint(solidPlayfield ? "hint.wallsOn" : "hint.wallsOff");
 }
 
 document.getElementById("btn-solid-walls")?.addEventListener("click", () => {
   setSolidPlayfield(!solidPlayfield);
+  if (solidPlayfield) fitBoardToView(SOLID_PLAYFIELD_FIT_PAD);
+  else updateBounds();
+  persistLayout();
 });
 try {
   if (localStorage.getItem(SOLID_WALLS_LS) === "1") setSolidPlayfield(true);
@@ -643,12 +703,12 @@ try {
 
 document.getElementById("btn-fit")?.addEventListener("click", () => {
   fitBoardToView(48);
-  setHint("Fitted track to view. Scroll / pinch to zoom · drag floor to pan.");
+  setHint("hint.fittedPan");
 });
 
 document.getElementById("btn-fit-toolbar")?.addEventListener("click", () => {
   fitBoardToView(48);
-  setHint("Fitted track to view. Scroll / pinch to zoom · drag floor to pan.");
+  setHint("hint.fittedPan");
 });
 
 // ── Paint swatches (one-shot paint bucket) ──
@@ -730,9 +790,57 @@ function placeTrainAtHint(hint, opts = {}) {
   }
 }
 
-function setHint(text) {
-  hintEl.textContent = text;
+function setHint(keyOrText, vars) {
+  if (hasKey(keyOrText)) {
+    rememberHint(keyOrText, vars);
+    hintEl.textContent = t(keyOrText, vars);
+    return;
+  }
+  hintEl.textContent = keyOrText ?? "";
 }
+
+function localizedMode(mode) {
+  const key = `mode.${mode}`;
+  return hasKey(key) ? t(key) : modeLabel(mode);
+}
+
+function pieceCopy(type) {
+  const meta = PIECE_META[type] || {};
+  return {
+    code: meta.code || type,
+    name: hasKey(`piece.${type}.name`) ? t(`piece.${type}.name`) : meta.name || type,
+    desc: hasKey(`piece.${type}.desc`) ? t(`piece.${type}.desc`) : meta.desc || "",
+  };
+}
+
+function fillTrackSelect() {
+  if (!trackSelect) return;
+  const current = trackSelect.value;
+  trackSelect.innerHTML = "";
+  for (const entry of TRACK_CATALOG) {
+    const opt = document.createElement("option");
+    opt.value = entry.id;
+    opt.textContent = hasKey(`track.${entry.id}`)
+      ? t(`track.${entry.id}`)
+      : entry.name;
+    trackSelect.appendChild(opt);
+  }
+  if (current) trackSelect.value = current;
+}
+
+function refreshSolidWallTitle() {
+  const btn = document.getElementById("btn-solid-walls");
+  if (!btn) return;
+  btn.title = solidPlayfield ? t("ui.solidWallsOn") : t("ui.solidWallsOff");
+}
+
+onLocaleChange(() => {
+  fillTrackSelect();
+  ensurePaletteButtons();
+  refreshPaletteActive();
+  refreshSolidWallTitle();
+  updateStatus();
+});
 
 // ── Save / Load (app/io.js) ──
 const io = createIo({
@@ -753,34 +861,15 @@ const io = createIo({
   setHint,
   updateStatus,
   prepareLoadedLayout: (data) => {
+    const prepared = prepareLoadedWorld(board, data, 36);
+    fixedPlayfieldBounds = prepared.playfieldBounds;
     if (
       data &&
       Object.prototype.hasOwnProperty.call(data, "solidPlayfield")
     ) {
       setSolidPlayfield(!!data.solidPlayfield);
     }
-
-    // File-loaded solid layouts must use the same north-edge alignment as
-    // the built-in preset. Without this, the authored rail envelope remains
-    // below the wood wall and the off-rail train cannot reach the rerail
-    // pocket shown by the saved track.
-    const dy =
-      data?.solidPlayfield || data?.northAlign
-        ? northAlignBoardToWall(36)
-        : 0;
-    if (!dy || !data?.train) return data;
-
-    const trainData = {
-      ...data.train,
-      y: Number.isFinite(data.train.y) ? data.train.y + dy : data.train.y,
-    };
-    if (Array.isArray(data.train.cars)) {
-      trainData.cars = data.train.cars.map((car) => ({
-        ...car,
-        y: Number.isFinite(car?.y) ? car.y + dy : car?.y,
-      }));
-    }
-    return { ...data, train: trainData };
+    return prepared.data;
   },
   clearSelection,
   lsKey: LS_KEY,
@@ -788,6 +877,10 @@ const io = createIo({
   serializeTrainCars: () => serializeTrainCars(train),
   placeTrainSnapshot,
   restoreTrainState: (snapshot) => restoreTrainSnapshot(train, board, snapshot),
+  getSolidPlayfield: () => solidPlayfield,
+  getWorldPersistence: () =>
+    buildWorldPersistence(board, fixedPlayfieldBounds),
+  solidFitPad: SOLID_PLAYFIELD_FIT_PAD,
   placeLayoutCars: (cars, trainMeta) => {
     const hit = findTrainSeatHit(
       trainMeta
@@ -841,17 +934,17 @@ btnStart.addEventListener("click", () => {
     const cx = view.camX + view.w / s / 2;
     const cy = view.camY + view.h / s / 2;
     if (!tryPlaceTrainAt(cx, cy, 2000)) {
-      setHint("Drag 🚂 train from the palette onto a rail, then Start.");
+      setHint("hint.dragTrainStart");
       return;
     }
   }
   if (train.mode === TrainMode.STOPPED) {
-    setHint("Train hit the edge. Reset Train, place on rail, then Start.");
+    setHint("hint.hitEdge");
     return;
   }
   if (!train.pathRef && train.mode !== TrainMode.OFF_RAIL) {
     if (!tryPlaceTrainAt(train.x, train.y, 56)) {
-      setHint("Train is not on a rail — drag 🚂 onto a blue path.");
+      setHint("hint.notOnRail");
       return;
     }
   }
@@ -859,9 +952,9 @@ btnStart.addEventListener("click", () => {
     running = true;
     train.selected = false;
     startMotor(train.speed / 140);
-    setHint("Running. Follows connected track · open ends derail · walls glide.");
+    setHint("hint.running");
   } else {
-    setHint("Could not start — seat the train on an active rail path first.");
+    setHint("hint.couldNotStart");
   }
 });
 btnStop.addEventListener("click", () => {
@@ -869,16 +962,14 @@ btnStop.addEventListener("click", () => {
   running = false;
   stopTrain(train);
   stopMotor();
-  setHint("Paused. Press Start to resume.");
+  setHint("hint.paused");
   updateStatus();
 });
 btnResetTrain.addEventListener("click", () => {
   running = false;
   resetTrainHard(train); // clears cars + consistSpec (no auto multi rebuild)
   trainPlaced = false;
-  setHint(
-    "Train cleared. Drag 🚂 engine alone onto a rail, then mid cars (max 3)."
-  );
+  setHint("hint.resetTrain");
   updateStatus();
 });
 
@@ -928,7 +1019,7 @@ window.addEventListener("keydown", (e) => {
       running = false;
       stopTrain(train);
       stopMotor();
-      setHint("Paused. Press Start to resume.");
+      setHint("hint.paused");
       updateStatus();
     } else {
       btnStart.click();
@@ -945,14 +1036,14 @@ window.addEventListener("keydown", (e) => {
   } else if (e.key === "a" && (e.ctrlKey || e.metaKey)) {
     e.preventDefault();
     setSelection(board.pieces.map((p) => p.id));
-    setHint(`Selected all ${selectedIds.size} pieces.`);
+    setHint("hint.selectedAll", { count: selectedIds.size });
   } else if (e.key === "s" && (e.ctrlKey || e.metaKey)) {
     e.preventDefault();
     saveLayoutToFile();
   } else if (e.key === "0" && !e.ctrlKey && !e.metaKey) {
     e.preventDefault();
     fitBoardToView(48);
-    setHint("Fitted track to view.");
+    setHint("hint.fitted");
   }
 });
 
@@ -1028,18 +1119,16 @@ function flipGhost() {
   ghost.pivotX = piv.x;
   ghost.pivotY = piv.y;
   applyGhostSnap();
-  setHint(
-    `Gender ${ghost.flip ? "flipped (F↔M)" : "default (M→F)"}. Use ⇋ / M for L/R bend.`
-  );
+  setHint(ghost.flip ? "hint.genderFlipped" : "hint.genderDefault");
 }
 
 /** Geometric L/R mirror for ghost (branchSide). */
 function mirrorGhost() {
   if (!ghost) return;
   if (!isMirrorable(ghost.type)) {
-    setHint(
-      `${PIECE_META[ghost.type]?.code || ghost.type} has no L/R variant (symmetric).`
-    );
+    setHint("hint.noLrVariant", {
+      code: PIECE_META[ghost.type]?.code || ghost.type,
+    });
     return;
   }
   const piv =
@@ -1053,7 +1142,7 @@ function mirrorGhost() {
   ghost.pivotX = piv.x;
   ghost.pivotY = piv.y;
   applyGhostSnap();
-  setHint(`Mirror → ${ghost.branchSide === "L" ? "L / A" : "R / B"} side.`);
+  setHint(ghost.branchSide === "L" ? "hint.mirrorSideL" : "hint.mirrorSideR");
 }
 
 /** Move ghost so visual center follows (px, py), then snap. */
@@ -1128,7 +1217,7 @@ function onPointerDown(e) {
       }
     }
     paint.clearPaintMode();
-    setHint("Paint cancelled (click a track piece while paint is armed).");
+    setHint("paint.cancelledClick");
     return;
   }
 
@@ -1157,9 +1246,10 @@ function onPointerDown(e) {
       });
       const powered =
         train.cars?.find((c) => c.powered)?.id || train.poweredId || "lead";
-      setHint(
-        `Car selected (${train.selectedCarId || "lead"}). 🦄 = active engine (${powered}). Delete removes car · drag to re-seat.`
-      );
+      setHint("hint.carSelected", {
+        id: train.selectedCarId || "lead",
+        powered,
+      });
       return;
     }
   }
@@ -1174,7 +1264,7 @@ function onPointerDown(e) {
   if (hit?.lever) {
     toggleSwitch(board, hit.pieceId);
     setSelection([hit.pieceId]);
-    setHint("Switch toggled (yellow lever).");
+    setHint("hint.switchToggledLever");
     return;
   }
 
@@ -1188,7 +1278,7 @@ function onPointerDown(e) {
       if (selectedIds.has(piece.id)) selectedIds.delete(piece.id);
       else selectedIds.add(piece.id);
       board.selectedId = piece.id;
-      setHint(`Selection: ${selectedIds.size} piece(s).`);
+      setHint("hint.selectionCount", { count: selectedIds.size });
       return;
     }
 
@@ -1217,7 +1307,7 @@ function onPointerDown(e) {
         startY: e.clientY,
       };
       canvas.classList.add("dragging");
-      setHint(`Moving ${selectedIds.size} pieces…`);
+      setHint("hint.movingPieces", { count: selectedIds.size });
       return;
     }
 
@@ -1274,7 +1364,7 @@ function handleRightClick(p) {
   if (hit?.lever) {
     toggleSwitch(board, hit.pieceId);
     setSelection([hit.pieceId]);
-    setHint("Switch toggled.");
+    setHint("hint.switchToggled");
     return;
   }
 
@@ -1283,7 +1373,7 @@ function handleRightClick(p) {
     setSelection([hit.pieceId]);
     rotatePiece(board, hit.pieceId, 1);
     persistLayout();
-    setHint("Rotated 45°. F=gender · M=mirror · Del=delete.");
+    setHint("hint.rotated45");
     return;
   }
 
@@ -1293,17 +1383,27 @@ function handleRightClick(p) {
     applyGhostSnap();
     commitGhostPlace();
     persistLayout();
-    setHint("Piece stamped.");
+    setHint("hint.stamped");
     return;
   }
 
-  setHint(
-    "Right-click piece → rotate · lever → switch · empty+palette → stamp. Place train with 🚂."
-  );
+  setHint("hint.rightClickHelp");
 }
 
 function beginTrainDrag(e, worldP, opts = {}) {
   const p = worldP || canvasPoint(e);
+  const tool = opts.powerIntent
+    ? `${opts.powerIntent}-engine`
+    : carTool;
+  const carKind =
+    opts.carKind || (tool === "mid" ? "mid" : "engine");
+  const powerIntent =
+    opts.powerIntent ||
+    (tool === "active-engine"
+      ? "active"
+      : tool === "passive-engine"
+        ? "passive"
+        : null);
   running = false;
   stopTrain(train);
   trainGhost = {
@@ -1311,7 +1411,8 @@ function beginTrainDrag(e, worldP, opts = {}) {
     y: p.y,
     onRail: false,
     dir: train.dir || 1,
-    carKind: opts.carKind || carTool || "engine",
+    carKind,
+    powerIntent,
   };
   drag = {
     kind: "train",
@@ -1320,7 +1421,8 @@ function beginTrainDrag(e, worldP, opts = {}) {
     startX: e.clientX,
     startY: e.clientY,
     fromExisting: !!opts.fromExisting,
-    carKind: opts.carKind || carTool || "engine",
+    carKind,
+    powerIntent,
     carId: opts.carId || null,
   };
   canvas.classList.add("dragging");
@@ -1335,18 +1437,63 @@ function beginTrainDrag(e, worldP, opts = {}) {
 function updateTrainGhost(x, y) {
   const hit = closestPathPoint(board, x, y, 52);
   const dir = train.dir || 1;
+  const carKind = drag?.carKind || trainGhost?.carKind || "engine";
+  const powerIntent = drag?.powerIntent || trainGhost?.powerIntent || "active";
+  const insertionTargets =
+    train.cars?.length && !drag?.fromExisting
+      ? getTrainInsertionTargets(train, board)
+      : [];
+  const nearestInsertion = insertionTargets
+    .map((target) => ({
+      target,
+      distance: Math.hypot(target.x - x, target.y - y),
+    }))
+    .sort((a, b) => a.distance - b.distance)[0];
+  const insertion =
+    nearestInsertion &&
+    nearestInsertion.target.onRail &&
+    nearestInsertion.distance <= COUPLER_DIST * 0.72
+      ? nearestInsertion.target
+      : null;
+  const previewHit = insertion?.hit || hit;
   if (hit) {
-    const ang = dir > 0 ? hit.ang : hit.ang + Math.PI;
+    const ang = insertion
+      ? insertion.ang
+      : dir > 0
+        ? hit.ang
+        : hit.ang + Math.PI;
     trainGhost = {
-      x: hit.x,
-      y: hit.y,
+      x: previewHit.x,
+      y: previewHit.y,
       ang,
-      onRail: true,
-      hit,
+      onRail: !!previewHit,
+      hit: previewHit,
+      cursorHit: hit,
       dir,
+      carKind,
+      powerIntent,
+      fromExisting: !!drag?.fromExisting,
+      carId: drag?.carId || null,
+      insertionTargets,
+      insertion,
+      insertAfterCarId: insertion?.afterCarId || null,
     };
   } else {
-    trainGhost = { x, y, ang: train.ang || 0, onRail: false, hit: null, dir };
+    trainGhost = {
+      x,
+      y,
+      ang: train.ang || 0,
+      onRail: false,
+      hit: null,
+      dir,
+      carKind,
+      powerIntent,
+      fromExisting: !!drag?.fromExisting,
+      carId: drag?.carId || null,
+      insertionTargets,
+      insertion,
+      insertAfterCarId: insertion?.afterCarId || null,
+    };
   }
 }
 
@@ -1549,9 +1696,10 @@ function onPointerUp(e) {
     updateTrainGhost(p.x, p.y);
     if (trainGhost?.onRail && trainGhost.hit) {
       const kind = drag.carKind || carTool || "engine";
+      const powerIntent = drag.powerIntent || "active";
       if (kind === "mid" && !drag.fromExisting) {
         if (countMidCars(train) >= MAX_MID_CARS) {
-          setHint(`Mid car limit reached (max ${MAX_MID_CARS}).`);
+          setHint("hint.midLimit", { max: MAX_MID_CARS });
         } else {
           if (!train.cars?.length) train.cars = [];
           // Drop layout template so free mid is never absorbed into a forced consist
@@ -1564,19 +1712,30 @@ function onPointerUp(e) {
             trainGhost.ang || 0
           );
           if (!car) {
-            setHint(`Mid car limit reached (max ${MAX_MID_CARS}).`);
+            setHint("hint.midLimit", { max: MAX_MID_CARS });
           } else {
             snapCarPoseToHit(car, trainGhost.hit, train.dir || 1);
             car.coupled = false;
             // Auto-link if dropped near the powered chain tail
-            const linked = tryRecoupleCar(train, car.id);
+            const linked = tryRecoupleCar(
+              train,
+              car.id,
+              COUPLER_DIST * 1.35,
+              board,
+              trainGhost.insertAfterCarId
+            );
+            const rejected = !linked && !!car.placementRejected;
+            if (rejected) removeCar(train, car.id);
             trainPlaced = true;
             train.selected = true;
             train.selectedCarId = car.id;
             setHint(
-              linked
-                ? `Mid coupled (${countMidCars(train)}/${MAX_MID_CARS}). Delete removes car.`
-                : `Mid on rails (${countMidCars(train)}/${MAX_MID_CARS}). Drop near coupler to link · Delete removes.`
+              rejected
+                ? "hint.midRejected"
+                : linked
+                ? "hint.midCoupled"
+                : "hint.midFree",
+              { count: countMidCars(train), max: MAX_MID_CARS }
             );
           }
         }
@@ -1585,10 +1744,18 @@ function onPointerUp(e) {
         const car = train.cars.find((c) => c.id === drag.carId);
         if (car && !car.powered) {
           snapCarPoseToHit(car, trainGhost.hit, train.dir || 1);
-          if (tryRecoupleCar(train, car.id)) {
-            setHint("Car re-seated and recoupled.");
+          if (
+            tryRecoupleCar(
+              train,
+              car.id,
+              COUPLER_DIST * 1.35,
+              board,
+              trainGhost.insertAfterCarId
+            )
+          ) {
+            setHint("hint.carRecoupled");
           } else {
-            setHint("Car re-seated on rail (still uncoupled).");
+            setHint("hint.carReseated");
           }
         } else {
           // Powered engine re-seat — preserve consist state (uncoupled cars, active engine)
@@ -1597,10 +1764,36 @@ function onPointerUp(e) {
             keepDir: true,
             board,
           });
-          setHint("Engine on rails. Start runs · 🦄 flips direction or switches power.");
+          setHint("hint.engineOnRails");
         }
         trainPlaced = true;
         train.selected = true;
+      } else if (
+        !drag.fromExisting &&
+        kind === "engine" &&
+        powerIntent === "passive" &&
+        !train.cars?.length
+      ) {
+        // Parked/passive stock may be placed before an active engine. It is
+        // inert until an active engine is added and explicitly coupled.
+        const eng = spawnFreeCar(
+          train,
+          "engine",
+          trainGhost.hit.x,
+          trainGhost.hit.y,
+          trainGhost.ang || 0,
+          { powered: false }
+        );
+        if (eng) {
+          snapCarPoseToHit(eng, trainGhost.hit, train.dir || 1);
+          eng.powered = false;
+          eng.coupled = false;
+          eng.facing = -1;
+          trainPlaced = true;
+          train.selected = true;
+          train.selectedCarId = eng.id;
+          setHint("hint.passiveParked");
+        }
       } else if (
         !drag.fromExisting &&
         kind === "engine" &&
@@ -1613,21 +1806,42 @@ function onPointerUp(e) {
           "engine",
           trainGhost.hit.x,
           trainGhost.hit.y,
-          trainGhost.ang || 0
+          trainGhost.ang || 0,
+          { powered: false }
         );
         if (eng) {
           snapCarPoseToHit(eng, trainGhost.hit, train.dir || 1);
           eng.coupled = false;
           eng.powered = false;
           eng.facing = -1;
-          const linked = tryRecoupleCar(train, eng.id);
+          const linked = tryRecoupleCar(
+            train,
+            eng.id,
+            COUPLER_DIST * 1.35,
+            board,
+            trainGhost.insertAfterCarId
+          );
+          const rejected = !linked && !!eng.placementRejected;
+          if (rejected) removeCar(train, eng.id);
+          const madeActive =
+            !rejected && powerIntent === "active"
+              ? setActiveEngine(train, eng.id)
+              : false;
           trainPlaced = true;
           train.selected = true;
           train.selectedCarId = eng.id;
           setHint(
-            linked
-              ? "Trailing engine coupled. 🦄 switches powered unit · Delete removes."
-              : "Trailing engine on rails (free). Drop near coupler to link · Delete removes."
+            rejected
+              ? "hint.engineRejected"
+              : powerIntent === "active"
+              ? madeActive
+                ? linked
+                  ? "hint.activeCoupled"
+                  : "hint.activeParkedPrev"
+                : "hint.activeFail"
+              : linked
+                ? "hint.passiveCoupled"
+                : "hint.passiveFree"
           );
         }
       } else {
@@ -1657,14 +1871,12 @@ function onPointerUp(e) {
         train.selectedCarId = train.cars[0]?.id || "lead";
         running = false;
         clearSelection();
-        setHint(
-          "Engine on rails (alone). Add mid cars from palette (max 3), then optional trail engine."
-        );
+        setHint("hint.engineAlone");
       }
       running = false;
       clearSelection();
     } else {
-      setHint("Drop on a blue rail centerline (green ring = snapped).");
+      setHint("hint.dropOnRail");
     }
     trainGhost = null;
     trainTool = false;
@@ -1699,9 +1911,8 @@ function onPointerUp(e) {
         setSelection(ids);
       }
       setHint(
-        selectedIds.size
-          ? `Selected ${selectedIds.size} piece(s). Drag any to move all · Del deletes.`
-          : "No pieces in box."
+        selectedIds.size ? "hint.boxSelected" : "hint.boxEmpty",
+        selectedIds.size ? { count: selectedIds.size } : undefined
       );
     } else if (!drag.moved && !drag.additive) {
       clearSelection();
@@ -1715,9 +1926,8 @@ function onPointerUp(e) {
   if (drag.kind === "multi-move") {
     persistLayout();
     setHint(
-      drag.snapped
-        ? `Moved ${selectedIds.size} pieces (snapped free end to open rail).`
-        : `Moved ${selectedIds.size} pieces.`
+      drag.snapped ? "hint.movedSnapped" : "hint.movedPieces",
+      { count: selectedIds.size }
     );
     drag = null;
     canvas.classList.remove("dragging");
@@ -1735,7 +1945,7 @@ function onPointerUp(e) {
         e.clientY <= rect.bottom;
       if (over || drag.moved) {
         commitGhostPlace();
-        setHint("Piece placed. Drag near open ends to snap · 🚂 for train.");
+        setHint("hint.piecePlaced");
       } else {
         ghost = null;
       }
@@ -1760,10 +1970,10 @@ function onPointerUp(e) {
           color: s.color,
         });
         setSelection([piece.id]);
-        setHint("Selected. Drag to move · box-drag empty for multi-select.");
+        setHint("hint.pieceSelected");
       } else {
         commitGhostMove();
-        setHint("Piece moved.");
+        setHint("hint.pieceMoved");
       }
     } else {
       restoreMoveIfCancel();
@@ -1783,37 +1993,44 @@ function onPointerUp(e) {
 function updateStatus() {
   const mode = trainPlaced
     ? running
-      ? modeLabel(train.mode)
-      : `${modeLabel(train.mode)}${train.pathRef ? "" : " (off path)"}`
-    : "No train";
+      ? localizedMode(train.mode)
+      : `${localizedMode(train.mode)}${train.pathRef ? "" : t("status.offPath")}`
+    : t("status.noTrain");
   const tool = trainTool
-    ? "🚂 Train"
+    ? t("status.trainTool")
     : paletteTool
       ? PIECE_META[paletteTool]?.code || paletteTool
       : selectedIds.size > 1
-        ? `${selectedIds.size} sel`
+        ? t("status.sel", { count: selectedIds.size })
         : "—";
-  statusEl.innerHTML = `Pieces: <em>${board.pieces.length}</em> · Tool: <em>${tool}</em> · State: <em>${mode}</em>`;
+  statusEl.innerHTML = t("status.line", {
+    count: board.pieces.length,
+    tool,
+    state: mode,
+  });
 
   badgeEl.className = "badge";
   if (!trainPlaced) {
-    badgeEl.innerHTML = `Mode: <strong>Build</strong>`;
+    badgeEl.innerHTML = t("badge.build");
   } else if (train.mode === TrainMode.ON_RAIL && running) {
     badgeEl.classList.add("ok");
-    badgeEl.innerHTML = `Mode: <strong>On rails</strong>`;
+    badgeEl.innerHTML = t("badge.onRails");
   } else if (train.mode === TrainMode.OFF_RAIL) {
     badgeEl.classList.add("warn");
-    badgeEl.innerHTML = `Mode: <strong>Off rails</strong> — sliding on floor / edges`;
+    badgeEl.innerHTML = t("badge.offRails");
   } else if (train.mode === TrainMode.STOPPED) {
     badgeEl.classList.add("danger");
-    badgeEl.innerHTML = `Mode: <strong>Stopped</strong> — hit canvas edge · reset train`;
+    badgeEl.innerHTML = t("badge.stopped");
   } else {
-    badgeEl.innerHTML = `Mode: <strong>${modeLabel(train.mode)}</strong>`;
+    badgeEl.innerHTML = t("badge.generic", { mode: localizedMode(train.mode) });
   }
 }
 
 function updateBounds() {
-  bounds = playfieldBounds(view, 20);
+  bounds =
+    solidPlayfield && fixedPlayfieldBounds
+      ? { ...fixedPlayfieldBounds }
+      : playfieldBounds(view, 20);
 }
 
 /** Last canvas size we auto-fitted for (skip thrash on tiny resizes). */
@@ -1832,7 +2049,7 @@ function onResize() {
     lastAutoFit.w > 0 &&
     (dw > 140 || dh > 140)
   ) {
-    fitBoardToView(48);
+    fitBoardToView(solidPlayfield ? SOLID_PLAYFIELD_FIT_PAD : 48);
   } else if (lastAutoFit.w === 0 && r.w > 0) {
     lastAutoFit = { w: r.w, h: r.h };
   }
@@ -1977,6 +2194,9 @@ function fitWorldRect(rect, pad = 40) {
 
 function fitBoardToView(pad = 48) {
   camFitBoard(view, board, pad, UNIT);
+  if (solidPlayfield && !fixedPlayfieldBounds) {
+    fixedPlayfieldBounds = solidPlayfieldBounds(view, board, 20);
+  }
   updateBounds();
   lastAutoFit = { w: view.w, h: view.h };
 }
@@ -1997,6 +2217,12 @@ window.__plarailDemo = {
     pathId: train.pathRef?.pathId ?? null,
   }),
   getTelemetry: () => trainTelemetry.snapshot(),
+  analyzeTelemetry: () => analyzeTrainTrace(trainTelemetry.snapshot()),
+  getWorldContract: () => buildWorldContract(board, bounds),
+  inspectWorld: () =>
+    inspectTrainState(board, train, bounds, { solidPlayfield }),
+  renderWorldAscii: (opts = {}) =>
+    renderWorldAscii(board, train, bounds, opts),
   clearTelemetry: () => trainTelemetry.clear(),
   setTelemetryDebug(enabled) {
     trainTelemetry.setEnabled(enabled);
@@ -2035,7 +2261,7 @@ window.__plarailDemo = {
       running = true;
       train.selected = false;
       startMotor(train.speed / 140);
-      setHint("Running. Follows connected track · open ends derail · walls glide.");
+      setHint("hint.running");
       updateStatus();
       return true;
     }
@@ -2045,34 +2271,46 @@ window.__plarailDemo = {
     running = false;
     stopTrain(train);
     stopMotor();
-    setHint("Paused. Press Start to resume.");
+    setHint("hint.paused");
     updateStatus();
   },
 };
 
-// Startup: localStorage autosave → else real meme track (never the circle)
+// Startup: ?track= / ?layout= deep link → else autosave → else real meme track
 {
-  const loaded = tryLoadAutosave();
-  if (!loaded) {
-    const info = loadRealMemeTrack(board);
-    placeTrainAtHint(info.trainHint);
-    applySpeed(info.speed ?? info.trainHint?.speed ?? 210);
-    persistLayout();
-    setHint(
-      info.note ||
-        "Real-2-Sim meme track loaded. 🚂 drag train · box-select · Save JSON downloads + autosaves."
-    );
+  const requestedId = trackIdFromSearch(window.location.search);
+  const requested = requestedId ? getTrackById(requestedId) : null;
+  if (requested?.load) {
+    if (trackSelect) trackSelect.value = requested.id;
+    const info = requested.load(board);
+    applyTrackLoadInfo(info);
+    if (hasKey(`track.note.${requested.id}`)) {
+      setHint(`track.note.${requested.id}`, { count: info.pieceCount });
+    } else {
+      setHint("track.loadedGeneric", {
+        name: hasKey(`track.${requested.id}`)
+          ? t(`track.${requested.id}`)
+          : requested.name,
+      });
+    }
   } else {
-    setHint(
-      "Restored autosaved layout. 🚂 train · box-select multi-move · Save downloads JSON. Scroll to zoom."
-    );
+    const loaded = tryLoadAutosave();
+    if (!loaded) {
+      const info = loadRealMemeTrack(board);
+      placeTrainAtHint(info.trainHint);
+      applySpeed(info.speed ?? info.trainHint?.speed ?? 210);
+      persistLayout();
+      setHint("track.note.real-meme", { count: info.pieceCount });
+    } else {
+      setHint("track.restoredAutosave");
+    }
   }
   // Fit whole track after layout settles (sidebar width, canvas size)
   requestAnimationFrame(() => {
     onResize();
-    fitBoardToView(48);
+    fitBoardToView(solidPlayfield ? SOLID_PLAYFIELD_FIT_PAD : 48);
   });
-  console.info("[Plarail] build 20260806j — solid playfield walls + track dropdown");
+  console.info("[Plarail] build 20260817 — aren't enough rails + ?track= deep links");
 }
 
 function frame(t) {
@@ -2086,11 +2324,7 @@ function frame(t) {
     });
     if (train.mode === TrainMode.STOPPED) {
       running = false;
-      setHint(
-        solidPlayfield
-          ? "Train stopped. Reset Train, place on rail, then Start."
-          : "Train left the playfield. Reset Train, place on rail, then Start. (Or turn on 🧱 walls to bounce.)"
-      );
+      setHint(solidPlayfield ? "hint.stoppedSolid" : "hint.stoppedEdge");
     }
   }
 
@@ -2140,6 +2374,12 @@ window.__sim = {
   persist: persistLayout,
   telemetry: trainTelemetry,
   getTelemetry: () => trainTelemetry.snapshot(),
+  analyzeTelemetry: () => analyzeTrainTrace(trainTelemetry.snapshot()),
+  getWorldContract: () => buildWorldContract(board, bounds),
+  inspectWorld: () =>
+    inspectTrainState(board, train, bounds, { solidPlayfield }),
+  renderWorldAscii: (opts = {}) =>
+    renderWorldAscii(board, train, bounds, opts),
   clearTelemetry: () => trainTelemetry.clear(),
   get running() {
     return running;

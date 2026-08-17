@@ -1,5 +1,17 @@
 import { closestPathPoint } from "../track.js";
 import { FRONT_AXLE_OFFSET, REAR_AXLE_OFFSET } from "./constants.js";
+import {
+  carBodyExtents,
+  frontHitch,
+  inspectTrainState,
+  rearHitch,
+} from "../world-model.js";
+
+function q(value, digits = 6) {
+  if (!Number.isFinite(value)) return value;
+  const scale = 10 ** digits;
+  return Math.round(value * scale) / scale;
+}
 
 function pathKey(ref) {
   if (!ref?.pieceId || !ref?.pathId) return null;
@@ -21,11 +33,11 @@ function nearestSnapshot(board, x, y) {
   return {
     pieceId: hit.path?.pieceId ?? null,
     pathId: hit.path?.id ?? null,
-    s: hit.s,
-    dist: hit.dist,
-    x: hit.x,
-    y: hit.y,
-    ang: hit.ang,
+    s: q(hit.s),
+    dist: q(hit.dist),
+    x: q(hit.x, 3),
+    y: q(hit.y, 3),
+    ang: q(hit.ang),
   };
 }
 
@@ -46,42 +58,56 @@ function axleSnapshot(car) {
 
 function carSnapshot(car, board) {
   const axles = axleSnapshot(car);
+  const extents = carBodyExtents(car.ang || 0);
   return {
     id: car.id,
     role: car.role,
     kind: car.kind,
     mode: car.mode,
-    x: car.x,
-    y: car.y,
-    ang: car.ang,
-    s: car.s,
+    x: q(car.x, 3),
+    y: q(car.y, 3),
+    ang: q(car.ang),
+    s: q(car.s),
     dir: car.dir,
-    vx: car.vx,
-    vy: car.vy,
+    vx: q(car.vx, 3),
+    vy: q(car.vy, 3),
     coupled: !!car.coupled,
     powered: !!car.powered,
+    frontCouplerOffset: q(car.frontCouplerOffset || 0, 3),
+    rearCouplerOffset: q(car.rearCouplerOffset || 0, 3),
+    wallHit: !!car.wallHit,
     pathRef: refSnapshot(car.pathRef),
     pathKey: pathKey(car.pathRef),
+    openMouthAdjacentPieceId: car.openMouthAdjacentPieceId || null,
+    frontHitch: Object.fromEntries(
+      Object.entries(frontHitch(car)).map(([key, value]) => [key, q(value, 3)])
+    ),
+    rearHitch: Object.fromEntries(
+      Object.entries(rearHitch(car)).map(([key, value]) => [key, q(value, 3)])
+    ),
+    bodyExtents: { x: q(extents.x, 3), y: q(extents.y, 3) },
+    openMouthPieceId: car.openMouthPieceId || null,
+    railEntryGraceDistance: q(car.railEntryGraceDistance || 0, 3),
     nearest: nearestSnapshot(board, car.x, car.y),
     nearestFront: nearestSnapshot(board, axles.front.x, axles.front.y),
     nearestRear: nearestSnapshot(board, axles.rear.x, axles.rear.y),
   };
 }
 
-export function snapshotTrain(train, board) {
+export function snapshotTrain(train, board, context = {}) {
   if (!train) return null;
   const lead = {
     id: train.poweredId ?? "train",
     role: "lead",
     kind: "engine",
     mode: train.mode,
-    x: train.x,
-    y: train.y,
-    ang: train.ang,
-    s: train.s,
+    x: q(train.x, 3),
+    y: q(train.y, 3),
+    ang: q(train.ang),
+    s: q(train.s),
     dir: train.dir,
-    vx: train.vx,
-    vy: train.vy,
+    vx: q(train.vx, 3),
+    vy: q(train.vy, 3),
     coupled: true,
     powered: true,
     pathRef: refSnapshot(train.pathRef),
@@ -90,18 +116,23 @@ export function snapshotTrain(train, board) {
   };
   return {
     mode: train.mode,
-    x: train.x,
-    y: train.y,
-    ang: train.ang,
-    s: train.s,
+    x: q(train.x, 3),
+    y: q(train.y, 3),
+    ang: q(train.ang),
+    s: q(train.s),
     dir: train.dir,
-    vx: train.vx,
-    vy: train.vy,
+    vx: q(train.vx, 3),
+    vy: q(train.vy, 3),
+    frontCouplerOffset: q(train.frontCouplerOffset || 0, 3),
+    rearCouplerOffset: q(train.rearCouplerOffset || 0, 3),
+    speed: q(train.speed, 3),
     pathRef: refSnapshot(train.pathRef),
     pathKey: pathKey(train.pathRef),
-    reRailCooldown: train.reRailCooldown,
-    reRailDistLeft: train.reRailDistLeft,
-    offRailDistAcc: train.offRailDistAcc,
+    reRailCooldown: q(train.reRailCooldown || 0),
+    reRailDistLeft: q(train.reRailDistLeft || 0, 3),
+    railEntryGraceDistance: q(train.railEntryGraceDistance || 0, 3),
+    openMouthAdjacentPieceId: train.openMouthAdjacentPieceId || null,
+    offRailDistAcc: q(train.offRailDistAcc || 0, 3),
     offRailStepsDone: train.offRailStepsDone,
     offRailPreferAng: train.offRailPreferAng,
     wallHit: !!train.wallHit,
@@ -109,6 +140,12 @@ export function snapshotTrain(train, board) {
     cars: train.cars?.length
       ? train.cars.map((car) => carSnapshot(car, board))
       : [lead],
+    invariants: inspectTrainState(
+      board,
+      train,
+      context.bounds || null,
+      { solidPlayfield: !!context.solidPlayfield }
+    ),
   };
 }
 
@@ -187,7 +224,9 @@ export function createTrainTelemetry(options = {}) {
         });
       }
       const beforeCars = new Map((before.cars || []).map((car) => [car.id, car]));
-      for (const car of after.cars || []) {
+      const afterCars = after.cars || [];
+      for (let carIndex = 0; carIndex < afterCars.length; carIndex++) {
+        const car = afterCars[carIndex];
         const prior = beforeCars.get(car.id);
         if (!prior) continue;
         if (changed(prior.mode, car.mode)) {
@@ -221,6 +260,58 @@ export function createTrainTelemetry(options = {}) {
             nearestPath: `${car.nearest.pieceId}:${car.nearest.pathId}`,
             distance: car.nearest.dist,
           });
+        }
+        const step = Math.hypot(car.x - prior.x, car.y - prior.y);
+        const turn = Math.abs(
+          Math.atan2(
+            Math.sin(car.ang - prior.ang),
+            Math.cos(car.ang - prior.ang)
+          )
+        );
+        let upstreamPinSweep = 0;
+        for (let upstream = 0; upstream <= carIndex; upstream++) {
+          const currentCar = afterCars[upstream];
+          const priorCar = beforeCars.get(currentCar.id);
+          if (!priorCar) continue;
+          upstreamPinSweep +=
+            Math.abs(
+              Math.atan2(
+                Math.sin(currentCar.ang - priorCar.ang),
+                Math.cos(currentCar.ang - priorCar.ang)
+              )
+            ) * 64;
+        }
+        const expected = Math.max(
+          15,
+          (after.speed || 0) * (current.meta?.dt || 0) * 4.5 +
+            upstreamPinSweep
+        );
+        const placementExpected =
+          prior.mode !== car.mode || prior.pathKey !== car.pathKey
+            ? Math.max(expected, 20)
+            : expected;
+        if (step > placementExpected || (turn > 0.65 && !car.wallHit)) {
+          addEvent("pose_discontinuity", {
+            carId: car.id,
+            distance: q(step, 3),
+            angleDelta: q(turn),
+            allowedDistance: q(placementExpected, 3),
+          });
+        }
+      }
+      const invariants = after.invariants;
+      if (invariants) {
+        for (const link of invariants.couplers || []) {
+          if (!link.ok) addEvent("coupler_violation", { ...link });
+        }
+        for (const overlap of invariants.overlaps || []) {
+          addEvent("solid_body_overlap", { ...overlap });
+        }
+        for (const escaped of invariants.escaped || []) {
+          addEvent("playfield_escape", { ...escaped });
+        }
+        for (const penetration of invariants.trackPenetrations || []) {
+          addEvent("track_body_penetration", { ...penetration });
         }
       }
     }

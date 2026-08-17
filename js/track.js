@@ -29,6 +29,7 @@ export function createBoard() {
     selectedId: null,
     graph: null,
     walls: [],
+    solidPolys: [],
     pathIndex: [],
     connectors: [],
   };
@@ -266,12 +267,14 @@ export function setPiecePose(board, id, x, y, rotSteps) {
 function rebuildCachesAndPairs(board) {
   const connectors = [];
   const walls = [];
+  const solidPolys = [];
   const pathIndex = [];
 
   for (const piece of board.pieces) {
     const geo = worldGeometry(piece);
     for (const c of geo.connectors) connectors.push(c);
     for (const w of geo.walls) walls.push(w);
+    for (const poly of geo.solidPolys || []) solidPolys.push(poly);
     for (const path of geo.paths) {
       if (
         path.switchIndex != null &&
@@ -285,7 +288,13 @@ function rebuildCachesAndPairs(board) {
     }
   }
 
-  const LINK_DIST = SNAP_DIST * 1.15;
+  // A visual magnet may reach across SNAP_DIST while a piece is being
+  // placed, but a loaded rail graph must only weld near-coincident connector
+  // pins. Treating a 36 px residual gap as a live link lets the on-rail solver
+  // teleport a car between vertically separated beds before collision code
+  // can intervene. Final placement still uses findSnap() to move the piece
+  // into exact coincidence; this threshold is only for physics connectivity.
+  const LINK_DIST = 12;
   const LINK_FACE = SNAP_ANGLE * 1.85;
   const used = new Set();
   const pairs = [];
@@ -317,6 +326,7 @@ function rebuildCachesAndPairs(board) {
 
   board.connectors = connectors;
   board.walls = walls;
+  board.solidPolys = solidPolys;
   board.pathIndex = pathIndex;
   board.graph = buildGraph(pathIndex, pairs, board);
   return { pairs };
@@ -700,11 +710,13 @@ export function hitTestPiece(board, x, y) {
  * Closest active path sample to a point (for placing train / re-rail / hop).
  * maxDist defaults to 48 so placement is forgiving.
  */
-export function closestPathPoint(board, x, y, maxDist = 48) {
+export function closestPathPoint(board, x, y, maxDist = 48, opts = {}) {
+  const excludedPieceIds = new Set(opts.excludePieceIds || []);
   let best = null;
   let bestD = maxDist;
   for (const path of board.pathIndex) {
     if (!path.active) continue;
+    if (excludedPieceIds.has(path.pieceId)) continue;
     const pts = path.points;
     if (!pts || pts.length < 2) continue;
     for (let i = 1; i < pts.length; i++) {

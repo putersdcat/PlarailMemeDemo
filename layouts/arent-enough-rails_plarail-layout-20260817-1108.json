@@ -1,10 +1,6 @@
-/** Auto: aren't-enough-rails layout (godi3 meme). */
-export const ARNTENOUGHRAILS_LAYOUT = {
+{
   "format": "plarail-meme-layout",
   "version": 1,
-  "name": "aren't enough rails (godi3)",
-  "source": "arent-enough-rails_plarail-layout-20260817-1108.json",
-  "id": "arntenoughrails",
   "pieces": [
     {
       "id": "p469",
@@ -308,4 +304,4 @@ export const ARNTENOUGHRAILS_LAYOUT = {
   },
   "speed": 200,
   "savedAt": "2026-08-17T09:08:30.286Z"
-};
+}

@@ -15,6 +15,11 @@ import {
   TrainMode,
   RE_RAIL_LATERAL,
   RE_RAIL_ANGLE,
+  COUPLER_AIR_GAP,
+  COUPLER_DIST,
+  COUPLER_LATERAL_LIMIT,
+  REAR_HITCH,
+  FRONT_HITCH,
 } from "./constants.js";
 import {
   normalizeAngle,
@@ -24,6 +29,13 @@ import {
 } from "../geometry.js";
 import { closestPathPoint } from "../track.js";
 import { bodyFromFrontAxle, bodyFromRailProbe } from "./pose.js";
+import { initializeCoupledConsist } from "./motion-trail.js";
+import {
+  carBodyOverlap,
+  couplerError,
+  frontHitch,
+  rearHitch,
+} from "../world-model.js";
 // Note: do not import off-rail.js here (circular). Wall resolve for free cars is in train.js.
 
 /** Max middle cars in one consist. */
@@ -33,15 +45,241 @@ export const MAX_MID_CARS = 3;
  * Rigid coupler: same length on-rail and off-rail (short air gap).
  * On-rail path-walk seating was removed — it lengthened links and teleported.
  */
-export const COUPLER_AIR_GAP = 12;
-export const COUPLER_DIST = TRAIN_LENGTH + COUPLER_AIR_GAP;
-export const REAR_HITCH = TRAIN_LENGTH * 0.5 + COUPLER_AIR_GAP * 0.5;
-export const FRONT_HITCH = TRAIN_LENGTH * 0.5 + COUPLER_AIR_GAP * 0.5;
+export {
+  COUPLER_AIR_GAP,
+  COUPLER_DIST,
+  COUPLER_LATERAL_LIMIT,
+  REAR_HITCH,
+  FRONT_HITCH,
+};
+
+function clampCouplerOffset(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(-COUPLER_LATERAL_LIMIT, Math.min(COUPLER_LATERAL_LIMIT, n));
+}
+
+function centerFromFrontPin(pin, ang, frontOffset = 0) {
+  const ux = Math.cos(ang || 0);
+  const uy = Math.sin(ang || 0);
+  const offset = clampCouplerOffset(frontOffset);
+  return {
+    x: pin.x - ux * FRONT_HITCH + uy * offset,
+    y: pin.y - uy * FRONT_HITCH - ux * offset,
+  };
+}
+
+export function capturePlacementState(train) {
+  return {
+    train: {
+      x: train.x,
+      y: train.y,
+      ang: train.ang,
+      mode: train.mode,
+      pathRef: train.pathRef,
+      s: train.s,
+      dir: train.dir,
+      frontCouplerOffset: train.frontCouplerOffset || 0,
+      rearCouplerOffset: train.rearCouplerOffset || 0,
+      vx: train.vx,
+      vy: train.vy,
+      poweredId: train.poweredId,
+      stallReason: train.stallReason,
+    },
+    order: (train.cars || []).map((car) => car.id),
+    cars: new Map(
+      (train.cars || []).map((car) => [car.id, { ...car }])
+    ),
+  };
+}
+
+function restorePlacementState(train, snapshot) {
+  if (!snapshot) return;
+  Object.assign(train, snapshot.train);
+  const byId = new Map((train.cars || []).map((car) => [car.id, car]));
+  train.cars = snapshot.order
+    .map((id) => byId.get(id))
+    .filter(Boolean);
+  for (const car of train.cars) {
+    const saved = snapshot.cars.get(car.id);
+    if (saved) Object.assign(car, saved);
+  }
+  train.motionTrail = null;
+}
+
+export function trainBodyOverlaps(train, tolerance = 0.05) {
+  const overlaps = [];
+  const cars = train?.cars || [];
+  for (let i = 0; i < cars.length; i++) {
+    for (let j = i + 1; j < cars.length; j++) {
+      const hit = carBodyOverlap(cars[i], cars[j]);
+      if (!hit || hit.penetration <= tolerance) continue;
+      overlaps.push({
+        a: cars[i].id,
+        b: cars[j].id,
+        aIndex: i,
+        bIndex: j,
+        penetration: hit.penetration,
+      });
+    }
+  }
+  return overlaps;
+}
+
+export function validateTrainPlacement(train, opts = {}) {
+  const chain = getPoweredChain(train);
+  const pinTolerance = opts.pinTolerance ?? 0.05;
+  const pins = [];
+  for (let i = 1; i < chain.length; i++) {
+    const error = couplerError(chain[i - 1], chain[i]);
+    if (error > pinTolerance) {
+      pins.push({
+        from: chain[i - 1].id,
+        to: chain[i].id,
+        index: i,
+        error,
+      });
+    }
+  }
+  const overlaps = trainBodyOverlaps(
+    train,
+    opts.overlapTolerance ?? 0.05
+  );
+  return {
+    ok: pins.length === 0 && overlaps.length === 0,
+    pins,
+    overlaps,
+  };
+}
+
+function placementFailureIndex(train, result, validation) {
+  const cars = train?.cars || [];
+  const ids = [
+    result?.carId,
+    result?.b,
+    validation?.pins?.[0]?.to,
+    validation?.overlaps?.[0]?.b,
+  ].filter(Boolean);
+  for (const id of ids) {
+    const index = cars.findIndex((car) => car.id === id);
+    if (index > 0) return index;
+  }
+  const overlap = validation?.overlaps?.[0];
+  if (overlap) return Math.max(overlap.aIndex, overlap.bIndex);
+  return -1;
+}
+
+/**
+ * Exact placement transaction used by layout load and whole-chain drag.
+ * On failure, downstream stock is removed or restored/uncoupled; no overlap
+ * or stretched moving link is ever committed.
+ */
+export function commitCoupledPlacement(train, board, opts = {}) {
+  const snapshot = opts.snapshot || null;
+  const result = initializeCoupledConsist(train, board, {
+    railAlignment: true,
+    placementTrain: train,
+  });
+  const validation = validateTrainPlacement(train);
+  if (result.ok && validation.ok) {
+    train.lastPlacementFailure = null;
+    return { ok: true, result, validation, rejected: [] };
+  }
+
+  const forcedRejectIndex = opts.rejectCarId
+    ? train.cars.findIndex((car) => car.id === opts.rejectCarId)
+    : -1;
+  const failedAt =
+    forcedRejectIndex > 0
+      ? forcedRejectIndex
+      : placementFailureIndex(train, result, validation);
+  const failure = {
+    reason:
+      result.reason ||
+      (validation.overlaps.length ? "solid_body_overlap" : "coupler_error"),
+    failedAt,
+    result,
+    validation,
+  };
+  // A drag-insert transaction must be all-or-nothing. The candidate may be
+  // rejected after the prefix has been re-solved for a different root, but
+  // that failed preview must never perturb the cars that were already in the
+  // consist. Restore the complete pre-attempt snapshot and leave the rejected
+  // car available for the caller/UI to remove.
+  if (snapshot && opts.rejectCarId) {
+    restorePlacementState(train, snapshot);
+    const rejectedCar = train.cars.find(
+      (car) => car.id === opts.rejectCarId
+    );
+    if (rejectedCar) {
+      rejectedCar.coupled = false;
+      rejectedCar.powered = false;
+      rejectedCar.placementRejected = failure.reason;
+    }
+    train.lastPlacementFailure = failure;
+    return { ok: false, ...failure, rejected: [] };
+  }
+  const rejected = [];
+  if (failedAt > 0) {
+    const suffix = train.cars.slice(failedAt);
+    for (const car of suffix) {
+      rejected.push(car.id);
+      car.coupled = false;
+      car.powered = false;
+      const saved = snapshot?.cars?.get(car.id);
+      if (saved) Object.assign(car, saved, { coupled: false, powered: false });
+    }
+    if (opts.removeRejected) {
+      const ids = new Set(rejected);
+      train.cars = train.cars.filter((car) => !ids.has(car.id));
+    }
+    train.mode = TrainMode.ON_RAIL;
+    train.stallReason = null;
+    const powered = train.cars.find((car) => car.powered);
+    if (powered) {
+      Object.assign(powered, {
+        x: train.x,
+        y: train.y,
+        ang: train.ang,
+        mode: TrainMode.ON_RAIL,
+        pathRef: train.pathRef,
+        s: train.s,
+        dir: train.dir,
+      });
+    }
+    train.motionTrail = null;
+    if (getPoweredChain(train).length > 1) {
+      const prefix = initializeCoupledConsist(train, board, {
+        railAlignment: true,
+      });
+      if (!prefix.ok) {
+        if (snapshot) restorePlacementState(train, snapshot);
+        train.lastPlacementFailure = failure;
+        return { ok: false, ...failure, rejected: [] };
+      }
+    }
+    train.lastPlacementFailure = failure;
+    return { ok: false, ...failure, rejected };
+  }
+
+  if (snapshot) restorePlacementState(train, snapshot);
+  train.lastPlacementFailure = failure;
+  return { ok: false, ...failure, rejected };
+}
 
 let nextCarId = 1;
 
-function newCarId(prefix = "car") {
-  return `${prefix}${nextCarId++}`;
+function newCarId(prefix = "car", train = null) {
+  const existing = new Set((train?.cars || []).map((car) => car.id));
+  let id;
+  do {
+    id = `${prefix}${nextCarId++}`;
+  } while (existing.has(id));
+  return id;
+}
+
+function nextFreeCarId(train, kind) {
+  return newCarId(kind === "mid" ? "mid" : "eng", train);
 }
 
 function matchTravelAng(prevAng, pathAng) {
@@ -108,7 +346,13 @@ function makeCar(partial) {
     vy: partial.vy ?? 0,
     reRailCooldown: partial.reRailCooldown ?? 0,
     lastRailExitKey: partial.lastRailExitKey || null,
+    frontCouplerOffset: clampCouplerOffset(partial.frontCouplerOffset),
+    rearCouplerOffset: clampCouplerOffset(partial.rearCouplerOffset),
     openMouthClearSteps: partial.openMouthClearSteps ?? 0,
+    openMouthAdjacentPieceId: partial.openMouthAdjacentPieceId || null,
+    railEntryGraceDistance: partial.railEntryGraceDistance ?? 0,
+    cornerLockUx: partial.cornerLockUx ?? null,
+    cornerLockUy: partial.cornerLockUy ?? null,
     selected: !!partial.selected,
   };
 }
@@ -136,10 +380,16 @@ export function clearTrainCars(train) {
   train.offRailStepsDone = 0;
   train.reRailDistLeft = 0;
   train.reRailCooldown = 0;
+  train.frontCouplerOffset = 0;
+  train.rearCouplerOffset = 0;
   train.cornerLockSteps = 0;
   train.cornerLockUx = null;
   train.cornerLockUy = null;
   train.openMouthClearSteps = 0;
+  train.openMouthAdjacentPieceId = null;
+  train.railEntryGraceDistance = 0;
+  train.motionTrail = null;
+  train.stallReason = null;
 }
 
 /** Single engine entity (default place — never auto-appends mid/trail). */
@@ -161,6 +411,8 @@ export function ensureSingleEngine(train) {
       pathRef: train.pathRef,
       s: train.s,
       dir: train.dir,
+      frontCouplerOffset: train.frontCouplerOffset || 0,
+      rearCouplerOffset: train.rearCouplerOffset || 0,
     }),
   ];
   train.poweredId = "lead";
@@ -181,6 +433,8 @@ export function ensureConsist(train, spec = null, _opts = {}) {
           role: c.role,
           kind: c.kind,
           facing: c.facing,
+          frontCouplerOffset: c.frontCouplerOffset,
+          rearCouplerOffset: c.rearCouplerOffset,
           coupled: c.coupled,
           powered: c.powered,
         }))
@@ -224,7 +478,11 @@ export function serializeTrainCars(train) {
     vy: c.vy,
     reRailCooldown: c.reRailCooldown,
     lastRailExitKey: c.lastRailExitKey,
+    frontCouplerOffset: clampCouplerOffset(c.frontCouplerOffset),
+    rearCouplerOffset: clampCouplerOffset(c.rearCouplerOffset),
     openMouthClearSteps: c.openMouthClearSteps,
+    openMouthAdjacentPieceId: c.openMouthAdjacentPieceId,
+    railEntryGraceDistance: c.railEntryGraceDistance,
     pathRef: c.pathRef
       ? {
           pieceId: c.pathRef.pieceId,
@@ -335,6 +593,8 @@ export function placeLayoutCars(train, carsList, board = null, opts = {}) {
       role: leadSpec.role || "lead",
       kind: leadKind === "mid" ? "mid" : "engine",
       facing: leadSpec.facing ?? 1,
+      frontCouplerOffset: leadSpec.frontCouplerOffset ?? 0,
+      rearCouplerOffset: leadSpec.rearCouplerOffset ?? 0,
       coupled: true,
       powered: true,
       x: leadX,
@@ -392,6 +652,8 @@ export function placeLayoutCars(train, carsList, board = null, opts = {}) {
       role: spec.role || (isTrail ? "trail" : "mid"),
       kind,
       facing: spec.facing ?? (isTrail && kind === "engine" ? -1 : 1),
+      frontCouplerOffset: spec.frontCouplerOffset ?? 0,
+      rearCouplerOffset: spec.rearCouplerOffset ?? 0,
       coupled: preserveSavedState ? spec.coupled !== false : false,
       powered: false,
       x,
@@ -412,12 +674,9 @@ export function placeLayoutCars(train, carsList, board = null, opts = {}) {
       }
     }
     train.cars.push(car);
-    // Couple if layout says so (default true for authored layout cars).
-    // Saved runtime state already carries exact coupling/order; do not run
-    // recouple placement logic and accidentally reorder free cars.
-    if (!preserveSavedState && spec.coupled !== false) {
-      tryRecoupleCar(train, car.id, COUPLER_DIST * 2.5);
-    }
+    // Authored units are already in deterministic powered-tail order. Final
+    // exact placement below validates the entire transaction at once.
+    if (!preserveSavedState) car.coupled = spec.coupled !== false;
   }
 
   // Final on-path seat for authored/layout placement. Saved runtime poses are
@@ -440,6 +699,9 @@ export function placeLayoutCars(train, carsList, board = null, opts = {}) {
       c.mode = TrainMode.ON_RAIL;
     }
   }
+  if (!preserveSavedState && board && train.cars.length > 1) {
+    commitCoupledPlacement(train, board, { removeRejected: true });
+  }
   return train.cars;
 }
 
@@ -447,7 +709,7 @@ export function getPoweredChain(train) {
   if (!train?.cars?.length) return [];
   const cars = train.cars;
   let pIdx = cars.findIndex((c) => c.powered || c.id === train.poweredId);
-  if (pIdx < 0) pIdx = 0;
+  if (pIdx < 0) return [];
   const chain = [cars[pIdx]];
   for (let i = pIdx + 1; i < cars.length; i++) {
     if (!cars[i].coupled) break;
@@ -464,7 +726,10 @@ export function getPoweredChain(train) {
  */
 export function railPoseClear(board, entity) {
   if (!board || !entity) return false;
-  const safeRadius = Math.max(0, HALF_W - WHEEL_RADIUS);
+  // Rail ownership constrains axle centers, not the full compact contact
+  // circle. Keep a 4 px center margin inside the 20 px plastic bed; requiring
+  // the entire 9 px wheel disk inside falsely rejected valid articulated cars.
+  const safeRadius = Math.max(0, HALF_W - 4);
   const ca = Math.cos(entity.ang || 0);
   const sa = Math.sin(entity.ang || 0);
   const probes = [
@@ -532,8 +797,18 @@ export function placeFollowers(train, opts = {}) {
   for (let i = 1; i < chain.length; i++) {
     const prev = chain[i - 1];
     const car = chain[i];
-    const hitchX = prev.x - Math.cos(prev.ang) * REAR_HITCH;
-    const hitchY = prev.y - Math.sin(prev.ang) * REAR_HITCH;
+    const hitch = rearHitch(prev);
+    const placeAtHitch = (targetAng = prev.ang) => {
+      car.frontCouplerOffset = clampCouplerOffset(car.frontCouplerOffset);
+      const body = centerFromFrontPin(
+        hitch,
+        targetAng,
+        car.frontCouplerOffset
+      );
+      car.ang = targetAng;
+      car.x = body.x;
+      car.y = body.y;
+    };
 
     const prevOn =
       prev.mode === TrainMode.ON_RAIL ||
@@ -571,8 +846,13 @@ export function placeFollowers(train, opts = {}) {
       // than preserving a stale heading forever. Close cars fall through to
       // the exact hitch below and get a non-overlapping link. Do not let the
       // lead whip branch run when a middle car owns the live rail domain.
-      const targetX = hitchX - Math.cos(prev.ang) * FRONT_HITCH;
-      const targetY = hitchY - Math.sin(prev.ang) * FRONT_HITCH;
+      const target = centerFromFrontPin(
+        hitch,
+        prev.ang,
+        car.frontCouplerOffset
+      );
+      const targetX = target.x;
+      const targetY = target.y;
       const errorX = targetX - car.x;
       const errorY = targetY - car.y;
       const errorDist = Math.hypot(errorX, errorY);
@@ -607,9 +887,7 @@ export function placeFollowers(train, opts = {}) {
         });
         continue;
       }
-      car.ang = prev.ang;
-      car.x = targetX;
-      car.y = targetY;
+      placeAtHitch(prev.ang);
       telemetry?.event("follower_hitch_settled", {
         carId: car.id,
         prevId: prev.id,
@@ -647,9 +925,7 @@ export function placeFollowers(train, opts = {}) {
     // hard:true (re-rail / seatConsistHard / mixed on+off) uses a straight
     // fixed hitch for off-rail cars — never trailer-whip those cars.
     if (hardThisCar) {
-      car.ang = prev.ang;
-      car.x = hitchX - Math.cos(car.ang) * FRONT_HITCH;
-      car.y = hitchY - Math.sin(car.ang) * FRONT_HITCH;
+      placeAtHitch(prev.ang);
     } else if (pathSeatThisCar) {
       // Layout / on-rail place: put follower ON the rails behind prev.
       // Probe center ~COUPLER_DIST back, snap to path, seat like lead
@@ -660,9 +936,7 @@ export function placeFollowers(train, opts = {}) {
         // leave stale pathRef/s metadata while falling back to the hitch.
         car.mode = TrainMode.OFF_RAIL;
         car.pathRef = null;
-        car.ang = prev.ang;
-        car.x = hitchX - Math.cos(car.ang) * FRONT_HITCH;
-        car.y = hitchY - Math.sin(car.ang) * FRONT_HITCH;
+        placeAtHitch(prev.ang);
         telemetry?.event("follower_seat_failed", {
           carId: car.id,
           prevId: prev.id,
@@ -688,8 +962,8 @@ export function placeFollowers(train, opts = {}) {
         Number.isFinite(car.x) &&
         Number.isFinite(car.y)
       ) {
-        const dx = hitchX - car.x;
-        const dy = hitchY - car.y;
+        const dx = hitch.x - car.x;
+        const dy = hitch.y - car.y;
         const d = Math.hypot(dx, dy);
         if (d > 1e-3) {
           const target = Math.atan2(dy, dx);
@@ -702,18 +976,14 @@ export function placeFollowers(train, opts = {}) {
           ang = (car.ang || prev.ang) + da;
         }
       }
-      car.ang = ang;
-      car.x = hitchX - Math.cos(ang) * FRONT_HITCH;
-      car.y = hitchY - Math.sin(ang) * FRONT_HITCH;
+      placeAtHitch(ang);
     } else if (board && prevOn) {
       // On-rail running: seat ON the path (not chord hitch — that flies off curves)
       const seated = seatFollowerOnPath(board, prev, car, opts.onRail);
       if (!seated) {
         car.mode = TrainMode.OFF_RAIL;
         car.pathRef = null;
-        car.ang = prev.ang;
-        car.x = hitchX - Math.cos(car.ang) * FRONT_HITCH;
-        car.y = hitchY - Math.sin(car.ang) * FRONT_HITCH;
+        placeAtHitch(prev.ang);
         telemetry?.event("follower_seat_failed", {
           carId: car.id,
           prevId: prev.id,
@@ -734,9 +1004,7 @@ export function placeFollowers(train, opts = {}) {
       }
     } else {
       // No board: fixed hitch length along prev heading
-      car.ang = prev.ang;
-      car.x = hitchX - Math.cos(car.ang) * FRONT_HITCH;
-      car.y = hitchY - Math.sin(car.ang) * FRONT_HITCH;
+      placeAtHitch(prev.ang);
     }
 
     if (car.kind === "engine" && !car.powered) car.facing = -1;
@@ -834,8 +1102,7 @@ function findFollowerRailSeat(board, prev, car, { near = true } = {}) {
         angleDiff(car.ang || 0, target.ang),
         angleDiff(car.ang || 0, target.ang + Math.PI)
       );
-      const nearMouth = target.s < 0.12 || target.s > 0.88;
-      const angleLimit = nearMouth ? RE_RAIL_ANGLE * 1.25 : RE_RAIL_ANGLE;
+      const angleLimit = RE_RAIL_ANGLE;
       if (headingError > angleLimit) continue;
       return {
         target,
@@ -1169,7 +1436,7 @@ export function tryRerailCar(car, board, train, telemetry = null) {
   const d2 = angleDiff(car.ang, pathAng + Math.PI);
   const best = Math.min(d1, d2);
   const nearMouth = hit.s < 0.12 || hit.s > 0.88;
-  const angLimit = nearMouth ? RE_RAIL_ANGLE * 1.25 : RE_RAIL_ANGLE * 0.85;
+  const angLimit = RE_RAIL_ANGLE;
   const latLimit = nearMouth ? RE_RAIL_LATERAL + 6 : RE_RAIL_LATERAL + 2;
   if (hit.dist > latLimit || best > angLimit) {
     telemetry?.event("follower_rerail_miss", {
@@ -1286,6 +1553,7 @@ export function uncoupleCar(train, carId) {
     chain[i].coupled = false;
     chain[i].powered = false;
   }
+  train.motionTrail = null;
   return true;
 }
 
@@ -1331,7 +1599,13 @@ export function removeCar(train, carId) {
   return { removed: true, cleared: false };
 }
 
-export function tryRecoupleCar(train, carId, maxDist = COUPLER_DIST * 1.35) {
+export function tryRecoupleCar(
+  train,
+  carId,
+  maxDist = COUPLER_DIST * 1.35,
+  board = null,
+  insertAfterCarId = null
+) {
   if (!train?.cars) return false;
   const car = train.cars.find((c) => c.id === carId);
   if (!car || car.powered) return false;
@@ -1339,30 +1613,107 @@ export function tryRecoupleCar(train, carId, maxDist = COUPLER_DIST * 1.35) {
 
   const chain = getPoweredChain(train);
   if (!chain.length) return false;
-  const tail = chain[chain.length - 1];
+  if (chain.some((item) => item.id === carId)) return false;
+  const insertAfterIndex = insertAfterCarId
+    ? chain.findIndex((item) => item.id === insertAfterCarId)
+    : chain.length - 1;
+  if (insertAfterIndex < 0) return false;
+  const predecessor = chain[insertAfterIndex];
   // Cap mid count when recoupling a mid into a chain that already has 3
   if (car.kind === "mid") {
     const midsInChain = chain.filter((c) => c.kind === "mid").length;
     if (midsInChain >= MAX_MID_CARS) return false;
   }
 
-  const hitchX = tail.x - Math.cos(tail.ang) * REAR_HITCH;
-  const hitchY = tail.y - Math.sin(tail.ang) * REAR_HITCH;
-  const noseX = car.x + Math.cos(car.ang) * FRONT_HITCH;
-  const noseY = car.y + Math.sin(car.ang) * FRONT_HITCH;
-  if (Math.hypot(noseX - hitchX, noseY - hitchY) > maxDist) return false;
+  const hitch = rearHitch(predecessor);
+  const nose = frontHitch(car);
+  if (Math.hypot(nose.x - hitch.x, nose.y - hitch.y) > maxDist) return false;
+  const snapshot = capturePlacementState(train);
   car.coupled = true;
   // Match mode of tail for now; if tail on rail and car was off, keep car off
   // until it re-rails itself
   train.cars = train.cars.filter((c) => c.id !== carId);
-  const p2 = train.cars.findIndex(
-    (c) => c.powered || c.id === train.poweredId
+  const predecessorIndex = train.cars.findIndex(
+    (item) => item.id === predecessor.id
   );
-  let end = p2;
-  while (end + 1 < train.cars.length && train.cars[end + 1].coupled) end++;
-  train.cars.splice(end + 1, 0, car);
+  if (predecessorIndex < 0) return false;
+  train.cars.splice(predecessorIndex + 1, 0, car);
   placeFollowers(train, { hard: true, onRail: false });
+  train.motionTrail = null;
+  const committed = commitCoupledPlacement(train, board, {
+    snapshot,
+    rejectCarId: carId,
+  });
+  const candidate = train.cars.find((item) => item.id === carId);
+  if (!committed.ok) {
+    if (candidate) {
+      candidate.coupled = false;
+      candidate.powered = false;
+      candidate.placementRejected = committed.reason;
+    }
+    return false;
+  }
+  if (candidate) candidate.placementRejected = null;
   return true;
+}
+
+/**
+ * Return every legal insertion seat in the powered chain.
+ *
+ * The returned `hit` is a front-axle path hit, while `x/y` are the body
+ * center. Keeping both lets the editor render a body outline and lets the
+ * existing rail snap helper commit the exact same pose on release.
+ */
+export function getTrainInsertionTargets(train, board, opts = {}) {
+  const chain = getPoweredChain(train);
+  if (!chain.length) return [];
+  const excludedId = opts.excludeCarId || null;
+  const targets = [];
+  for (let index = 0; index < chain.length; index++) {
+    const predecessor = chain[index];
+    const successor = chain[index + 1] || null;
+    if (predecessor.id === excludedId || successor?.id === excludedId) {
+      continue;
+    }
+
+    let body = null;
+    let hit = null;
+    if (board && predecessor.mode === TrainMode.ON_RAIL && predecessor.pathRef) {
+      const target = pathPoseBehind(board, predecessor, COUPLER_DIST);
+      if (target) {
+        body = bodyFromFrontAxle(target.x, target.y, target.ang);
+        hit = {
+          ...target,
+          ang: target.ang,
+        };
+      }
+    }
+    if (!body) {
+      const pin = rearHitch(predecessor);
+      const ang = predecessor.ang || 0;
+      body = {
+        ...centerFromFrontPin(pin, ang, 0),
+        ang,
+      };
+    }
+    const front = {
+      x: body.x + Math.cos(body.ang) * FRONT_HITCH,
+      y: body.y + Math.sin(body.ang) * FRONT_HITCH,
+    };
+    targets.push({
+      afterCarId: predecessor.id,
+      beforeCarId: successor?.id || null,
+      x: body.x,
+      y: body.y,
+      ang: body.ang,
+      onRail: !!hit,
+      hit,
+      predecessorId: predecessor.id,
+      predecessorPin: rearHitch(predecessor),
+      targetPin: front,
+    });
+  }
+  return targets;
 }
 
 export function setActiveEngine(train, carId) {
@@ -1374,9 +1725,13 @@ export function setActiveEngine(train, carId) {
   const idx = chain.findIndex((c) => c.id === carId);
   if (idx < 0) {
     if (!car.coupled && !car.powered) {
-      for (const c of train.cars) c.powered = false;
+      for (const c of train.cars) {
+        c.powered = false;
+        if (c !== car) c.coupled = false;
+      }
       car.powered = true;
       car.facing = 1;
+      car.coupled = true;
       train.poweredId = car.id;
       train.x = car.x;
       train.y = car.y;
@@ -1385,6 +1740,8 @@ export function setActiveEngine(train, carId) {
       train.pathRef = car.pathRef;
       train.s = car.s;
       train.dir = car.dir;
+      train.frontCouplerOffset = car.frontCouplerOffset || 0;
+      train.rearCouplerOffset = car.rearCouplerOffset || 0;
       train.cars = [car, ...train.cars.filter((c) => c !== car)];
       return true;
     }
@@ -1406,6 +1763,8 @@ export function setActiveEngine(train, carId) {
   train.pathRef = car.pathRef;
   train.s = car.s ?? train.s;
   train.dir = car.dir ?? train.dir;
+  train.frontCouplerOffset = car.frontCouplerOffset || 0;
+  train.rearCouplerOffset = car.rearCouplerOffset || 0;
 
   const newHead = head.slice().reverse();
   for (const c of newHead) {
@@ -1423,6 +1782,7 @@ export function setActiveEngine(train, carId) {
   train.poweredId = carId;
   train.cars = [...newHead, ...behind, ...free];
   placeFollowers(train, { hard: true, onRail: false });
+  train.motionTrail = null;
   return true;
 }
 
@@ -1439,13 +1799,13 @@ export function hitTestCar(train, x, y, hitR = TRAIN_RADIUS + 12) {
  * Spawn free mid or engine. Blocks 4th mid car.
  * @returns {object|null} car or null if blocked
  */
-export function spawnFreeCar(train, kind, x, y, ang = 0) {
+export function spawnFreeCar(train, kind, x, y, ang = 0, opts = {}) {
   if (!train.cars) train.cars = [];
   if (kind === "mid" && countMidCars(train) >= MAX_MID_CARS) {
     return null;
   }
   const car = makeCar({
-    id: newCarId(kind === "mid" ? "mid" : "eng"),
+    id: nextFreeCarId(train, kind),
     role: kind === "mid" ? "mid" : "trail",
     kind: kind === "mid" ? "mid" : "engine",
     facing: kind === "engine" ? -1 : 1,
@@ -1456,7 +1816,11 @@ export function spawnFreeCar(train, kind, x, y, ang = 0) {
     ang,
     mode: TrainMode.IDLE,
   });
-  if (!train.cars.length && kind === "engine") {
+  if (
+    !train.cars.length &&
+    kind === "engine" &&
+    opts.powered !== false
+  ) {
     car.id = "lead";
     car.role = "lead";
     car.powered = true;
@@ -1493,10 +1857,12 @@ export function snapCarPoseToHit(car, hit, dir = 1) {
 
 export function couplerLink(prev, car) {
   if (!prev || !car) return null;
-  const x1 = prev.x - Math.cos(prev.ang) * REAR_HITCH * 0.85;
-  const y1 = prev.y - Math.sin(prev.ang) * REAR_HITCH * 0.85;
-  const x2 = car.x + Math.cos(car.ang) * FRONT_HITCH * 0.85;
-  const y2 = car.y + Math.sin(car.ang) * FRONT_HITCH * 0.85;
+  const rear = rearHitch(prev);
+  const front = frontHitch(car);
+  const x1 = rear.x * 0.85 + prev.x * 0.15;
+  const y1 = rear.y * 0.85 + prev.y * 0.15;
+  const x2 = front.x * 0.85 + car.x * 0.15;
+  const y2 = front.y * 0.85 + car.y * 0.15;
   return { x1, y1, x2, y2 };
 }
 
@@ -1564,6 +1930,8 @@ export function carMinCenterDist(a, b) {
 export function resolveCarCollisions(train, opts = {}) {
   const cars = train?.cars;
   if (!cars || cars.length < 2) return { pairs: 0, separated: 0 };
+  const movableRailCarIds =
+    opts.movableRailCarIds instanceof Set ? opts.movableRailCarIds : null;
   const iters = opts.iters != null ? opts.iters : 4;
   let separated = 0;
 
@@ -1604,10 +1972,18 @@ export function resolveCarCollisions(train, opts = {}) {
         // downstream car briefly overlaps it.
         const aLock =
           train.mode !== TrainMode.IDLE &&
-          !!(a.powered || a.mode === TrainMode.ON_RAIL);
+          !!(
+            a.powered ||
+            (a.mode === TrainMode.ON_RAIL &&
+              (a.coupled !== false || !movableRailCarIds?.has(a.id)))
+          );
         const bLock =
           train.mode !== TrainMode.IDLE &&
-          !!(b.powered || b.mode === TrainMode.ON_RAIL);
+          !!(
+            b.powered ||
+            (b.mode === TrainMode.ON_RAIL &&
+              (b.coupled !== false || !movableRailCarIds?.has(b.id)))
+          );
 
         // Two rail-owned poses are resolved by path seating, not by a world
         // collision push. Moving either one here would make its pathRef and
